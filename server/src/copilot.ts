@@ -7,15 +7,30 @@ import {
   CopilotRuntime,
 } from "@copilotkit/runtime/v2";
 import { createCopilotHonoHandler } from "@copilotkit/runtime/v2/hono";
-import type { Observable } from "rxjs";
-import { defer, finalize, from, fromEvent, switchMap, takeUntil } from "rxjs";
+import {
+  catchError,
+  concat,
+  defer,
+  EMPTY,
+  finalize,
+  from,
+  fromEvent,
+  mergeMap,
+  type Observable,
+  of,
+  switchMap,
+  takeUntil,
+  throwError,
+} from "rxjs";
 import { z } from "zod";
 import {
   COMPUTER_GUIDANCE,
   PROVENANCE_GUIDANCE,
 } from "../../shared/bot-prompt";
+import { builtInModelConfiguration } from "./agents/built-in-model";
 import { sanitizeSeededHistory } from "./agents/history-sanitize";
 import type { AgentActor } from "./agents/profile-types";
+import type { RuntimeAgentModel } from "./agents/runtime-model";
 import type { AuditInitiator } from "./audit";
 import {
   attachmentIdsIn,
@@ -153,6 +168,14 @@ export type RuntimeModel = {
   provider: "openai";
   defaultModel: string;
 };
+
+/** Resolve the model and credential for one built-in Bot immediately before it is constructed. */
+export type ResolveAgentModel = (agentId: string) => Promise<RuntimeAgentModel>;
+
+/** Build an AI SDK model for an OpenAI-compatible endpoint after outbound policy is attached. */
+export type CompatibleModelFactory = NonNullable<
+  Parameters<typeof builtInModelConfiguration>[1]
+>;
 
 export function runtimeModelForEnvironment(
   packageModel: RuntimeModel,
@@ -311,14 +334,28 @@ export function builtInAgentConfiguration(
    * none, which is most people on most days and costs the prompt nothing.
    */
   standingInstructions?: string | null,
+  /** Per-Agent model settings. Absent preserves the deployment-wide model path. */
+  agentModel?: RuntimeAgentModel,
+  compatibleModel?: CompatibleModelFactory,
 ): BuiltInAgentConfiguration {
-  if (!apiKey) {
+  const selectedModel = agentModel ?? {
+    provider: model.provider,
+    defaultModel: model.defaultModel,
+    apiKey,
+  };
+  const modelConfiguration = builtInModelConfiguration(
+    selectedModel,
+    compatibleModel,
+  );
+  if (!modelConfiguration) {
     return {
       type: "custom",
       // biome-ignore lint/correctness/useYield: this agent must fail when iteration starts.
       factory: async function* () {
         throw new Error(
-          `Model credential is not configured for ${agent.name}. Add the package credential or set OPENAI_API_KEY.`,
+          agentModel
+            ? `Model credential is not configured for ${agent.name}. Configure an API key for its selected provider.`
+            : `Model credential is not configured for ${agent.name}. Add the package credential or set OPENAI_API_KEY.`,
         );
       },
     };
@@ -327,7 +364,7 @@ export function builtInAgentConfiguration(
   const standing = standingInstructionsGuidance(standingInstructions);
 
   return {
-    model: `${model.provider}/${model.defaultModel}`,
+    ...modelConfiguration,
     /*
      * The package's role, then the person's own standing instructions, then what this Bot actually
      * holds, then the computer.
@@ -356,7 +393,6 @@ export function builtInAgentConfiguration(
         : []),
       ...(computerGuidance ? [computerGuidance] : []),
     ].join("\n\n"),
-    apiKey,
     /*
      * A run stops after one step unless told otherwise, which for a Bot with tools means it calls
      * one and never speaks: the tool executes, the result arrives, and the run ends before the model
@@ -433,6 +469,9 @@ export async function buildAgents(
    * `loadAttachment` for the positional reason it gives. Absent means nothing is recorded.
    */
   markAttachmentsSent?: MarkAttachmentsSent,
+  /** Per-Agent runtime model resolver. Absent preserves the deployment-wide model and key. */
+  resolveAgentModel?: ResolveAgentModel,
+  compatibleModel?: CompatibleModelFactory,
 ): Promise<Record<string, AbstractAgent>> {
   let vendors: readonly string[] = [];
   try {
@@ -489,6 +528,10 @@ export async function buildAgents(
           initiator,
           loadAttachment,
           markAttachmentsSent,
+          agent.type === "built_in"
+            ? await resolveAgentModel?.(agent.id)
+            : undefined,
+          compatibleModel,
         ),
       ]),
     ),
@@ -747,6 +790,8 @@ async function buildAgent(
   loadAttachment?: LoadAttachment,
   /** How this run records that those files were sent. See {@link buildAgents}. */
   markAttachmentsSent?: MarkAttachmentsSent,
+  agentModel?: RuntimeAgentModel,
+  compatibleModel?: CompatibleModelFactory,
 ): Promise<AbstractAgent> {
   if (agent.type === "unavailable") {
     return new UnavailableAgent(agent);
@@ -862,20 +907,50 @@ async function buildAgent(
    * the message is known. The guidance it is given is generated from the tools passed here, which is
    * what keeps a narrowed run from being told it holds something it was not offered.
    */
-  const withTools = (tools: GrantedTool[]) =>
-    new BuiltInAgentWithSaneHistory(
-      builtInAgentConfiguration(
-        agent,
-        model,
-        apiKey,
-        tools,
-        computerGuidance,
-        connectedVendors,
-        standingInstructions,
-      ),
-      loadAttachment,
-      markAttachmentsSent,
+  const withTools = (tools: GrantedTool[]) => {
+    const configured = (runtimeModel?: RuntimeAgentModel) =>
+      new BuiltInAgentWithSaneHistory(
+        builtInAgentConfiguration(
+          agent,
+          model,
+          apiKey,
+          tools,
+          computerGuidance,
+          connectedVendors,
+          standingInstructions,
+          runtimeModel,
+          compatibleModel,
+        ),
+        loadAttachment,
+        markAttachmentsSent,
+      );
+
+    const primary = configured(agentModel);
+    if (!agentModel?.fallback) return primary;
+
+    const fallback = configured({
+      ...agentModel.fallback,
+      ...(agentModel.temperature === undefined
+        ? {}
+        : { temperature: agentModel.temperature }),
+      ...(agentModel.maxTokens === undefined
+        ? {}
+        : { maxTokens: agentModel.maxTokens }),
+    });
+    return new FallbackAgent(
+      { agentId: agent.id, description: agent.name },
+      primary,
+      fallback,
+      {
+        provider: agentModel.provider,
+        model: agentModel.defaultModel,
+      },
+      {
+        provider: agentModel.fallback.provider,
+        model: agentModel.fallback.defaultModel,
+      },
     );
+  };
 
   const whole = withTools(granted);
   if (!narrowing && !handoff) return whole;
@@ -1513,6 +1588,110 @@ class BuiltInAgentWithSaneHistory extends BuiltInAgent {
   }
 }
 
+class AgentRunEventError extends Error {
+  constructor(readonly event: BaseEvent) {
+    super((event as { message?: string }).message ?? "the model run failed");
+    this.name = "AgentRunEventError";
+  }
+}
+
+/**
+ * Retry one built-in run on its configured fallback without duplicating visible work.
+ *
+ * A provider failure is represented by RUN_ERROR followed by an observable error. RUN_STARTED is
+ * lifecycle only, so this wrapper owns one start event and hides the starts from both attempts. Once
+ * any other non-terminal event has escaped (text, reasoning, a tool call, or state), retrying would
+ * duplicate output or repeat a side effect; at that point the original failure is passed through.
+ * Raw observable errors are not retried either: attachment loading, history conversion and local
+ * callbacks fail that way and changing providers cannot repair them.
+ */
+export class FallbackAgent extends AbstractAgent {
+  private active?: AbstractAgent;
+
+  constructor(
+    private identity: { agentId: string; description: string },
+    private primary: AbstractAgent,
+    private fallback: AbstractAgent,
+    private primaryTarget: { provider: string; model: string },
+    private fallbackTarget: { provider: string; model: string },
+  ) {
+    super(identity);
+  }
+
+  run(input: RunAgentInput): Observable<BaseEvent> {
+    return defer(() => {
+      let committed = false;
+      const attempt = (agent: AbstractAgent) => {
+        this.active = agent;
+        return defer(() => agent.run(input)).pipe(
+          mergeMap((event) => {
+            if (event.type === "RUN_STARTED") return EMPTY;
+            if (event.type === "RUN_ERROR") {
+              return throwError(() => new AgentRunEventError(event));
+            }
+            if (event.type !== "RUN_FINISHED") committed = true;
+            return of(event);
+          }),
+        );
+      };
+      const failed = (error: unknown) =>
+        error instanceof AgentRunEventError
+          ? concat(
+              of(error.event),
+              throwError(() => error),
+            )
+          : throwError(() => error);
+
+      return concat(
+        of({
+          type: "RUN_STARTED",
+          threadId: input.threadId,
+          runId: input.runId,
+        } as BaseEvent),
+        attempt(this.primary).pipe(
+          catchError((error: unknown) => {
+            if (!(error instanceof AgentRunEventError) || committed) {
+              return failed(error);
+            }
+            console.warn({
+              event: "agent_model_fallback",
+              agentId: this.agentId,
+              primary: this.primaryTarget,
+              fallback: this.fallbackTarget,
+              timestamp: new Date().toISOString(),
+            });
+            return attempt(this.fallback).pipe(catchError(failed));
+          }),
+        ),
+      ).pipe(
+        finalize(() => {
+          this.active = undefined;
+        }),
+      );
+    });
+  }
+
+  getCapabilities() {
+    return this.primary.getCapabilities?.() ?? Promise.resolve({});
+  }
+
+  clone(): FallbackAgent {
+    const cloned = super.clone() as FallbackAgent;
+    cloned.identity = this.identity;
+    cloned.primary = this.primary.clone();
+    cloned.fallback = this.fallback.clone();
+    cloned.primaryTarget = this.primaryTarget;
+    cloned.fallbackTarget = this.fallbackTarget;
+    cloned.active = undefined;
+    return cloned;
+  }
+
+  abortRun(): void {
+    this.active?.abortRun();
+    super.abortRun();
+  }
+}
+
 /**
  * An agent whose tools are decided when the run starts, because that is the first moment anybody
  * knows what the run is about, and who is asking on whose behalf.
@@ -1679,6 +1858,8 @@ export async function resolveRuntimeAgents(
    * same positional reason. Absent means nothing is recorded.
    */
   markAttachmentsSent?: MarkAttachmentsSent,
+  resolveAgentModel?: ResolveAgentModel,
+  compatibleModel?: CompatibleModelFactory,
 ): Promise<Record<string, AbstractAgent>> {
   const all = await loadAgents();
   if (all.length === 0) {
@@ -1694,9 +1875,10 @@ export async function resolveRuntimeAgents(
   // what that means, exactly as it would have from a roster that did not contain it.
   if (registered.length === 0) return {};
 
-  const apiKey = registered.some((agent) => agent.type === "built_in")
-    ? await resolveModelApiKey()
-    : null;
+  const apiKey =
+    !resolveAgentModel && registered.some((agent) => agent.type === "built_in")
+      ? await resolveModelApiKey()
+      : null;
   return buildAgents(
     registered,
     model,
@@ -1713,6 +1895,8 @@ export async function resolveRuntimeAgents(
     initiator,
     loadAttachment,
     markAttachmentsSent,
+    resolveAgentModel,
+    compatibleModel,
   );
 }
 
@@ -1816,6 +2000,8 @@ export function createRequestAgents(
    * nothing is recorded.
    */
   markAttachmentsSentForActor?: (actorId: string) => MarkAttachmentsSent,
+  resolveAgentModel?: ResolveAgentModel,
+  compatibleModel?: CompatibleModelFactory,
 ) {
   return async ({ request }: { request: Request }) => {
     const actor = await identifyActor(request);
@@ -1839,6 +2025,8 @@ export function createRequestAgents(
       undefined,
       loadAttachmentForActor?.(actor.id),
       markAttachmentsSentForActor?.(actor.id),
+      resolveAgentModel,
+      compatibleModel,
     );
   };
 }
@@ -1990,6 +2178,8 @@ export function mountCopilotRuntime(
    * write is scoped to rows that person uploaded. Appended last. Absent means nothing is recorded.
    */
   markAttachmentsSentForActor?: (actorId: string) => MarkAttachmentsSent,
+  resolveAgentModel?: ResolveAgentModel,
+  compatibleModel?: CompatibleModelFactory,
 ) {
   const { intelligence } = config.runtime;
 
@@ -2037,6 +2227,8 @@ export function mountCopilotRuntime(
       input.initiator,
       loadAttachmentForActor?.(actor.id),
       markAttachmentsSentForActor?.(actor.id),
+      resolveAgentModel,
+      compatibleModel,
     );
     return agents[input.botId] ?? null;
   };
@@ -2112,6 +2304,8 @@ export function mountCopilotRuntime(
       loadInstructionsForActor,
       loadAttachmentForActor,
       markAttachmentsSentForActor,
+      resolveAgentModel,
+      compatibleModel,
     ) as never,
   });
 

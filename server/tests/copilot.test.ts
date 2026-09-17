@@ -521,6 +521,67 @@ describe("registered Copilot agents", () => {
     }
   });
 
+  test("resolves model configuration independently for every built-in Bot", async () => {
+    const resolved: string[] = [];
+    let deploymentKeyReads = 0;
+    const agents = await resolveRuntimeAgents(
+      async () => [
+        {
+          id: "writer",
+          name: "Writer",
+          type: "built_in",
+          systemPrompt: "Write clearly.",
+        },
+        {
+          id: "researcher",
+          name: "Researcher",
+          type: "built_in",
+          systemPrompt: "Research carefully.",
+        },
+      ],
+      { provider: "openai", defaultModel: "gpt-default" },
+      async () => {
+        deploymentKeyReads += 1;
+        return "deployment-key";
+      },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      async (agentId) => {
+        resolved.push(agentId);
+        return agentId === "writer"
+          ? {
+              provider: "anthropic",
+              defaultModel: "claude-sonnet",
+              apiKey: "writer-key",
+              temperature: 0.2,
+            }
+          : {
+              provider: "google",
+              defaultModel: "gemini-pro",
+              apiKey: "researcher-key",
+              maxTokens: 4096,
+            };
+      },
+    );
+
+    expect(Object.keys(agents).sort()).toEqual(["researcher", "writer"]);
+    expect(resolved.sort()).toEqual(["researcher", "writer"]);
+    // The per-Agent resolver owns provider-specific credentials; the old deployment resolver must
+    // not be read once and accidentally reused for the whole roster.
+    expect(deploymentKeyReads).toBe(0);
+  });
+
   test("does not resolve model credentials for remote-only agents", async () => {
     let resolverInvoked = false;
     const agents = await resolveRuntimeAgents(

@@ -66,7 +66,38 @@ export const agentKeys = {
     ["agents", "bot-route-detail", agentId] as const,
   handoff: (agentId: string) => ["agents", "handoff", agentId] as const,
   capabilities: () => ["agents", "capabilities"] as const,
+  model: (agentId: string) => ["agents", "model", agentId] as const,
 };
+
+export type AgentModelProvider = "openai" | "anthropic" | "google";
+export type AgentModelTarget = {
+  provider: AgentModelProvider;
+  model: string;
+};
+export type AgentModelSettings =
+  | { mode: "global" }
+  | {
+      mode: "custom";
+      provider: AgentModelProvider;
+      model: string;
+      credentialSource: "global" | "custom";
+      hasApiKey: boolean;
+      baseUrl?: string;
+      temperature?: number;
+      maxTokens?: number;
+      fallback?: AgentModelTarget;
+    };
+
+export type AgentModelConnection =
+  | { ok: true; provider: AgentModelProvider; model: string }
+  | {
+      ok: false;
+      provider: AgentModelProvider;
+      model: string;
+      code: string;
+      error: string;
+      status?: number;
+    };
 
 /** What kinds of coworker this deployment can create. */
 export type AgentCapabilities = {
@@ -130,6 +161,16 @@ export function agentQueryOptions(agentId: string) {
     queryFn: (): Promise<AgentProfile> =>
       client(agentApiPath(agentId), "agent", {
         fallback: "Could not load this coworker",
+      }),
+  });
+}
+
+export function agentModelQueryOptions(agentId: string) {
+  return queryOptions({
+    queryKey: agentKeys.model(agentId),
+    queryFn: (): Promise<AgentModelSettings> =>
+      client(`${agentApiPath(agentId)}/model`, "model", {
+        fallback: "Could not load model settings",
       }),
   });
 }

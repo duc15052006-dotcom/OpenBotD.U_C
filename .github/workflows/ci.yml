@@ -261,7 +261,14 @@ jobs:
         with:
           bun-version: 1.3.14
       - run: bun install --frozen-lockfile
-      - run: bun test app/tests/build-cache.test.ts
+      # Keep a clean-install smoke on both desktop platforms, and exercise the per-Agent model
+      # resolver/fallback without PostgreSQL or provider credentials. These are deliberately the
+      # pure boundary tests: the Linux test job below owns the real database integration suite.
+      - run: >-
+          bun test
+          app/tests/build-cache.test.ts
+          server/tests/agent-runtime-model.test.ts
+          server/tests/agent-model-fallback.test.ts
 
   python-harness:
     name: python harness regressions

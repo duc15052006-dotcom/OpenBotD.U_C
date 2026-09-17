@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { createOpenAI } from "@ai-sdk/openai";
 import {
   CopilotKitIntelligence,
   IntelligenceAgentRunner,
@@ -15,9 +16,15 @@ import { createHandoffDelivery } from "./agents/handoff-delivery";
 import { createHandoffRunner } from "./agents/handoff-runner";
 import { signHandoffDeliveryRun } from "./agents/handoff-signing";
 import { handoffTool } from "./agents/handoff-tool";
+import { createAgentModelConfigStore } from "./agents/model-config-store";
+import { createAgentModelConnectionService } from "./agents/model-connection-service";
 import { createAgentProfileStore } from "./agents/profile-store";
 import type { AgentActor } from "./agents/profile-types";
 import { createRuntimeAgentLoader } from "./agents/runtime-agents";
+import {
+  createProviderApiKeyResolver,
+  resolveAgentRuntimeModel,
+} from "./agents/runtime-model";
 import { createApp } from "./app";
 import {
   type AuditInitiator,
@@ -184,6 +191,11 @@ const agentVault = {
 const agentProfileStore = createAgentProfileStore(
   database,
   config.managedAgent?.endpoint,
+  agentVault,
+);
+const agentModelStore = createAgentModelConfigStore(
+  database,
+  agentProfileStore,
   agentVault,
 );
 // Read here rather than beside the synchronise below, because the package names the deployment and
@@ -561,6 +573,19 @@ const resolveRuntimeModelApiKey = () =>
     environment: process.env,
   });
 
+const resolveProviderApiKey = createProviderApiKeyResolver({
+  deploymentProvider: tenantPackage.model.provider,
+  resolveDeploymentApiKey: resolveRuntimeModelApiKey,
+});
+
+const resolveAgentModel = (agentId: string) =>
+  resolveAgentRuntimeModel({
+    agentId,
+    deployment: runtimeModel,
+    modelConfigs: agentModelStore,
+    resolveProviderApiKey,
+  });
+
 const hostAccessBroker = createHostAccessBroker();
 
 // Tools run here, not in the browser. Each connector still executes through the plugin store, so the
@@ -743,6 +768,37 @@ const agentFetch = createAgentFetch({
   },
 });
 
+const compatibleModel = ({
+  baseUrl,
+  apiKey,
+  model,
+}: {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}) =>
+  createOpenAI({
+    baseURL: baseUrl,
+    apiKey,
+    // Apply the same first-hop, redirect and credential-scope checks used for remote Agents.
+    fetch: ((input, init) => {
+      const address =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      return agentFetch(address, init);
+    }) as typeof fetch,
+  })(model);
+
+const agentModelConnections = createAgentModelConnectionService({
+  deployment: runtimeModel,
+  modelConfigs: agentModelStore,
+  resolveProviderApiKey,
+  guardedFetch: agentFetch,
+});
+
 /**
  * Who a routine acts as, resolved the way {@link resolveRequestActor} resolves it.
  *
@@ -813,6 +869,8 @@ const buildAgentFor = async ({
     // And the same recorder, so the files on a routine's own message stop counting as staged the
     // moment it sends them, exactly as a person's do.
     markAttachmentsSentForActor(actor.id),
+    resolveAgentModel,
+    compatibleModel,
   );
   const agent = agents[agentId];
   if (!agent) {
@@ -981,6 +1039,8 @@ const copilotRuntime = mountCopilotRuntime(
   // And that those files went out in a send, written by the person who sent them and only for rows
   // they uploaded. See markAttachmentsSentForActor.
   markAttachmentsSentForActor,
+  resolveAgentModel,
+  compatibleModel,
 );
 
 /**
@@ -1294,6 +1354,8 @@ const app = createApp(
   // Absent without a key, which leaves the routes reporting no broker rather than listing apps
   // nobody could connect.
   composio ? { broker: composio.broker } : undefined,
+  agentModelStore,
+  agentModelConnections,
 );
 
 /**
