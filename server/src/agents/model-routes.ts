@@ -1,4 +1,4 @@
-import type { MiddlewareHandler } from "hono";
+import type { Context, MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import type { AppVariables } from "../auth/guards";
 import {
@@ -59,7 +59,7 @@ export function createAgentModelRoutes(
 }
 
 function modelRouteError(
-  context: Parameters<Parameters<ReturnType<typeof createAgentModelRoutes>["onError"]>[0]>[0],
+  context: Context<{ Variables: AppVariables }>,
   error: unknown,
 ) {
   if (error instanceof AgentNotFoundError) {
@@ -68,7 +68,10 @@ function modelRouteError(
     return context.json({ error: "Agent not found." }, 404);
   }
   if (error instanceof AgentNotManageableError) {
-    return context.json({ error: "Agent model settings cannot be changed by this user." }, 403);
+    return context.json(
+      { error: "Agent model settings cannot be changed by this user." },
+      403,
+    );
   }
   if (error instanceof AgentModelCredentialRequiredError) {
     return context.json({ error: error.message }, 400);
