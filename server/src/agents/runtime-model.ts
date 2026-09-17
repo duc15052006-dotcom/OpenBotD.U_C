@@ -1,4 +1,4 @@
-import type { AgentModelProvider, AgentModelTarget } from "./model-config";
+import type { AgentModelProvider } from "./model-config";
 import type { AgentModelConfigStore } from "./model-config-store";
 
 export type RuntimeAgentModel = {
@@ -8,7 +8,13 @@ export type RuntimeAgentModel = {
   baseUrl?: string;
   temperature?: number;
   maxTokens?: number;
-  fallback?: AgentModelTarget;
+  fallback?: RuntimeAgentModelFallback;
+};
+
+export type RuntimeAgentModelFallback = {
+  provider: AgentModelProvider;
+  defaultModel: string;
+  apiKey: string | null;
 };
 
 export type DeploymentRuntimeModel = {
@@ -44,6 +50,19 @@ export async function resolveAgentRuntimeModel(input: {
 
   const apiKey =
     custom.apiKey ?? (await input.resolveProviderApiKey(custom.provider));
+  const fallback = custom.fallback
+    ? {
+        provider: custom.fallback.provider,
+        defaultModel: custom.fallback.model,
+        // A custom credential belongs to the selected provider. It is safe to reuse only when the
+        // fallback stays on that provider; a cross-provider fallback deliberately uses that
+        // provider's global credential instead of sending (for example) an OpenAI key to Anthropic.
+        apiKey:
+          custom.fallback.provider === custom.provider
+            ? apiKey
+            : await input.resolveProviderApiKey(custom.fallback.provider),
+      }
+    : undefined;
   return {
     provider: custom.provider,
     defaultModel: custom.model,
@@ -53,7 +72,7 @@ export async function resolveAgentRuntimeModel(input: {
       ? { temperature: custom.temperature }
       : {}),
     ...(custom.maxTokens !== undefined ? { maxTokens: custom.maxTokens } : {}),
-    ...(custom.fallback ? { fallback: custom.fallback } : {}),
+    ...(fallback ? { fallback } : {}),
   };
 }
 

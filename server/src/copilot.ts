@@ -7,8 +7,21 @@ import {
   CopilotRuntime,
 } from "@copilotkit/runtime/v2";
 import { createCopilotHonoHandler } from "@copilotkit/runtime/v2/hono";
-import type { Observable } from "rxjs";
-import { defer, finalize, from, fromEvent, switchMap, takeUntil } from "rxjs";
+import {
+  catchError,
+  concat,
+  defer,
+  EMPTY,
+  finalize,
+  from,
+  fromEvent,
+  mergeMap,
+  type Observable,
+  of,
+  switchMap,
+  takeUntil,
+  throwError,
+} from "rxjs";
 import { z } from "zod";
 import {
   COMPUTER_GUIDANCE,
@@ -894,22 +907,50 @@ async function buildAgent(
    * the message is known. The guidance it is given is generated from the tools passed here, which is
    * what keeps a narrowed run from being told it holds something it was not offered.
    */
-  const withTools = (tools: GrantedTool[]) =>
-    new BuiltInAgentWithSaneHistory(
-      builtInAgentConfiguration(
-        agent,
-        model,
-        apiKey,
-        tools,
-        computerGuidance,
-        connectedVendors,
-        standingInstructions,
-        agentModel,
-        compatibleModel,
-      ),
-      loadAttachment,
-      markAttachmentsSent,
+  const withTools = (tools: GrantedTool[]) => {
+    const configured = (runtimeModel?: RuntimeAgentModel) =>
+      new BuiltInAgentWithSaneHistory(
+        builtInAgentConfiguration(
+          agent,
+          model,
+          apiKey,
+          tools,
+          computerGuidance,
+          connectedVendors,
+          standingInstructions,
+          runtimeModel,
+          compatibleModel,
+        ),
+        loadAttachment,
+        markAttachmentsSent,
+      );
+
+    const primary = configured(agentModel);
+    if (!agentModel?.fallback) return primary;
+
+    const fallback = configured({
+      ...agentModel.fallback,
+      ...(agentModel.temperature === undefined
+        ? {}
+        : { temperature: agentModel.temperature }),
+      ...(agentModel.maxTokens === undefined
+        ? {}
+        : { maxTokens: agentModel.maxTokens }),
+    });
+    return new FallbackAgent(
+      { agentId: agent.id, description: agent.name },
+      primary,
+      fallback,
+      {
+        provider: agentModel.provider,
+        model: agentModel.defaultModel,
+      },
+      {
+        provider: agentModel.fallback.provider,
+        model: agentModel.fallback.defaultModel,
+      },
     );
+  };
 
   const whole = withTools(granted);
   if (!narrowing && !handoff) return whole;
@@ -1544,6 +1585,110 @@ class BuiltInAgentWithSaneHistory extends BuiltInAgent {
       ...(this as unknown as WithMiddlewares).middlewares,
     ];
     return cloned;
+  }
+}
+
+class AgentRunEventError extends Error {
+  constructor(readonly event: BaseEvent) {
+    super((event as { message?: string }).message ?? "the model run failed");
+    this.name = "AgentRunEventError";
+  }
+}
+
+/**
+ * Retry one built-in run on its configured fallback without duplicating visible work.
+ *
+ * A provider failure is represented by RUN_ERROR followed by an observable error. RUN_STARTED is
+ * lifecycle only, so this wrapper owns one start event and hides the starts from both attempts. Once
+ * any other non-terminal event has escaped (text, reasoning, a tool call, or state), retrying would
+ * duplicate output or repeat a side effect; at that point the original failure is passed through.
+ * Raw observable errors are not retried either: attachment loading, history conversion and local
+ * callbacks fail that way and changing providers cannot repair them.
+ */
+export class FallbackAgent extends AbstractAgent {
+  private active?: AbstractAgent;
+
+  constructor(
+    private identity: { agentId: string; description: string },
+    private primary: AbstractAgent,
+    private fallback: AbstractAgent,
+    private primaryTarget: { provider: string; model: string },
+    private fallbackTarget: { provider: string; model: string },
+  ) {
+    super(identity);
+  }
+
+  run(input: RunAgentInput): Observable<BaseEvent> {
+    return defer(() => {
+      let committed = false;
+      const attempt = (agent: AbstractAgent) => {
+        this.active = agent;
+        return defer(() => agent.run(input)).pipe(
+          mergeMap((event) => {
+            if (event.type === "RUN_STARTED") return EMPTY;
+            if (event.type === "RUN_ERROR") {
+              return throwError(() => new AgentRunEventError(event));
+            }
+            if (event.type !== "RUN_FINISHED") committed = true;
+            return of(event);
+          }),
+        );
+      };
+      const failed = (error: unknown) =>
+        error instanceof AgentRunEventError
+          ? concat(
+              of(error.event),
+              throwError(() => error),
+            )
+          : throwError(() => error);
+
+      return concat(
+        of({
+          type: "RUN_STARTED",
+          threadId: input.threadId,
+          runId: input.runId,
+        } as BaseEvent),
+        attempt(this.primary).pipe(
+          catchError((error: unknown) => {
+            if (!(error instanceof AgentRunEventError) || committed) {
+              return failed(error);
+            }
+            console.warn({
+              event: "agent_model_fallback",
+              agentId: this.agentId,
+              primary: this.primaryTarget,
+              fallback: this.fallbackTarget,
+              timestamp: new Date().toISOString(),
+            });
+            return attempt(this.fallback).pipe(catchError(failed));
+          }),
+        ),
+      ).pipe(
+        finalize(() => {
+          this.active = undefined;
+        }),
+      );
+    });
+  }
+
+  getCapabilities() {
+    return this.primary.getCapabilities?.() ?? Promise.resolve({});
+  }
+
+  clone(): FallbackAgent {
+    const cloned = super.clone() as FallbackAgent;
+    cloned.identity = this.identity;
+    cloned.primary = this.primary.clone();
+    cloned.fallback = this.fallback.clone();
+    cloned.primaryTarget = this.primaryTarget;
+    cloned.fallbackTarget = this.fallbackTarget;
+    cloned.active = undefined;
+    return cloned;
+  }
+
+  abortRun(): void {
+    this.active?.abortRun();
+    super.abortRun();
   }
 }
 

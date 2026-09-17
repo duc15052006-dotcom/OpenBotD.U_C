@@ -91,6 +91,53 @@ describe("resolveAgentRuntimeModel", () => {
 
     expect(result.apiKey).toBeNull();
   });
+
+  test("resolves a cross-provider fallback with that provider's global key", async () => {
+    const requested: string[] = [];
+    const result = await resolveAgentRuntimeModel({
+      agentId: "writer",
+      deployment: { provider: "openai", defaultModel: "gpt-default" },
+      modelConfigs: {
+        resolve: async () => ({
+          provider: "openai",
+          model: "gpt-primary",
+          apiKey: "agent-openai-key",
+          fallback: { provider: "anthropic", model: "claude-fallback" },
+        }),
+      },
+      resolveProviderApiKey: async (provider) => {
+        requested.push(provider);
+        return provider === "anthropic" ? "anthropic-global-key" : null;
+      },
+    });
+
+    expect(result.fallback).toEqual({
+      provider: "anthropic",
+      defaultModel: "claude-fallback",
+      apiKey: "anthropic-global-key",
+    });
+    expect(requested).toEqual(["anthropic"]);
+  });
+
+  test("reuses a custom key only for a same-provider fallback", async () => {
+    const result = await resolveAgentRuntimeModel({
+      agentId: "writer",
+      deployment: { provider: "openai", defaultModel: "gpt-default" },
+      modelConfigs: {
+        resolve: async () => ({
+          provider: "openai",
+          model: "gpt-primary",
+          apiKey: "agent-openai-key",
+          fallback: { provider: "openai", model: "gpt-fallback" },
+        }),
+      },
+      resolveProviderApiKey: async () => {
+        throw new Error("same-provider fallback must not ask for a global key");
+      },
+    });
+
+    expect(result.fallback?.apiKey).toBe("agent-openai-key");
+  });
 });
 
 describe("providerApiKeyFromEnvironment", () => {
