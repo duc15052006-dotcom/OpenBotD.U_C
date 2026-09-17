@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  createProviderApiKeyResolver,
   providerApiKeyFromEnvironment,
   resolveAgentRuntimeModel,
 } from "../src/agents/runtime-model";
@@ -110,5 +111,44 @@ describe("providerApiKeyFromEnvironment", () => {
     expect(
       providerApiKeyFromEnvironment("google", { GOOGLE_API_KEY: "   " }),
     ).toBeNull();
+  });
+});
+
+describe("createProviderApiKeyResolver", () => {
+  test("keeps the package provider on OpenBot's existing vault-aware resolver", async () => {
+    let deploymentReads = 0;
+    const resolve = createProviderApiKeyResolver({
+      deploymentProvider: "openai",
+      resolveDeploymentApiKey: async () => {
+        deploymentReads += 1;
+        return "rotated-vault-key";
+      },
+      environment: {
+        OPENAI_API_KEY: "stale-env-key",
+        ANTHROPIC_API_KEY: "anthropic-env-key",
+      },
+    });
+
+    expect(await resolve("openai")).toBe("rotated-vault-key");
+    expect(deploymentReads).toBe(1);
+  });
+
+  test("uses the selected provider environment fallback only for non-package providers", async () => {
+    let deploymentReads = 0;
+    const resolve = createProviderApiKeyResolver({
+      deploymentProvider: "openai",
+      resolveDeploymentApiKey: async () => {
+        deploymentReads += 1;
+        return "openai-vault-key";
+      },
+      environment: {
+        ANTHROPIC_API_KEY: " anthropic-env-key ",
+        GOOGLE_API_KEY: " google-env-key ",
+      },
+    });
+
+    expect(await resolve("anthropic")).toBe("anthropic-env-key");
+    expect(await resolve("google")).toBe("google-env-key");
+    expect(deploymentReads).toBe(0);
   });
 });
