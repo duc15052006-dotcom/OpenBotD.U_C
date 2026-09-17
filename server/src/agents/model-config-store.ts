@@ -39,7 +39,18 @@ export type AgentModelConfigStore = {
     agentId: string,
     input: AgentModelConfigInput,
   ): Promise<PublicAgentModelConfig>;
+  /** Runtime-only read. The caller has already established which Bot may run. */
   resolve(agentId: string): Promise<ResolvedAgentModelConfig | null>;
+  /**
+   * Management-only runtime read, for actions such as Test Connection that use a real credential.
+   *
+   * Kept separate from `resolve`: a run is authorised by the runtime's roster before this store is
+   * asked, while a settings action starts with a person and must prove management permission here.
+   */
+  resolveManaged(
+    actor: AgentActor,
+    agentId: string,
+  ): Promise<ResolvedAgentModelConfig | null>;
 };
 
 export class AgentModelCredentialRequiredError extends Error {
@@ -53,7 +64,10 @@ function credentialKey(agentId: string) {
   return `agent:${agentId}`;
 }
 
-function canManageModel(actor: AgentActor, profile: Awaited<ReturnType<AgentProfileStore["get"]>>) {
+function canManageModel(
+  actor: AgentActor,
+  profile: Awaited<ReturnType<AgentProfileStore["get"]>>,
+) {
   if (!profile) return false;
   // Package-owned agents intentionally cannot have their identity/profile edited, but their runtime
   // model is an administrator override. This exception is narrow to model configuration.
@@ -70,7 +84,9 @@ function storedFromInput(
     model: input.model,
     ...(credentialId ? { credentialId } : {}),
     ...(input.baseUrl ? { baseUrl: input.baseUrl } : {}),
-    ...(input.temperature !== undefined ? { temperature: input.temperature } : {}),
+    ...(input.temperature !== undefined
+      ? { temperature: input.temperature }
+      : {}),
     ...(input.maxTokens !== undefined ? { maxTokens: input.maxTokens } : {}),
     ...(input.fallback ? { fallback: input.fallback } : {}),
   };
@@ -108,6 +124,19 @@ export function createAgentModelConfigStore(
     return row ? storedAgentModelConfigFromOverride(row.override) : null;
   }
 
+  async function resolveStored(agentId: string) {
+    const stored = await readStored(agentId);
+    if (!stored) return null;
+    const apiKey = stored.credentialId
+      ? await decryptCredentialForUse(
+          vault.encryptionKey,
+          vault.reader,
+          stored.credentialId,
+        )
+      : null;
+    return { ...stored, apiKey };
+  }
+
   return {
     async get(actor, agentId) {
       await readable(actor, agentId);
@@ -132,7 +161,10 @@ export function createAgentModelConfigStore(
         const current = storedAgentModelConfigFromOverride(row.override);
 
         if (input.mode === "global") {
-          if (current?.credentialId && (await vault.store.isLive(current.credentialId, transaction))) {
+          if (
+            current?.credentialId &&
+            (await vault.store.isLive(current.credentialId, transaction))
+          ) {
             await vault.store.revoke(current.credentialId, transaction);
           }
           await transaction
@@ -148,10 +180,14 @@ export function createAgentModelConfigStore(
         let credentialId: string | undefined;
         if (input.credentialSource === "custom") {
           const previousCredentialId = current?.credentialId;
-          const providerChanged = current !== null && current.provider !== input.provider;
+          const providerChanged =
+            current !== null && current.provider !== input.provider;
 
           if (input.apiKey) {
-            const encryptedValue = await encryptSecret(vault.encryptionKey, input.apiKey);
+            const encryptedValue = await encryptSecret(
+              vault.encryptionKey,
+              input.apiKey,
+            );
             if (previousCredentialId && !providerChanged) {
               const rotated = await vault.store.rotate(
                 {
@@ -188,7 +224,10 @@ export function createAgentModelConfigStore(
             if (!previousCredentialId || providerChanged) {
               throw new AgentModelCredentialRequiredError(agentId);
             }
-            const live = await vault.store.isLive(previousCredentialId, transaction);
+            const live = await vault.store.isLive(
+              previousCredentialId,
+              transaction,
+            );
             if (!live) throw new AgentModelCredentialRequiredError(agentId);
             credentialId = previousCredentialId;
           }
@@ -216,17 +255,11 @@ export function createAgentModelConfigStore(
       return publicAgentModelConfig(stored, hasApiKey);
     },
 
-    async resolve(agentId) {
-      const stored = await readStored(agentId);
-      if (!stored) return null;
-      const apiKey = stored.credentialId
-        ? await decryptCredentialForUse(
-            vault.encryptionKey,
-            vault.reader,
-            stored.credentialId,
-          )
-        : null;
-      return { ...stored, apiKey };
+    resolve: resolveStored,
+
+    async resolveManaged(actor, agentId) {
+      await manageable(actor, agentId);
+      return resolveStored(agentId);
     },
   };
 }
