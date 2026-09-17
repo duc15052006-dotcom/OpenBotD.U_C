@@ -1,6 +1,6 @@
 import { IconDotsVertical, IconMessageCircle, IconPencil } from "@tabler/icons-react";
 import { Link } from "@tanstack/react-router";
-import { Button } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,14 +21,13 @@ export function AgentCardActions({ agent }: { agent: AgentProfile }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        render={
-          <Button
-            aria-label={`Actions for ${agent.name}`}
-            className="bg-background/80 shadow-sm backdrop-blur-sm hover:bg-background"
-            size="icon-sm"
-            variant="ghost"
-          />
-        }
+        aria-label={`Actions for ${agent.name}`}
+        className={buttonVariants({
+          className:
+            "bg-background/80 shadow-sm backdrop-blur-sm hover:bg-background",
+          size: "icon-sm",
+          variant: "ghost",
+        })}
       >
         <IconDotsVertical />
       </DropdownMenuTrigger>
