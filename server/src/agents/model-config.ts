@@ -67,7 +67,7 @@ function isProvider(value: unknown): value is AgentModelProvider {
   );
 }
 
-function modelName(value: unknown, label = "Model"): string | null {
+function modelName(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   if (!trimmed || trimmed.length > MAX_MODEL_LENGTH || /[\r\n]/.test(trimmed)) {
@@ -86,7 +86,10 @@ function optionalBaseUrl(value: unknown):
   const trimmed = value.trim();
   if (!trimmed) return { ok: true };
   if (trimmed.length > MAX_BASE_URL_LENGTH || /[\u0000\r\n]/.test(trimmed)) {
-    return { ok: false, error: "Base URL is too long or contains an unsupported character." };
+    return {
+      ok: false,
+      error: "Base URL is too long or contains an unsupported character.",
+    };
   }
   try {
     const parsed = new URL(trimmed);
@@ -127,9 +130,12 @@ function optionalFallback(value: unknown):
   | { ok: false; error: string } {
   if (value === undefined || value === null) return { ok: true };
   if (!isRecord(value) || !isProvider(value.provider)) {
-    return { ok: false, error: "Fallback provider must be openai, anthropic, or google." };
+    return {
+      ok: false,
+      error: "Fallback provider must be openai, anthropic, or google.",
+    };
   }
-  const model = modelName(value.model, "Fallback model");
+  const model = modelName(value.model);
   if (!model) {
     return {
       ok: false,
@@ -162,8 +168,14 @@ export function parseAgentModelConfigInput(
       error: `Model must be between 1 and ${MAX_MODEL_LENGTH} characters on one line.`,
     };
   }
-  if (input.credentialSource !== "global" && input.credentialSource !== "custom") {
-    return { ok: false, error: "Credential source must be global or custom." };
+  if (
+    input.credentialSource !== "global" &&
+    input.credentialSource !== "custom"
+  ) {
+    return {
+      ok: false,
+      error: "Credential source must be global or custom.",
+    };
   }
 
   const baseUrl = optionalBaseUrl(input.baseUrl);
@@ -171,7 +183,11 @@ export function parseAgentModelConfigInput(
   // A custom endpoint is an OpenAI-compatible transport. Anthropic and Google use their native
   // providers unless/until we add an explicit adapter for their compatible gateways.
   if (baseUrl.value && input.provider !== "openai") {
-    return { ok: false, error: "Base URL is currently supported only for OpenAI-compatible models." };
+    return {
+      ok: false,
+      error:
+        "Base URL is currently supported only for OpenAI-compatible models.",
+    };
   }
   const temperature = optionalNumber(
     input.temperature,
@@ -199,10 +215,16 @@ export function parseAgentModelConfigInput(
     }
     const trimmed = input.apiKey.trim();
     if (trimmed.length > MAX_API_KEY_LENGTH) {
-      return { ok: false, error: `API key must be at most ${MAX_API_KEY_LENGTH} characters.` };
+      return {
+        ok: false,
+        error: `API key must be at most ${MAX_API_KEY_LENGTH} characters.`,
+      };
     }
     if (/[\u0000\r\n]/.test(trimmed)) {
-      return { ok: false, error: "API key contains an unsupported character." };
+      return {
+        ok: false,
+        error: "API key contains an unsupported character.",
+      };
     }
     if (trimmed) apiKey = trimmed;
   }
@@ -216,7 +238,9 @@ export function parseAgentModelConfigInput(
       credentialSource: input.credentialSource,
       ...(input.credentialSource === "custom" && apiKey ? { apiKey } : {}),
       ...(baseUrl.value ? { baseUrl: baseUrl.value } : {}),
-      ...(temperature.value !== undefined ? { temperature: temperature.value } : {}),
+      ...(temperature.value !== undefined
+        ? { temperature: temperature.value }
+        : {}),
       ...(maxTokens.value !== undefined ? { maxTokens: maxTokens.value } : {}),
       ...(fallback.value ? { fallback: fallback.value } : {}),
     },
