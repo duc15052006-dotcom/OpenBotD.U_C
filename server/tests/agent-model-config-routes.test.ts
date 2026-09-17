@@ -1,9 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Hono, type MiddlewareHandler } from "hono";
 import type { AppVariables } from "../src/auth/guards";
-import {
-  createAgentModelConfigRoutes,
-} from "../src/agents/model-config-routes";
+import { createAgentModelConfigRoutes } from "../src/agents/model-config-routes";
 import {
   AgentModelCredentialRequiredError,
   type AgentModelConfigStore,
@@ -61,6 +59,7 @@ describe("agent model configuration routes", () => {
             mode: "custom",
             provider: "openai",
             model: "gpt-5.6",
+            credentialSource: "custom",
             temperature: 0.4,
             hasApiKey: true,
           };
@@ -78,6 +77,7 @@ describe("agent model configuration routes", () => {
         mode: "custom",
         provider: "openai",
         model: "gpt-5.6",
+        credentialSource: "custom",
         temperature: 0.4,
         hasApiKey: true,
       },
@@ -122,9 +122,7 @@ describe("agent model configuration routes", () => {
   });
 
   test("PUT normalizes a write-only key and never returns it", async () => {
-    let saved:
-      | Parameters<AgentModelConfigStore["update"]>[2]
-      | undefined;
+    let saved: Parameters<AgentModelConfigStore["update"]>[2] | undefined;
     let seenActor: Actor | undefined;
     const app = testApp(
       modelStore({
@@ -135,6 +133,7 @@ describe("agent model configuration routes", () => {
             mode: "custom",
             provider: "anthropic",
             model: "claude-sonnet-4.5",
+            credentialSource: "custom",
             hasApiKey: true,
             temperature: 0.2,
             maxTokens: 4096,
@@ -175,6 +174,7 @@ describe("agent model configuration routes", () => {
         mode: "custom",
         provider: "anthropic",
         model: "claude-sonnet-4.5",
+        credentialSource: "custom",
         hasApiKey: true,
         temperature: 0.2,
         maxTokens: 4096,
