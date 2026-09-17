@@ -4,6 +4,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { z } from "zod";
 import { AgentCard } from "@/components/agents/agent-card";
 import { AgentDialog } from "@/components/agents/agent-dialog";
+import { AgentSettingsMenu } from "@/components/agents/agent-settings-menu";
 import { CreateAgentDialog } from "@/components/agents/create-agent-dialog";
 import { SidebarToggleBar } from "@/components/layout/sidebar-toggle";
 import { StaggerItem } from "@/components/layout/stagger";
@@ -105,9 +106,21 @@ function AgentsScreen() {
               {mine.map((agent, index) => {
                 return (
                   <StaggerItem index={index} key={agent.id}>
-                    <Link to="/agents" search={{ agent: agent.id }}>
-                      <AgentCard agent={agent} />
-                    </Link>
+                    {/* The menu is a sibling of the card link, never a button nested inside an
+                        anchor. That keeps pointer and keyboard activation unambiguous. */}
+                    <div className="relative w-[144px]">
+                      <Link to="/agents" search={{ agent: agent.id }}>
+                        <AgentCard agent={agent} />
+                      </Link>
+                      <div className="absolute right-2 top-2 z-10">
+                        <AgentSettingsMenu
+                          agent={agent}
+                          onOpenSettings={() => {
+                            void navigate({ search: { agent: agent.id } });
+                          }}
+                        />
+                      </div>
+                    </div>
                   </StaggerItem>
                 );
               })}
@@ -155,9 +168,19 @@ function AgentsScreen() {
               {explore.map((agent, index) => {
                 return (
                   <StaggerItem index={index} key={agent.id}>
-                    <Link to="/agents" search={{ agent: agent.id }}>
-                      <AgentCard agent={agent} />
-                    </Link>
+                    <div className="relative w-[144px]">
+                      <Link to="/agents" search={{ agent: agent.id }}>
+                        <AgentCard agent={agent} />
+                      </Link>
+                      <div className="absolute right-2 top-2 z-10">
+                        <AgentSettingsMenu
+                          agent={agent}
+                          onOpenSettings={() => {
+                            void navigate({ search: { agent: agent.id } });
+                          }}
+                        />
+                      </div>
+                    </div>
                   </StaggerItem>
                 );
               })}
