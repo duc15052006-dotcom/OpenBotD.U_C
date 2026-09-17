@@ -71,3 +71,23 @@ export function providerApiKeyFromEnvironment(
   const value = environment[name]?.trim();
   return value || null;
 }
+
+/**
+ * Preserve OpenBot's existing deployment credential path while allowing an Agent to select another
+ * native provider.
+ *
+ * The package's provider may point at a credentialSecretRef in the encrypted vault, and the existing
+ * resolver also observes a rotation without restarting the server. Replacing that path with a raw
+ * environment lookup would silently break both behaviours. Providers introduced only by an Agent
+ * have no package secret reference, so they intentionally use their standard environment fallback.
+ */
+export function createProviderApiKeyResolver(input: {
+  deploymentProvider: AgentModelProvider;
+  resolveDeploymentApiKey: () => Promise<string | null>;
+  environment?: Record<string, string | undefined>;
+}): ResolveProviderApiKey {
+  return async (provider) =>
+    provider === input.deploymentProvider
+      ? input.resolveDeploymentApiKey()
+      : providerApiKeyFromEnvironment(provider, input.environment);
+}
