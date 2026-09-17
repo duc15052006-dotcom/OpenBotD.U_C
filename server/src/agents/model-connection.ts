@@ -184,7 +184,7 @@ export async function testAgentModelConnection(
       "The provider rejected the model check.",
       response.status,
     );
-  } catch (error) {
+  } catch {
     if (controller.signal.aborted) {
       return failure(
         runtime,
