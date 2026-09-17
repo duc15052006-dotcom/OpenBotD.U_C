@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { z } from "zod";
 import { AgentCard } from "@/components/agents/agent-card";
+import { AgentCardActions } from "@/components/agents/agent-card-actions";
 import { AgentDialog } from "@/components/agents/agent-dialog";
 import { CreateAgentDialog } from "@/components/agents/create-agent-dialog";
 import { SidebarToggleBar } from "@/components/layout/sidebar-toggle";
@@ -105,9 +106,14 @@ function AgentsScreen() {
               {mine.map((agent, index) => {
                 return (
                   <StaggerItem index={index} key={agent.id}>
-                    <Link to="/agents" search={{ agent: agent.id }}>
-                      <AgentCard agent={agent} />
-                    </Link>
+                    <div className="relative w-[144px]">
+                      <Link to="/agents" search={{ agent: agent.id }}>
+                        <AgentCard agent={agent} />
+                      </Link>
+                      <div className="absolute right-2 top-2 z-10">
+                        <AgentCardActions agent={agent} />
+                      </div>
+                    </div>
                   </StaggerItem>
                 );
               })}
@@ -169,7 +175,7 @@ function AgentsScreen() {
             // never clears `data` on a failed background refetch, so once the query has
             // resolved even one response, `agents` stays defined and `explore`'s emptiness is a
             // fact about that response, not a symptom of the failure. Rendering the destructive
-            // card there would say the opposite of what "Your agents" beside it (or this
+            // card there would say the opposite of what "Explore agents" beside it (or this
             // section itself, on a different roster) proves by rendering real cards from the
             // same query.
             <Empty className="mt-4 h-[180px] border border-dashed border-destructive">
@@ -180,9 +186,9 @@ function AgentsScreen() {
               </EmptyHeader>
             </Empty>
           ) : (
-            // Reached both when the query never failed and `explore` is genuinely empty, and
-            // when it failed but `agents` is defined — a loaded, empty slice either way. Same
-            // plain copy for both: an empty roster is a fact, not an error.
+            // Reached both when the query never failed and `explore` is genuinely empty, and when
+            // it failed but `agents` is defined — a loaded, empty slice either way. Same plain
+            // copy for both: an empty roster is a fact, not an error.
             <Empty className="mt-4 h-[180px] border border-dashed">
               <EmptyHeader>
                 <EmptyTitle className="text-muted-foreground">
