@@ -7,10 +7,7 @@ import {
   AgentModelCredentialRequiredError,
   type AgentModelConfigStore,
 } from "./model-config-store";
-import {
-  AgentNotFoundError,
-  AgentNotManageableError,
-} from "./profile-store";
+import { AgentNotFoundError, AgentNotManageableError } from "./profile-store";
 
 /**
  * HTTP surface for one Bot's deployment-owned model override.

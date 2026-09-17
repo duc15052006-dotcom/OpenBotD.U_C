@@ -14,8 +14,10 @@ import {
   COMPUTER_GUIDANCE,
   PROVENANCE_GUIDANCE,
 } from "../../shared/bot-prompt";
+import { builtInModelConfiguration } from "./agents/built-in-model";
 import { sanitizeSeededHistory } from "./agents/history-sanitize";
 import type { AgentActor } from "./agents/profile-types";
+import type { RuntimeAgentModel } from "./agents/runtime-model";
 import type { AuditInitiator } from "./audit";
 import {
   attachmentIdsIn,
@@ -153,6 +155,14 @@ export type RuntimeModel = {
   provider: "openai";
   defaultModel: string;
 };
+
+/** Resolve the model and credential for one built-in Bot immediately before it is constructed. */
+export type ResolveAgentModel = (agentId: string) => Promise<RuntimeAgentModel>;
+
+/** Build an AI SDK model for an OpenAI-compatible endpoint after outbound policy is attached. */
+export type CompatibleModelFactory = NonNullable<
+  Parameters<typeof builtInModelConfiguration>[1]
+>;
 
 export function runtimeModelForEnvironment(
   packageModel: RuntimeModel,
@@ -311,14 +321,28 @@ export function builtInAgentConfiguration(
    * none, which is most people on most days and costs the prompt nothing.
    */
   standingInstructions?: string | null,
+  /** Per-Agent model settings. Absent preserves the deployment-wide model path. */
+  agentModel?: RuntimeAgentModel,
+  compatibleModel?: CompatibleModelFactory,
 ): BuiltInAgentConfiguration {
-  if (!apiKey) {
+  const selectedModel = agentModel ?? {
+    provider: model.provider,
+    defaultModel: model.defaultModel,
+    apiKey,
+  };
+  const modelConfiguration = builtInModelConfiguration(
+    selectedModel,
+    compatibleModel,
+  );
+  if (!modelConfiguration) {
     return {
       type: "custom",
       // biome-ignore lint/correctness/useYield: this agent must fail when iteration starts.
       factory: async function* () {
         throw new Error(
-          `Model credential is not configured for ${agent.name}. Add the package credential or set OPENAI_API_KEY.`,
+          agentModel
+            ? `Model credential is not configured for ${agent.name}. Configure an API key for its selected provider.`
+            : `Model credential is not configured for ${agent.name}. Add the package credential or set OPENAI_API_KEY.`,
         );
       },
     };
@@ -327,7 +351,7 @@ export function builtInAgentConfiguration(
   const standing = standingInstructionsGuidance(standingInstructions);
 
   return {
-    model: `${model.provider}/${model.defaultModel}`,
+    ...modelConfiguration,
     /*
      * The package's role, then the person's own standing instructions, then what this Bot actually
      * holds, then the computer.
@@ -356,7 +380,6 @@ export function builtInAgentConfiguration(
         : []),
       ...(computerGuidance ? [computerGuidance] : []),
     ].join("\n\n"),
-    apiKey,
     /*
      * A run stops after one step unless told otherwise, which for a Bot with tools means it calls
      * one and never speaks: the tool executes, the result arrives, and the run ends before the model
@@ -433,6 +456,9 @@ export async function buildAgents(
    * `loadAttachment` for the positional reason it gives. Absent means nothing is recorded.
    */
   markAttachmentsSent?: MarkAttachmentsSent,
+  /** Per-Agent runtime model resolver. Absent preserves the deployment-wide model and key. */
+  resolveAgentModel?: ResolveAgentModel,
+  compatibleModel?: CompatibleModelFactory,
 ): Promise<Record<string, AbstractAgent>> {
   let vendors: readonly string[] = [];
   try {
@@ -489,6 +515,10 @@ export async function buildAgents(
           initiator,
           loadAttachment,
           markAttachmentsSent,
+          agent.type === "built_in"
+            ? await resolveAgentModel?.(agent.id)
+            : undefined,
+          compatibleModel,
         ),
       ]),
     ),
@@ -747,6 +777,8 @@ async function buildAgent(
   loadAttachment?: LoadAttachment,
   /** How this run records that those files were sent. See {@link buildAgents}. */
   markAttachmentsSent?: MarkAttachmentsSent,
+  agentModel?: RuntimeAgentModel,
+  compatibleModel?: CompatibleModelFactory,
 ): Promise<AbstractAgent> {
   if (agent.type === "unavailable") {
     return new UnavailableAgent(agent);
@@ -872,6 +904,8 @@ async function buildAgent(
         computerGuidance,
         connectedVendors,
         standingInstructions,
+        agentModel,
+        compatibleModel,
       ),
       loadAttachment,
       markAttachmentsSent,
@@ -1679,6 +1713,8 @@ export async function resolveRuntimeAgents(
    * same positional reason. Absent means nothing is recorded.
    */
   markAttachmentsSent?: MarkAttachmentsSent,
+  resolveAgentModel?: ResolveAgentModel,
+  compatibleModel?: CompatibleModelFactory,
 ): Promise<Record<string, AbstractAgent>> {
   const all = await loadAgents();
   if (all.length === 0) {
@@ -1694,9 +1730,10 @@ export async function resolveRuntimeAgents(
   // what that means, exactly as it would have from a roster that did not contain it.
   if (registered.length === 0) return {};
 
-  const apiKey = registered.some((agent) => agent.type === "built_in")
-    ? await resolveModelApiKey()
-    : null;
+  const apiKey =
+    !resolveAgentModel && registered.some((agent) => agent.type === "built_in")
+      ? await resolveModelApiKey()
+      : null;
   return buildAgents(
     registered,
     model,
@@ -1713,6 +1750,8 @@ export async function resolveRuntimeAgents(
     initiator,
     loadAttachment,
     markAttachmentsSent,
+    resolveAgentModel,
+    compatibleModel,
   );
 }
 
@@ -1816,6 +1855,8 @@ export function createRequestAgents(
    * nothing is recorded.
    */
   markAttachmentsSentForActor?: (actorId: string) => MarkAttachmentsSent,
+  resolveAgentModel?: ResolveAgentModel,
+  compatibleModel?: CompatibleModelFactory,
 ) {
   return async ({ request }: { request: Request }) => {
     const actor = await identifyActor(request);
@@ -1839,6 +1880,8 @@ export function createRequestAgents(
       undefined,
       loadAttachmentForActor?.(actor.id),
       markAttachmentsSentForActor?.(actor.id),
+      resolveAgentModel,
+      compatibleModel,
     );
   };
 }
@@ -1990,6 +2033,8 @@ export function mountCopilotRuntime(
    * write is scoped to rows that person uploaded. Appended last. Absent means nothing is recorded.
    */
   markAttachmentsSentForActor?: (actorId: string) => MarkAttachmentsSent,
+  resolveAgentModel?: ResolveAgentModel,
+  compatibleModel?: CompatibleModelFactory,
 ) {
   const { intelligence } = config.runtime;
 
@@ -2037,6 +2082,8 @@ export function mountCopilotRuntime(
       input.initiator,
       loadAttachmentForActor?.(actor.id),
       markAttachmentsSentForActor?.(actor.id),
+      resolveAgentModel,
+      compatibleModel,
     );
     return agents[input.botId] ?? null;
   };
@@ -2112,6 +2159,8 @@ export function mountCopilotRuntime(
       loadInstructionsForActor,
       loadAttachmentForActor,
       markAttachmentsSentForActor,
+      resolveAgentModel,
+      compatibleModel,
     ) as never,
   });
 

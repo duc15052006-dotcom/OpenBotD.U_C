@@ -1,9 +1,9 @@
-import type { BuiltInAgentConfiguration } from "@copilotkit/runtime/v2";
+import type { BuiltInAgentClassicConfig } from "@copilotkit/runtime/v2";
 import { agentModelSpecifier } from "./model-config";
 import type { RuntimeAgentModel } from "./runtime-model";
 
 export type BuiltInModelConfiguration = Pick<
-  BuiltInAgentConfiguration,
+  BuiltInAgentClassicConfig,
   "model" | "apiKey" | "temperature" | "maxOutputTokens"
 >;
 
@@ -34,7 +34,7 @@ export function builtInModelConfiguration(
     baseUrl: string;
     apiKey: string;
     model: string;
-  }) => BuiltInAgentConfiguration["model"],
+  }) => BuiltInAgentClassicConfig["model"],
 ): BuiltInModelConfiguration | null {
   if (!runtime.apiKey) return null;
 
@@ -54,7 +54,7 @@ export function builtInModelConfiguration(
   }
 
   return {
-    model: model as BuiltInAgentConfiguration["model"],
+    model: model as BuiltInAgentClassicConfig["model"],
     // A LanguageModel created for a custom endpoint already owns its key. For provider/model strings,
     // the key is explicit so per-Agent credentials never fall back to an unrelated process env var.
     ...(runtime.baseUrl ? {} : { apiKey: runtime.apiKey }),

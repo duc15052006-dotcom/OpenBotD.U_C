@@ -1,9 +1,6 @@
 import { eq } from "drizzle-orm";
 import type { CredentialSecretReader, CredentialStore } from "../credentials";
-import {
-  decryptCredentialForUse,
-  encryptSecret,
-} from "../credentials";
+import { decryptCredentialForUse, encryptSecret } from "../credentials";
 import type { Database } from "../db/client";
 import { agents } from "../db/schema";
 import {

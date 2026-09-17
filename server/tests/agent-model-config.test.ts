@@ -78,7 +78,8 @@ describe("parseAgentModelConfigInput", () => {
     });
     expect(result).toEqual({
       ok: false,
-      error: "Base URL is currently supported only for OpenAI-compatible models.",
+      error:
+        "Base URL is currently supported only for OpenAI-compatible models.",
     });
   });
 
@@ -170,7 +171,9 @@ describe("agent model override persistence", () => {
   });
 
   test("reads a valid override and fails closed on malformed stored data", () => {
-    expect(storedAgentModelConfigFromOverride({ model: stored })).toEqual(stored);
+    expect(storedAgentModelConfigFromOverride({ model: stored })).toEqual(
+      stored,
+    );
     expect(
       storedAgentModelConfigFromOverride({
         model: { provider: "openai", model: "bad\nmodel" },

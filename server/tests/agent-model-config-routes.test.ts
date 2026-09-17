@@ -1,15 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import { Hono, type MiddlewareHandler } from "hono";
-import type { AppVariables } from "../src/auth/guards";
 import { createAgentModelConfigRoutes } from "../src/agents/model-config-routes";
 import {
-  AgentModelCredentialRequiredError,
   type AgentModelConfigStore,
+  AgentModelCredentialRequiredError,
 } from "../src/agents/model-config-store";
 import {
   AgentNotFoundError,
   AgentNotManageableError,
 } from "../src/agents/profile-store";
+import { createApp } from "../src/app";
+import type { AppVariables } from "../src/auth/guards";
+import { loadConfig } from "../src/config";
+import { testEnvironment } from "./support/environment";
 
 type Actor = AppVariables["actor"];
 
@@ -50,6 +53,49 @@ function modelStore(
 }
 
 describe("agent model configuration routes", () => {
+  test("is mounted by createApp behind the normal session-derived actor", async () => {
+    let seenActor: Actor | undefined;
+    const models = modelStore({
+      get: async (actor) => {
+        seenActor = actor as Actor;
+        return { mode: "global" };
+      },
+    });
+    const args: Parameters<typeof createApp> = [
+      loadConfig(testEnvironment()),
+      {
+        handler: () => new Response(null, { status: 204 }),
+        api: {
+          getSession: async () => ({
+            user: {
+              id: OWNER.id,
+              email: OWNER.email,
+              name: "Owner",
+              image: null,
+            },
+          }),
+        },
+      } as never,
+      { rolesForUser: async () => ["user"] },
+      ...Array.from({ length: 6 }, () => undefined),
+      // createApp mounts all /api/agents surfaces only when the profile store exists.
+      {} as never,
+      ...Array.from({ length: 20 }, () => undefined),
+      models,
+    ];
+    const app = createApp(...args);
+
+    const response = await app.request("/api/agents/researcher/model");
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ model: { mode: "global" } });
+    expect(seenActor).toMatchObject({
+      id: OWNER.id,
+      email: OWNER.email,
+      role: OWNER.role,
+    });
+  });
+
   test("GET returns only browser-safe model state and passes the authenticated actor", async () => {
     let seenActor: Actor | undefined;
     const app = testApp(

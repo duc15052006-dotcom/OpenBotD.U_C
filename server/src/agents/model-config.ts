@@ -65,6 +65,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function containsUnsupportedControl(value: string): boolean {
+  return (
+    value.includes("\u0000") || value.includes("\r") || value.includes("\n")
+  );
+}
+
 function isProvider(value: unknown): value is AgentModelProvider {
   return (
     typeof value === "string" &&
@@ -75,22 +81,30 @@ function isProvider(value: unknown): value is AgentModelProvider {
 function modelName(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
-  if (!trimmed || trimmed.length > MAX_MODEL_LENGTH || /[\r\n]/.test(trimmed)) {
+  if (
+    !trimmed ||
+    trimmed.length > MAX_MODEL_LENGTH ||
+    containsUnsupportedControl(trimmed)
+  ) {
     return null;
   }
   return trimmed;
 }
 
-function optionalBaseUrl(value: unknown):
-  | { ok: true; value?: string }
-  | { ok: false; error: string } {
-  if (value === undefined || value === null || value === "") return { ok: true };
+function optionalBaseUrl(
+  value: unknown,
+): { ok: true; value?: string } | { ok: false; error: string } {
+  if (value === undefined || value === null || value === "")
+    return { ok: true };
   if (typeof value !== "string") {
     return { ok: false, error: "Base URL must be text." };
   }
   const trimmed = value.trim();
   if (!trimmed) return { ok: true };
-  if (trimmed.length > MAX_BASE_URL_LENGTH || /[\u0000\r\n]/.test(trimmed)) {
+  if (
+    trimmed.length > MAX_BASE_URL_LENGTH ||
+    containsUnsupportedControl(trimmed)
+  ) {
     return {
       ok: false,
       error: "Base URL is too long or contains an unsupported character.",
@@ -117,7 +131,8 @@ function optionalNumber(
   max: number,
   integer: boolean,
 ): { ok: true; value?: number } | { ok: false; error: string } {
-  if (value === undefined || value === null || value === "") return { ok: true };
+  if (value === undefined || value === null || value === "")
+    return { ok: true };
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return { ok: false, error: `${label} must be a number.` };
   }
@@ -130,9 +145,9 @@ function optionalNumber(
   return { ok: true, value };
 }
 
-function optionalFallback(value: unknown):
-  | { ok: true; value?: AgentModelTarget }
-  | { ok: false; error: string } {
+function optionalFallback(
+  value: unknown,
+): { ok: true; value?: AgentModelTarget } | { ok: false; error: string } {
   if (value === undefined || value === null) return { ok: true };
   if (!isRecord(value) || !isProvider(value.provider)) {
     return {
@@ -162,7 +177,10 @@ export function parseAgentModelConfigInput(
     return { ok: false, error: "Mode must be global or custom." };
   }
   if (!isProvider(input.provider)) {
-    return { ok: false, error: "Provider must be openai, anthropic, or google." };
+    return {
+      ok: false,
+      error: "Provider must be openai, anthropic, or google.",
+    };
   }
   const model = modelName(input.model);
   if (!model) {
@@ -171,7 +189,10 @@ export function parseAgentModelConfigInput(
       error: `Model must be between 1 and ${MAX_MODEL_LENGTH} characters on one line.`,
     };
   }
-  if (input.credentialSource !== "global" && input.credentialSource !== "custom") {
+  if (
+    input.credentialSource !== "global" &&
+    input.credentialSource !== "custom"
+  ) {
     return { ok: false, error: "Credential source must be global or custom." };
   }
 
@@ -182,7 +203,8 @@ export function parseAgentModelConfigInput(
   if (baseUrl.value && input.provider !== "openai") {
     return {
       ok: false,
-      error: "Base URL is currently supported only for OpenAI-compatible models.",
+      error:
+        "Base URL is currently supported only for OpenAI-compatible models.",
     };
   }
   const temperature = optionalNumber(
@@ -216,7 +238,7 @@ export function parseAgentModelConfigInput(
         error: `API key must be at most ${MAX_API_KEY_LENGTH} characters.`,
       };
     }
-    if (/[\u0000\r\n]/.test(trimmed)) {
+    if (containsUnsupportedControl(trimmed)) {
       return { ok: false, error: "API key contains an unsupported character." };
     }
     if (trimmed) apiKey = trimmed;
@@ -231,7 +253,9 @@ export function parseAgentModelConfigInput(
       credentialSource: input.credentialSource,
       ...(input.credentialSource === "custom" && apiKey ? { apiKey } : {}),
       ...(baseUrl.value ? { baseUrl: baseUrl.value } : {}),
-      ...(temperature.value !== undefined ? { temperature: temperature.value } : {}),
+      ...(temperature.value !== undefined
+        ? { temperature: temperature.value }
+        : {}),
       ...(maxTokens.value !== undefined ? { maxTokens: maxTokens.value } : {}),
       ...(fallback.value ? { fallback: fallback.value } : {}),
     },
@@ -269,7 +293,8 @@ export function storedAgentModelConfigFromOverride(
     true,
   );
   const fallback = optionalFallback(raw.fallback);
-  if (!baseUrl.ok || !temperature.ok || !maxTokens.ok || !fallback.ok) return null;
+  if (!baseUrl.ok || !temperature.ok || !maxTokens.ok || !fallback.ok)
+    return null;
   if (baseUrl.value && raw.provider !== "openai") return null;
 
   return {
@@ -277,7 +302,9 @@ export function storedAgentModelConfigFromOverride(
     model,
     ...(credentialId ? { credentialId } : {}),
     ...(baseUrl.value ? { baseUrl: baseUrl.value } : {}),
-    ...(temperature.value !== undefined ? { temperature: temperature.value } : {}),
+    ...(temperature.value !== undefined
+      ? { temperature: temperature.value }
+      : {}),
     ...(maxTokens.value !== undefined ? { maxTokens: maxTokens.value } : {}),
     ...(fallback.value ? { fallback: fallback.value } : {}),
   };

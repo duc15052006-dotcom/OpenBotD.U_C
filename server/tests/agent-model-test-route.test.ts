@@ -39,10 +39,9 @@ function appWith(
 
 describe("agent model Test Connection route", () => {
   test("is not mounted when a safe connection service was not provided", async () => {
-    const response = await appWith().request(
-      "/api/agents/writer/model/test",
-      { method: "POST" },
-    );
+    const response = await appWith().request("/api/agents/writer/model/test", {
+      method: "POST",
+    });
     expect(response.status).toBe(404);
   });
 

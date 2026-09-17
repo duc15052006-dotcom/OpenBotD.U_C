@@ -1,11 +1,28 @@
 import { mutationOptions, type QueryClient } from "@tanstack/react-query";
 import { client } from "@/lib/client";
 import {
+  type AgentModelConnection,
+  type AgentModelProvider,
+  type AgentModelSettings,
   type AgentProfile,
   type AgentVisibility,
   agentApiPath,
   agentKeys,
 } from "./queries";
+
+export type AgentModelInput =
+  | { mode: "global" }
+  | {
+      mode: "custom";
+      provider: AgentModelProvider;
+      model: string;
+      credentialSource: "global" | "custom";
+      apiKey?: string;
+      baseUrl?: string;
+      temperature?: number;
+      maxTokens?: number;
+      fallback?: { provider: AgentModelProvider; model: string };
+    };
 
 export type AgentInput = {
   name: string;
@@ -85,6 +102,33 @@ export function deleteAgentMutationOptions(queryClient: QueryClient) {
       });
     },
     onSuccess: () => invalidateAgents(queryClient),
+  });
+}
+
+export function saveAgentModelMutationOptions(queryClient: QueryClient) {
+  return mutationOptions({
+    mutationFn: (variables: {
+      agentId: string;
+      input: AgentModelInput;
+    }): Promise<AgentModelSettings> =>
+      client(`${agentApiPath(variables.agentId)}/model`, "model", {
+        method: "PUT",
+        body: variables.input,
+        fallback: "Could not save model settings",
+      }),
+    onSuccess: (model, variables) => {
+      queryClient.setQueryData(agentKeys.model(variables.agentId), model);
+    },
+  });
+}
+
+export function testAgentModelMutationOptions() {
+  return mutationOptions({
+    mutationFn: (agentId: string): Promise<AgentModelConnection> =>
+      client(`${agentApiPath(agentId)}/model/test`, "connection", {
+        method: "POST",
+        fallback: "Could not test the model connection",
+      }),
   });
 }
 

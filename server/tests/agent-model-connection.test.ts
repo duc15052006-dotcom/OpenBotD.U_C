@@ -36,9 +36,7 @@ describe("testAgentModelConnection", () => {
   });
 
   test("checks an OpenAI-compatible Base URL without generating tokens", async () => {
-    let seen:
-      | { url: string; method?: string; headers: Headers }
-      | undefined;
+    let seen: { url: string; method?: string; headers: Headers } | undefined;
     const fetcher: ModelProbeFetch = async (url, init) => {
       seen = {
         url,
@@ -67,9 +65,7 @@ describe("testAgentModelConnection", () => {
       "https://gateway.example/api/v1/models/vendor%2Fmodel",
     );
     expect(seen?.method).toBe("GET");
-    expect(seen?.headers.get("authorization")).toBe(
-      "Bearer openai-secret",
-    );
+    expect(seen?.headers.get("authorization")).toBe("Bearer openai-secret");
   });
 
   test("uses Anthropic model metadata and required headers", async () => {
