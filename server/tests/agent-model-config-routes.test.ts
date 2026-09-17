@@ -44,6 +44,7 @@ function modelStore(
     get: async () => ({ mode: "global" }),
     update: async () => ({ mode: "global" }),
     resolve: async () => null,
+    resolveManaged: async () => null,
     ...overrides,
   };
 }
