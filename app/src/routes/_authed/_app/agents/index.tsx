@@ -2,8 +2,8 @@ import { IconPlus } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { z } from "zod";
-import { AgentCard } from "@/components/agents/agent-card";
 import { AgentDialog } from "@/components/agents/agent-dialog";
+import { AgentRosterCard } from "@/components/agents/agent-roster-card";
 import { CreateAgentDialog } from "@/components/agents/create-agent-dialog";
 import { SidebarToggleBar } from "@/components/layout/sidebar-toggle";
 import { StaggerItem } from "@/components/layout/stagger";
@@ -105,9 +105,7 @@ function AgentsScreen() {
               {mine.map((agent, index) => {
                 return (
                   <StaggerItem index={index} key={agent.id}>
-                    <Link to="/agents" search={{ agent: agent.id }}>
-                      <AgentCard agent={agent} />
-                    </Link>
+                    <AgentRosterCard agent={agent} />
                   </StaggerItem>
                 );
               })}
@@ -155,9 +153,7 @@ function AgentsScreen() {
               {explore.map((agent, index) => {
                 return (
                   <StaggerItem index={index} key={agent.id}>
-                    <Link to="/agents" search={{ agent: agent.id }}>
-                      <AgentCard agent={agent} />
-                    </Link>
+                    <AgentRosterCard agent={agent} />
                   </StaggerItem>
                 );
               })}
@@ -180,9 +176,9 @@ function AgentsScreen() {
               </EmptyHeader>
             </Empty>
           ) : (
-            // Reached both when the query never failed and `explore` is genuinely empty, and
-            // when it failed but `agents` is defined — a loaded, empty slice either way. Same
-            // plain copy for both: an empty roster is a fact, not an error.
+            // Reached both when the query never failed and `explore` is genuinely empty, and when
+            // it failed but `agents` is defined — a loaded, empty slice either way. Same plain
+            // copy for both: an empty roster is a fact, not an error.
             <Empty className="mt-4 h-[180px] border border-dashed">
               <EmptyHeader>
                 <EmptyTitle className="text-muted-foreground">
