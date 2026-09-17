@@ -2,6 +2,7 @@ import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import type { AppVariables } from "../auth/guards";
 import { parseAgentModelConfigInput } from "./model-config";
+import type { AgentModelConnectionService } from "./model-connection-service";
 import {
   AgentModelCredentialRequiredError,
   type AgentModelConfigStore,
@@ -23,6 +24,11 @@ import {
 export function createAgentModelConfigRoutes(
   models: AgentModelConfigStore,
   requireUser: MiddlewareHandler<{ Variables: AppVariables }>,
+  /**
+   * Optional because safe probing requires a deployment-governed outbound fetch. If the caller did
+   * not build one, there is no Test Connection route rather than a fallback to unrestricted fetch.
+   */
+  connections?: AgentModelConnectionService,
 ) {
   const routes = new Hono<{ Variables: AppVariables }>();
 
@@ -79,6 +85,32 @@ export function createAgentModelConfigRoutes(
       throw error;
     }
   });
+
+  if (connections) {
+    routes.post("/:agentId/model/test", requireUser, async (context) => {
+      const agentId = context.req.param("agentId").trim();
+      if (!agentId) {
+        return context.json({ error: "A Bot id is required." }, 400);
+      }
+
+      try {
+        return context.json({
+          connection: await connections.test(context.var.actor, agentId),
+        });
+      } catch (error) {
+        if (error instanceof AgentNotFoundError) {
+          return context.json({ error: "Agent not found." }, 404);
+        }
+        if (error instanceof AgentNotManageableError) {
+          return context.json(
+            { error: "Agent model settings cannot be managed by this actor." },
+            403,
+          );
+        }
+        throw error;
+      }
+    });
+  }
 
   return routes;
 }
