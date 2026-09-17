@@ -3,6 +3,8 @@ import {
   agentModelSpecifier,
   parseAgentModelConfigInput,
   publicAgentModelConfig,
+  storedAgentModelConfigFromOverride,
+  withStoredAgentModelConfig,
 } from "../src/agents/model-config";
 
 describe("parseAgentModelConfigInput", () => {
@@ -136,6 +138,56 @@ describe("parseAgentModelConfigInput", () => {
   });
 });
 
+describe("agent model override persistence", () => {
+  const stored = {
+    provider: "openai" as const,
+    model: "gpt-5.6",
+    credentialId: "vault-row-id",
+    temperature: 0.4,
+    fallback: { provider: "google" as const, model: "gemini-2.5-pro" },
+  };
+
+  test("preserves unrelated agent overrides", () => {
+    const result = withStoredAgentModelConfig(
+      { computer: { internet: false }, futureFlag: true },
+      stored,
+    );
+    expect(result).toEqual({
+      computer: { internet: false },
+      futureFlag: true,
+      model: stored,
+    });
+  });
+
+  test("removing model settings leaves unrelated overrides alone", () => {
+    expect(
+      withStoredAgentModelConfig(
+        { model: stored, computer: { internet: false } },
+        null,
+      ),
+    ).toEqual({ computer: { internet: false } });
+    expect(withStoredAgentModelConfig({ model: stored }, null)).toBeNull();
+  });
+
+  test("reads a valid override and fails closed on malformed stored data", () => {
+    expect(storedAgentModelConfigFromOverride({ model: stored })).toEqual(stored);
+    expect(
+      storedAgentModelConfigFromOverride({
+        model: { provider: "openai", model: "bad\nmodel" },
+      }),
+    ).toBeNull();
+    expect(
+      storedAgentModelConfigFromOverride({
+        model: {
+          provider: "google",
+          model: "gemini-2.5-pro",
+          baseUrl: "https://proxy.example/v1",
+        },
+      }),
+    ).toBeNull();
+  });
+});
+
 describe("publicAgentModelConfig", () => {
   test("global mode has no secret state", () => {
     expect(publicAgentModelConfig(null, true)).toEqual({ mode: "global" });
@@ -156,14 +208,30 @@ describe("publicAgentModelConfig", () => {
       provider: "openai",
       model: "gpt-5.6",
       temperature: 0.4,
+      credentialSource: "custom",
       hasApiKey: true,
     });
     expect("credentialId" in result).toBe(false);
   });
+
+  test("reports deployment/global credential mode without pretending a custom key exists", () => {
+    expect(
+      publicAgentModelConfig(
+        { provider: "anthropic", model: "claude-sonnet" },
+        true,
+      ),
+    ).toEqual({
+      mode: "custom",
+      provider: "anthropic",
+      model: "claude-sonnet",
+      credentialSource: "global",
+      hasApiKey: false,
+    });
+  });
 });
 
 test("agentModelSpecifier uses CopilotKit's provider/model form", () => {
-  expect(agentModelSpecifier({ provider: "google", model: "gemini-2.5-pro" })).toBe(
-    "google/gemini-2.5-pro",
-  );
+  expect(
+    agentModelSpecifier({ provider: "google", model: "gemini-2.5-pro" }),
+  ).toBe("google/gemini-2.5-pro");
 });
