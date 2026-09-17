@@ -2,6 +2,7 @@ export const AGENT_MODEL_PROVIDERS = ["openai", "anthropic", "google"] as const;
 
 export type AgentModelProvider = (typeof AGENT_MODEL_PROVIDERS)[number];
 export type AgentModelMode = "global" | "custom";
+export type AgentModelCredentialSource = "global" | "custom";
 
 export type AgentModelTarget = {
   provider: AgentModelProvider;
@@ -27,10 +28,11 @@ export type StoredAgentModelConfig = {
 /** Safe model settings returned to the browser. Never contains credential material. */
 export type PublicAgentModelConfig =
   | { mode: "global" }
-  | ({ mode: "custom"; hasApiKey: boolean } & Omit<
-      StoredAgentModelConfig,
-      "credentialId"
-    >);
+  | ({
+      mode: "custom";
+      credentialSource: AgentModelCredentialSource;
+      hasApiKey: boolean;
+    } & Omit<StoredAgentModelConfig, "credentialId">);
 
 /**
  * Browser input for model settings. `apiKey` is write-only; an omitted/blank value means preserve
@@ -40,13 +42,16 @@ export type AgentModelConfigInput =
   | { mode: "global" }
   | ({
       mode: "custom";
-      credentialSource: "global" | "custom";
+      credentialSource: AgentModelCredentialSource;
       apiKey?: string;
     } & Omit<StoredAgentModelConfig, "credentialId">);
 
 export type ParseAgentModelConfigResult =
   | { ok: true; value: AgentModelConfigInput }
   | { ok: false; error: string };
+
+/** Namespace inside `agents.override`; tenant package sync deliberately leaves this column alone. */
+export const AGENT_MODEL_OVERRIDE_KEY = "model" as const;
 
 const MAX_MODEL_LENGTH = 160;
 const MAX_API_KEY_LENGTH = 16_384;
@@ -145,9 +150,7 @@ function optionalFallback(value: unknown):
   return { ok: true, value: { provider: value.provider, model } };
 }
 
-/**
- * Validate settings at the HTTP boundary before they can reach the vault or CopilotKit runtime.
- */
+/** Validate settings at the HTTP boundary before they can reach the vault or CopilotKit runtime. */
 export function parseAgentModelConfigInput(
   input: unknown,
 ): ParseAgentModelConfigResult {
@@ -168,14 +171,8 @@ export function parseAgentModelConfigInput(
       error: `Model must be between 1 and ${MAX_MODEL_LENGTH} characters on one line.`,
     };
   }
-  if (
-    input.credentialSource !== "global" &&
-    input.credentialSource !== "custom"
-  ) {
-    return {
-      ok: false,
-      error: "Credential source must be global or custom.",
-    };
+  if (input.credentialSource !== "global" && input.credentialSource !== "custom") {
+    return { ok: false, error: "Credential source must be global or custom." };
   }
 
   const baseUrl = optionalBaseUrl(input.baseUrl);
@@ -185,8 +182,7 @@ export function parseAgentModelConfigInput(
   if (baseUrl.value && input.provider !== "openai") {
     return {
       ok: false,
-      error:
-        "Base URL is currently supported only for OpenAI-compatible models.",
+      error: "Base URL is currently supported only for OpenAI-compatible models.",
     };
   }
   const temperature = optionalNumber(
@@ -221,10 +217,7 @@ export function parseAgentModelConfigInput(
       };
     }
     if (/[\u0000\r\n]/.test(trimmed)) {
-      return {
-        ok: false,
-        error: "API key contains an unsupported character.",
-      };
+      return { ok: false, error: "API key contains an unsupported character." };
     }
     if (trimmed) apiKey = trimmed;
   }
@@ -238,13 +231,67 @@ export function parseAgentModelConfigInput(
       credentialSource: input.credentialSource,
       ...(input.credentialSource === "custom" && apiKey ? { apiKey } : {}),
       ...(baseUrl.value ? { baseUrl: baseUrl.value } : {}),
-      ...(temperature.value !== undefined
-        ? { temperature: temperature.value }
-        : {}),
+      ...(temperature.value !== undefined ? { temperature: temperature.value } : {}),
       ...(maxTokens.value !== undefined ? { maxTokens: maxTokens.value } : {}),
       ...(fallback.value ? { fallback: fallback.value } : {}),
     },
   };
+}
+
+/** Read the model namespace from `agents.override`. Malformed rows fail closed to global defaults. */
+export function storedAgentModelConfigFromOverride(
+  override: unknown,
+): StoredAgentModelConfig | null {
+  if (!isRecord(override)) return null;
+  const raw = override[AGENT_MODEL_OVERRIDE_KEY];
+  if (!isRecord(raw) || !isProvider(raw.provider)) return null;
+
+  const model = modelName(raw.model);
+  if (!model) return null;
+
+  const credentialId =
+    typeof raw.credentialId === "string" && raw.credentialId.trim()
+      ? raw.credentialId.trim()
+      : undefined;
+  const baseUrl = optionalBaseUrl(raw.baseUrl);
+  const temperature = optionalNumber(
+    raw.temperature,
+    "Temperature",
+    MIN_TEMPERATURE,
+    MAX_TEMPERATURE,
+    false,
+  );
+  const maxTokens = optionalNumber(
+    raw.maxTokens,
+    "Max tokens",
+    MIN_MAX_TOKENS,
+    MAX_MAX_TOKENS,
+    true,
+  );
+  const fallback = optionalFallback(raw.fallback);
+  if (!baseUrl.ok || !temperature.ok || !maxTokens.ok || !fallback.ok) return null;
+  if (baseUrl.value && raw.provider !== "openai") return null;
+
+  return {
+    provider: raw.provider,
+    model,
+    ...(credentialId ? { credentialId } : {}),
+    ...(baseUrl.value ? { baseUrl: baseUrl.value } : {}),
+    ...(temperature.value !== undefined ? { temperature: temperature.value } : {}),
+    ...(maxTokens.value !== undefined ? { maxTokens: maxTokens.value } : {}),
+    ...(fallback.value ? { fallback: fallback.value } : {}),
+  };
+}
+
+/** Replace only the model namespace and preserve every unrelated override owned by other features. */
+export function withStoredAgentModelConfig(
+  override: unknown,
+  config: StoredAgentModelConfig | null,
+): Record<string, unknown> | null {
+  const next = isRecord(override) ? { ...override } : {};
+  if (config) next[AGENT_MODEL_OVERRIDE_KEY] = config;
+  else delete next[AGENT_MODEL_OVERRIDE_KEY];
+  return Object.keys(next).length > 0 ? next : null;
 }
 
 export function publicAgentModelConfig(
@@ -253,7 +300,12 @@ export function publicAgentModelConfig(
 ): PublicAgentModelConfig {
   if (!stored) return { mode: "global" };
   const { credentialId: _credentialId, ...safe } = stored;
-  return { mode: "custom", ...safe, hasApiKey };
+  return {
+    mode: "custom",
+    ...safe,
+    credentialSource: stored.credentialId ? "custom" : "global",
+    hasApiKey: stored.credentialId ? hasApiKey : false,
+  };
 }
 
 /** CopilotKit runtime v2 accepts provider/model model specifiers. */
