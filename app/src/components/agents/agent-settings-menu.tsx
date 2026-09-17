@@ -49,12 +49,7 @@ export function AgentSettingsMenu({
           Agent settings
         </DropdownMenuItem>
         <DropdownMenuItem
-          render={
-            <Link
-              search={{ agent: agent.id }}
-              to="/channel/new"
-            />
-          }
+          render={<Link search={{ agent: agent.id }} to="/channel/new" />}
         >
           <IconMessageCircle />
           Start channel
