@@ -16,6 +16,7 @@ import type { ZodType } from "zod";
 import { AbstractAvatar } from "@/components/agents/abstract-avatar";
 import { CallbackTokenPanel } from "@/components/agents/callback-token-panel";
 import { ComputerFilesDialog } from "@/components/computers/computer-files-dialog";
+import { ComputerScreenDialog } from "@/components/computers/computer-screen-dialog";
 import { HandoffPanel } from "@/components/agents/handoff-panel";
 import { InstructionsPanel } from "@/components/agents/instructions-panel";
 import { KnowledgePanel } from "@/components/agents/knowledge-panel";
@@ -271,9 +272,10 @@ function GeneralSection({
   const updateAgent = useMutation(updateAgentMutationOptions(queryClient));
   const computer = useMutation(setComputerStateMutationOptions(queryClient));
   const [filesOpen, setFilesOpen] = useState(false);
+  const [screenOpen, setScreenOpen] = useState(false);
   const [computerStatus, setComputerStatus] = useState<string | null>(null);
 
-  const startComputer = async (openFiles = false) => {
+  const startComputer = async (after?: "files" | "screen") => {
     // A managed coworker runs at somebody else's AG-UI endpoint. It has no deployment-owned
     // browser/workspace to start, so keep the local Computer gateway a built-in-only action even if
     // this callback is reached through a stale render.
@@ -284,7 +286,8 @@ function GeneralSection({
       setComputerStatus(
         "Computer ready. Browser profile and workspace are preserved.",
       );
-      if (openFiles) setFilesOpen(true);
+      if (after === "files") setFilesOpen(true);
+      if (after === "screen") setScreenOpen(true);
     } catch (error) {
       setComputerStatus(
         error instanceof Error
@@ -376,7 +379,7 @@ function GeneralSection({
           <ItemActions>
             <Button
               disabled={computer.isPending}
-              onClick={() => void startComputer(false)}
+              onClick={() => void startComputer()}
               size="sm"
               variant="outline"
             >
@@ -384,7 +387,15 @@ function GeneralSection({
             </Button>
             <Button
               disabled={computer.isPending}
-              onClick={() => void startComputer(true)}
+              onClick={() => void startComputer("screen")}
+              size="sm"
+              variant="outline"
+            >
+              Screen
+            </Button>
+            <Button
+              disabled={computer.isPending}
+              onClick={() => void startComputer("files")}
               size="sm"
             >
               Files
@@ -417,12 +428,20 @@ function GeneralSection({
       </Item>
 
       {profile.builtIn ? (
-        <ComputerFilesDialog
-          botId={agentId}
-          botName={profile.name}
-          onOpenChange={setFilesOpen}
-          open={filesOpen}
-        />
+        <>
+          <ComputerFilesDialog
+            botId={agentId}
+            botName={profile.name}
+            onOpenChange={setFilesOpen}
+            open={filesOpen}
+          />
+          <ComputerScreenDialog
+            botId={agentId}
+            botName={profile.name}
+            onOpenChange={setScreenOpen}
+            open={screenOpen}
+          />
+        </>
       ) : null}
     </>
   );
