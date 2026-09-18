@@ -80,7 +80,11 @@ function createdAt(volume: Docker.VolumeInspectInfo): string {
 }
 
 async function removeVolumes() {
-  for (const volume of [names.profileVolume, names.workspaceVolume]) {
+  for (const volume of [
+    names.profileVolume,
+    names.workspaceVolume,
+    names.quarantineVolume,
+  ]) {
     try {
       const info = await withDocker().docker.getVolume(volume).inspect();
       if (
@@ -102,6 +106,7 @@ beforeAll(async () => {
     withDocker().docker.getContainer(names.container),
     withDocker().docker.getVolume(names.profileVolume),
     withDocker().docker.getVolume(names.workspaceVolume),
+    withDocker().docker.getVolume(names.quarantineVolume),
   ]) {
     try {
       await resource.inspect();
@@ -235,6 +240,55 @@ describe("a computer that never answers", () => {
   }, 90_000);
 });
 
+describe("destructive Reset", () => {
+  test("removes owned profile, workspace and quarantine even after the container is already gone", async () => {
+    await withDocker().supervisor.ensure(names, {
+      image: IMAGE,
+      environment: [],
+    });
+    await withDocker()
+      .docker.getContainer(names.container)
+      .remove({ force: true, v: false });
+
+    expect(await withDocker().supervisor.reset(names)).toBe(true);
+    for (const volume of [
+      names.profileVolume,
+      names.workspaceVolume,
+      names.quarantineVolume,
+    ]) {
+      await expect(
+        withDocker().docker.getVolume(volume).inspect(),
+      ).rejects.toMatchObject({
+        statusCode: 404,
+      });
+    }
+  }, 90_000);
+
+  test("refuses a foreign volume with the predictable Bot name instead of mounting it", async () => {
+    await withDocker().docker.createVolume({
+      Name: names.workspaceVolume,
+      Labels: {
+        "someone.else": "true",
+        "openbot.test-fixture": namespace,
+      },
+    });
+
+    await expect(
+      withDocker().supervisor.ensure(names, { image: IMAGE, environment: [] }),
+    ).rejects.toBeInstanceOf(withDocker().supervisor.NameHeldError);
+
+    const volume = await withDocker()
+      .docker.getVolume(names.workspaceVolume)
+      .inspect();
+    expect(volume.Labels?.["someone.else"]).toBe("true");
+    await expect(
+      withDocker().docker.getContainer(names.container).inspect(),
+    ).rejects.toMatchObject({
+      statusCode: 404,
+    });
+  }, 90_000);
+});
+
 describe("a computer built from an older image", () => {
   /*
    * The upgrade that never reached the computers.
@@ -265,8 +319,8 @@ describe("a computer built from an older image", () => {
     // Volumes outlive the container by not being removed with it; that is what makes replacing one
     // safe, and it is the whole reason this fix is allowed to be automatic.
     const volumes = await Promise.all(
-      [names.profileVolume, names.workspaceVolume].map((volume) =>
-        withDocker().docker.getVolume(volume).inspect(),
+      [names.profileVolume, names.workspaceVolume, names.quarantineVolume].map(
+        (volume) => withDocker().docker.getVolume(volume).inspect(),
       ),
     );
 
@@ -290,8 +344,8 @@ describe("a computer built from an older image", () => {
 
     // The same volumes, not replacements: a Bot keeps its logins and its files across an upgrade.
     const kept = await Promise.all(
-      [names.profileVolume, names.workspaceVolume].map((volume) =>
-        withDocker().docker.getVolume(volume).inspect(),
+      [names.profileVolume, names.workspaceVolume, names.quarantineVolume].map(
+        (volume) => withDocker().docker.getVolume(volume).inspect(),
       ),
     );
     expect(kept.map(createdAt)).toEqual(volumes.map(createdAt));

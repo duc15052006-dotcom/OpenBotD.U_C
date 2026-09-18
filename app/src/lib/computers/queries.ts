@@ -9,6 +9,8 @@ export type ComputerResourceMetrics = {
   memoryLimitBytes: number | null;
   diskUsedBytes: number;
   diskTotalBytes: number;
+  /** False means the Computer container is awake but its browser has gone idle/sleep. */
+  browserRunning?: boolean;
 };
 
 export type ComputerProfile = {

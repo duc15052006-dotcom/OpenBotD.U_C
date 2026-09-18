@@ -29,9 +29,11 @@ RUN bun install --frozen-lockfile
 
 COPY agent-computer/src ./src
 
-# Durable working directory. Bot-produced files that must survive replacement live here.
-RUN mkdir -p /workspace
+# Durable working directory plus a separate untrusted-download holding area. Browser downloads do
+# not land in /workspace and therefore cannot become ordinary Agent files merely by being downloaded.
+RUN mkdir -p /workspace /quarantine
 ENV WORKSPACE_DIR=/workspace
+ENV QUARANTINE_DIR=/quarantine
 
 ENV PORT=4100
 EXPOSE 4100

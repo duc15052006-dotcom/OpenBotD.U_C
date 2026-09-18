@@ -103,9 +103,9 @@ export type ComputerState = {
  * holding the name and decides whether it should be there.
  */
 export class NameHeldError extends Error {
-  constructor(container: string) {
+  constructor(resource: string, kind: "container" | "volume" = "container") {
     super(
-      `A container named ${container} already exists and does not belong to this deployment. Remove it or rename it; it will not be adopted.`,
+      `A ${kind} named ${resource} already exists and does not belong to this Bot in this deployment. Remove it or rename it; it will not be adopted.`,
     );
     this.name = "NameHeldError";
   }
@@ -124,6 +124,15 @@ export class ComputerNotAnsweringError extends Error {
       `The computer in ${container} started but did not answer within ${timeoutMs}ms. It is not ready, so it is not being handed out.`,
     );
     this.name = "ComputerNotAnsweringError";
+  }
+}
+
+export class ComputerCapacityError extends Error {
+  constructor(maxActive: number) {
+    super(
+      `The per-Agent Computer limit is ${maxActive}. Stop or let another Computer sleep before starting one more, or raise COMPUTER_MAX_ACTIVE if this host has enough RAM.`,
+    );
+    this.name = "ComputerCapacityError";
   }
 }
 
@@ -175,6 +184,14 @@ function ours(labels: Record<string, string> | undefined): boolean {
   return (labels[NAMESPACE_LABEL] ?? DEFAULT_NAMESPACE) === NAMESPACE;
 }
 
+/** A resource belongs to this exact Bot as well as this deployment. */
+function oursFor(
+  names: ComputerNames,
+  labels: Record<string, string> | undefined,
+): boolean {
+  return ours(labels) && labels?.[BOT_LABEL] === names.botId;
+}
+
 /** The labels every container and volume this supervisor creates carries. */
 function labelsFor(names: ComputerNames): Record<string, string> {
   return {
@@ -208,6 +225,57 @@ export async function listOwned(): Promise<ComputerState[]> {
 }
 
 /**
+ * Starts in flight count against capacity before Docker reports them running.
+ *
+ * The reservation closes the ordinary race where two Bots both see N-1 running containers and both
+ * decide they are the last free slot. Bun can interleave them across the Docker list await, so the
+ * first one to resume records its reservation before the second counts.
+ */
+const startingBots = new Map<string, number>();
+
+function holdStartingBot(botId: string): void {
+  startingBots.set(botId, (startingBots.get(botId) ?? 0) + 1);
+}
+
+function releaseStartingBot(botId: string): void {
+  const remaining = (startingBots.get(botId) ?? 1) - 1;
+  if (remaining <= 0) startingBots.delete(botId);
+  else startingBots.set(botId, remaining);
+}
+
+async function reserveActiveSlot(
+  names: ComputerNames,
+  maxActive: number | undefined,
+): Promise<boolean> {
+  if (!maxActive) return false;
+  const existing = await inspectOwned(names);
+  if (existing?.status === "running") return false;
+
+  // A second request for the same Bot shares the one capacity slot but holds its own reference, so
+  // the first request finishing cannot make that slot look free while the second is still starting.
+  if (startingBots.has(names.botId)) {
+    holdStartingBot(names.botId);
+    return true;
+  }
+
+  const running = (await listOwned()).filter(
+    (computer) => computer.status === "running",
+  ).length;
+
+  // Another request may have reserved this Bot while Docker was answering the list above.
+  if (startingBots.has(names.botId)) {
+    holdStartingBot(names.botId);
+    return true;
+  }
+
+  if (running + startingBots.size >= maxActive) {
+    throw new ComputerCapacityError(maxActive);
+  }
+  holdStartingBot(names.botId);
+  return true;
+}
+
+/**
  * One computer, if this supervisor owns it.
  *
  * Ownership is checked here rather than at the call sites, so no verb can skip it by accident.
@@ -221,7 +289,7 @@ async function inspectOwned(names: ComputerNames): Promise<{
 } | null> {
   try {
     const info = await docker.getContainer(names.container).inspect();
-    if (!ours(info.Config?.Labels)) return null;
+    if (!oursFor(names, info.Config?.Labels)) return null;
     const published =
       info.NetworkSettings?.Ports?.[COMPUTER_PORT]?.[0]?.HostPort;
     const port = parseHostPort(published);
@@ -248,6 +316,90 @@ async function inspectOwned(names: ComputerNames): Promise<{
     if ((error as { statusCode?: number }).statusCode === 404) return null;
     throw new DockerUnavailableError(String(error));
   }
+}
+
+/**
+ * Whether a predictable named volume is absent, ours, or belongs to somebody else.
+ *
+ * Docker creates a missing named volume automatically when a container binds it. That behaviour is
+ * convenient and unsafe here: if createVolume raced with a delete, or a foreign volume held the
+ * name, blindly proceeding would mount storage whose ownership labels were never checked.
+ */
+async function volumeOwnership(
+  names: ComputerNames,
+  volume: string,
+): Promise<"missing" | "ours" | "foreign"> {
+  try {
+    const info = await docker.getVolume(volume).inspect();
+    return oursFor(names, info.Labels) ? "ours" : "foreign";
+  } catch (error) {
+    if (statusOf(error) === 404) return "missing";
+    throw new DockerUnavailableError(String(error));
+  }
+}
+
+async function ensureOwnedVolume(
+  names: ComputerNames,
+  volume: string,
+): Promise<void> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await docker.createVolume({
+        Name: volume,
+        Labels: labelsFor(names),
+      });
+      return;
+    } catch (error) {
+      if (statusOf(error) !== 409) {
+        throw new DockerUnavailableError(String(error));
+      }
+      const ownership = await volumeOwnership(names, volume);
+      if (ownership === "ours") return;
+      if (ownership === "foreign") throw new NameHeldError(volume, "volume");
+      if (attempt === 0) {
+        await pause(100);
+        continue;
+      }
+      throw new DockerUnavailableError(
+        `Volume ${volume} disappeared while its ownership was being verified.`,
+      );
+    }
+  }
+}
+
+/**
+ * Remove only storage this exact Bot owns.
+ *
+ * A just-removed container can keep a volume "in use" briefly on some engines. Retry that bounded
+ * transition, but never report Reset complete while the volume still exists.
+ */
+async function removeOwnedVolume(
+  names: ComputerNames,
+  volume: string,
+): Promise<boolean> {
+  const ownership = await volumeOwnership(names, volume);
+  if (ownership === "missing") return false;
+  if (ownership === "foreign") throw new NameHeldError(volume, "volume");
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    try {
+      await docker.getVolume(volume).remove();
+      return true;
+    } catch (error) {
+      const status = statusOf(error);
+      if (status === 404) return true;
+      if (status === 409 && attempt < 7) {
+        await pause(125);
+        continue;
+      }
+      throw new DockerUnavailableError(
+        status === 409
+          ? `Volume ${volume} is still in use after the Computer was removed; Reset was not completed.`
+          : String(error),
+      );
+    }
+  }
+  return false;
 }
 
 /**
@@ -391,6 +543,10 @@ export type EnsureOptions = {
    */
   runtime?: string;
   memoryBytes?: number;
+  /** Docker CPU quota in NanoCPUs; 1_000_000_000 is one logical CPU. */
+  nanoCpus?: number;
+  /** Deployment-wide ceiling for concurrently running per-Bot Computer containers. */
+  maxActiveComputers?: number;
   /**
    * How long a started computer is given to answer before the attempt is called a failure.
    *
@@ -422,6 +578,9 @@ function hostConfig(names: ComputerNames, options: EnsureOptions) {
     Binds: [
       `${names.profileVolume}:/profiles`,
       `${names.workspaceVolume}:/workspace`,
+      // Browser downloads are untrusted until explicitly released. Keep them off the ordinary
+      // workspace and in a volume that belongs only to this Bot.
+      `${names.quarantineVolume}:/quarantine`,
       // Read-only: a computer asks the agent what it is and has nothing to tell it.
       ...(options.spireSocketVolume
         ? [`${options.spireSocketVolume}:/tmp/spire-agent/public:ro`]
@@ -452,6 +611,7 @@ function hostConfig(names: ComputerNames, options: EnsureOptions) {
     CapDrop: ["ALL"],
     // A runaway Bot is a resource problem for itself, not for every other Bot on the host.
     ...(options.memoryBytes ? { Memory: options.memoryBytes } : {}),
+    ...(options.nanoCpus ? { NanoCpus: options.nanoCpus } : {}),
     PidsLimit: options.pidsLimit ?? 512,
     // Chromium's sandbox wants shared memory and will crash on the 64MB default.
     ShmSize: 1_073_741_824,
@@ -469,139 +629,138 @@ export async function ensure(
   names: ComputerNames,
   options: EnsureOptions,
 ): Promise<ComputerState> {
-  for (let attempt = ATTEMPTS; attempt > 0; attempt--) {
-    let existing = await inspectOwned(names);
+  const reserved = await reserveActiveSlot(names, options.maxActiveComputers);
+  try {
+    for (let attempt = ATTEMPTS; attempt > 0; attempt--) {
+      let existing = await inspectOwned(names);
 
-    /*
-     * An upgrade reaches a computer that already exists, by replacing it.
-     *
-     * Safe to do: the profile and the workspace are named volumes and are not removed here, so the
-     * Bot keeps its logins and its files and comes back on the new image. That is the difference
-     * between this and `reset`, which is asked for deliberately and does take the profile.
-     *
-     * What is lost is whatever the old computer held in memory: an open page and an outstanding
-     * request for a person to take the wheel. Both belong to a run that the upgrade has already
-     * ended, and a Bot carrying an hour-old handover prompt into a new conversation is the symptom
-     * that found this.
-     */
-    if (
-      existing &&
-      (!(await runsCurrentImage(existing.image, options.image)) ||
-        !holdsCurrentToken(existing.token, options.environment))
-    ) {
-      try {
-        await docker
-          .getContainer(names.container)
-          .remove({ force: true, v: false });
-      } catch (error) {
-        // Already gone is the outcome this wanted. Anything else and the computer stays as it is,
-        // which is the same answer this function gave before it could replace one at all.
-        if (statusOf(error) !== 404) {
-          throw new DockerUnavailableError(String(error));
-        }
-      }
-      existing = null;
-    }
-
-    if (!existing) {
-      for (const volume of [names.profileVolume, names.workspaceVolume]) {
+      /*
+       * An upgrade reaches a computer that already exists, by replacing it.
+       *
+       * Safe to do: the profile and the workspace are named volumes and are not removed here, so the
+       * Bot keeps its logins and its files and comes back on the new image. That is the difference
+       * between this and `reset`, which is asked for deliberately and does take the profile.
+       *
+       * What is lost is whatever the old computer held in memory: an open page and an outstanding
+       * request for a person to take the wheel. Both belong to a run that the upgrade has already
+       * ended, and a Bot carrying an hour-old handover prompt into a new conversation is the symptom
+       * that found this.
+       */
+      if (
+        existing &&
+        (!(await runsCurrentImage(existing.image, options.image)) ||
+          !holdsCurrentToken(existing.token, options.environment))
+      ) {
         try {
-          await docker.createVolume({
-            Name: volume,
+          await docker
+            .getContainer(names.container)
+            .remove({ force: true, v: false });
+        } catch (error) {
+          // Already gone is the outcome this wanted. Anything else and the computer stays as it is,
+          // which is the same answer this function gave before it could replace one at all.
+          if (statusOf(error) !== 404) {
+            throw new DockerUnavailableError(String(error));
+          }
+        }
+        existing = null;
+      }
+
+      if (!existing) {
+        for (const volume of [
+          names.profileVolume,
+          names.workspaceVolume,
+          names.quarantineVolume,
+        ]) {
+          await ensureOwnedVolume(names, volume);
+        }
+
+        try {
+          await docker.createContainer({
+            name: names.container,
+            Image: options.image,
+            // The Bot id is a label because that is what a SPIRE docker workload attestor selects on:
+            // an identity per Bot then falls out of the same fact that names the container.
             Labels: labelsFor(names),
+            Env: options.environment,
+            ExposedPorts: { [COMPUTER_PORT]: {} },
+            Healthcheck: COMPUTER_HEALTHCHECK,
+            HostConfig: hostConfig(names, options),
           });
         } catch (error) {
-          // Already exists is success for a restarted supervisor.
           if (statusOf(error) !== 409) {
+            throw new DockerUnavailableError(String(error));
+          }
+          /*
+           * Something already holds the name, and 409 does not say what.
+           *
+           * Usually it is the other request creating the same computer, which is what idempotent means
+           * here, and its container is the one this request goes on to start. The other case is a
+           * container this supervisor does not own: left by a deployment that used a different
+           * namespace, made by hand, or put there by somebody who guessed the name. Ownership is
+           * checked everywhere else precisely so that one is treated as absent, and starting it here
+           * on a 409 was the one path that adopted it instead: `start` names the container, not the
+           * container this supervisor made, and the address goes back to a server that then sends the
+           * deployment's computer token to whatever is listening inside it.
+           */
+          if (!(await inspectOwned(names))) {
+            throw new NameHeldError(names.container);
+          }
+        }
+      }
+
+      if (existing?.status !== "running") {
+        try {
+          await docker.getContainer(names.container).start();
+        } catch (error) {
+          const status = statusOf(error);
+          /*
+           * Gone between creating it and starting it: a concurrent reset took the container away, the
+           * create this request lost the race to was itself rolled back, or the daemon has not yet
+           * published the name this request just created. Nothing about the Bot has changed, so the
+           * answer is to build it again rather than to report Docker as unreachable.
+           *
+           * Paused first, because the retry is the whole budget. Going straight back round arrives
+           * within a millisecond, sees the same not-yet-published name, and spends the second attempt
+           * on the state that failed the first: the first browser action a Bot is ever asked for fails,
+           * and the second one, seconds later, works. One poll interval is what the health wait uses
+           * for the same question.
+           */
+          if (status === 404 && attempt > 1) {
+            await pause(250);
+            continue;
+          }
+          // 304 is "already running", which is success for an idempotent verb.
+          if (status !== 304) {
             throw new DockerUnavailableError(String(error));
           }
         }
       }
 
-      try {
-        await docker.createContainer({
-          name: names.container,
-          Image: options.image,
-          // The Bot id is a label because that is what a SPIRE docker workload attestor selects on:
-          // an identity per Bot then falls out of the same fact that names the container.
-          Labels: labelsFor(names),
-          Env: options.environment,
-          ExposedPorts: { [COMPUTER_PORT]: {} },
-          Healthcheck: COMPUTER_HEALTHCHECK,
-          HostConfig: hostConfig(names, options),
-        });
-      } catch (error) {
-        if (statusOf(error) !== 409) {
-          throw new DockerUnavailableError(String(error));
-        }
-        /*
-         * Something already holds the name, and 409 does not say what.
-         *
-         * Usually it is the other request creating the same computer, which is what idempotent means
-         * here, and its container is the one this request goes on to start. The other case is a
-         * container this supervisor does not own: left by a deployment that used a different
-         * namespace, made by hand, or put there by somebody who guessed the name. Ownership is
-         * checked everywhere else precisely so that one is treated as absent, and starting it here
-         * on a 409 was the one path that adopted it instead: `start` names the container, not the
-         * container this supervisor made, and the address goes back to a server that then sends the
-         * deployment's computer token to whatever is listening inside it.
-         */
-        if (!(await inspectOwned(names))) {
-          throw new NameHeldError(names.container);
-        }
-      }
+      const settled = await inspectOwned(names);
+      await waitUntilAnswering(names.container, options.readyTimeoutMs);
+
+      return {
+        botId: names.botId,
+        container: names.container,
+        status: settled?.status ?? "unknown",
+        ...(settled?.startedAt ? { startedAt: settled.startedAt } : {}),
+        ...(settled?.port ? { port: settled.port } : {}),
+        // How to reach it. A name on a shared network, a host port otherwise, the caller does not have
+        // to know which arrangement it is in.
+        ...(options.network
+          ? { url: `http://${names.container}:4100` }
+          : settled?.port
+            ? { url: `http://127.0.0.1:${settled.port}` }
+            : {}),
+      };
     }
 
-    if (existing?.status !== "running") {
-      try {
-        await docker.getContainer(names.container).start();
-      } catch (error) {
-        const status = statusOf(error);
-        /*
-         * Gone between creating it and starting it: a concurrent reset took the container away, the
-         * create this request lost the race to was itself rolled back, or the daemon has not yet
-         * published the name this request just created. Nothing about the Bot has changed, so the
-         * answer is to build it again rather than to report Docker as unreachable.
-         *
-         * Paused first, because the retry is the whole budget. Going straight back round arrives
-         * within a millisecond, sees the same not-yet-published name, and spends the second attempt
-         * on the state that failed the first: the first browser action a Bot is ever asked for fails,
-         * and the second one, seconds later, works. One poll interval is what the health wait uses
-         * for the same question.
-         */
-        if (status === 404 && attempt > 1) {
-          await pause(250);
-          continue;
-        }
-        // 304 is "already running", which is success for an idempotent verb.
-        if (status !== 304) {
-          throw new DockerUnavailableError(String(error));
-        }
-      }
-    }
-
-    const settled = await inspectOwned(names);
-    await waitUntilAnswering(names.container, options.readyTimeoutMs);
-
-    return {
-      botId: names.botId,
-      container: names.container,
-      status: settled?.status ?? "unknown",
-      ...(settled?.startedAt ? { startedAt: settled.startedAt } : {}),
-      ...(settled?.port ? { port: settled.port } : {}),
-      // How to reach it. A name on a shared network, a host port otherwise, the caller does not have
-      // to know which arrangement it is in.
-      ...(options.network
-        ? { url: `http://${names.container}:4100` }
-        : settled?.port
-          ? { url: `http://127.0.0.1:${settled.port}` }
-          : {}),
-    };
+    throw new DockerUnavailableError(
+      `The computer for ${names.botId} was removed while it was being started.`,
+    );
+  } finally {
+    if (reserved) releaseStartingBot(names.botId);
   }
-
-  throw new DockerUnavailableError(
-    `The computer for ${names.botId} was removed while it was being started.`,
-  );
 }
 
 /** Stop this Bot's computer. Its storage is untouched, so its logins survive. */
@@ -622,30 +781,35 @@ export async function stop(names: ComputerNames): Promise<boolean> {
 /**
  * Throw this Bot's computer away so the next request builds a clean one.
  *
- * The profile goes with it. The workspace is left alone: files a Bot was asked to produce are work,
- * not browser state.
+ * Reset is deliberately destructive: the browser profile, workspace and download quarantine go
+ * with it. Stop and restart are the non-destructive lifecycle controls; reset is the recovery path
+ * for an unwanted
+ * download, broken profile or workspace state and must leave no persistent Computer data behind.
  */
 export async function reset(names: ComputerNames): Promise<boolean> {
-  if (!(await inspectOwned(names))) return false;
+  const existing = await inspectOwned(names);
+  let hadState = existing !== null;
 
-  try {
-    await docker
-      .getContainer(names.container)
-      .remove({ force: true, v: false });
-  } catch (error) {
-    if ((error as { statusCode?: number }).statusCode !== 404) {
-      throw new DockerUnavailableError(String(error));
+  if (existing) {
+    try {
+      await docker
+        .getContainer(names.container)
+        .remove({ force: true, v: false });
+    } catch (error) {
+      if (statusOf(error) !== 404) {
+        throw new DockerUnavailableError(String(error));
+      }
     }
   }
 
-  try {
-    await docker.getVolume(names.profileVolume).remove();
-  } catch (error) {
-    const status = (error as { statusCode?: number }).statusCode;
-    // 409 is "still in use", which resolves itself once the container is gone.
-    if (status !== 404 && status !== 409) {
-      throw new DockerUnavailableError(String(error));
-    }
+  // Volumes can outlive a crashed or manually removed container. Reset means "clean machine", not
+  // "remove storage only when a container happens to exist", so orphaned owned volumes count too.
+  for (const volume of [
+    names.profileVolume,
+    names.workspaceVolume,
+    names.quarantineVolume,
+  ]) {
+    hadState = (await removeOwnedVolume(names, volume)) || hadState;
   }
-  return true;
+  return hadState;
 }

@@ -222,6 +222,12 @@ export interface ComputerGateway {
     botId: string,
     actor: ActionActor,
   ): Promise<{ wasRunning: boolean }>;
+  stopAllComputers(actor: ActionActor): Promise<{
+    attempted: number;
+    stopped: string[];
+    alreadyStopped: string[];
+    failed: { botId: string; error: string }[];
+  }>;
   resetComputer(
     botId: string,
     actor: ActionActor,
@@ -809,16 +815,74 @@ export function createComputerGateway(
     },
 
     /**
-     * Wipe a computer's profile.
+     * Emergency stop for every Computer this deployment owns.
      *
-     * The most destructive button we have. Every login the Bot had is gone and no undo exists, so the
-     * row is written whatever happens next.
+     * Best effort, not fail-fast: one broken container must not prevent the others from stopping.
+     * Persistent volumes are untouched, so this is safe to press under pressure and every Bot can
+     * resume later.
+     */
+    async stopAllComputers(actor: ActionActor) {
+      const computers = await provider.list();
+      const botIds = [...new Set(computers.map((computer) => computer.botId))];
+      const outcomes = await Promise.all(
+        botIds.map(async (botId) => {
+          try {
+            const result = await provider.stop(botId);
+            await writeControlEvent(auditStore, "computer.stopped", {
+              botId,
+              actor,
+              reason: result.wasRunning
+                ? "the computer was stopped by Kill All Computers"
+                : "Kill All Computers found the computer already stopped",
+            });
+            return { botId, wasRunning: result.wasRunning } as const;
+          } catch (error) {
+            return {
+              botId,
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "The computer could not be stopped.",
+            } as const;
+          }
+        }),
+      );
+
+      return {
+        attempted: botIds.length,
+        stopped: outcomes
+          .filter(
+            (outcome): outcome is { botId: string; wasRunning: true } =>
+              "wasRunning" in outcome && outcome.wasRunning === true,
+          )
+          .map((outcome) => outcome.botId),
+        alreadyStopped: outcomes
+          .filter(
+            (outcome): outcome is { botId: string; wasRunning: false } =>
+              "wasRunning" in outcome && outcome.wasRunning === false,
+          )
+          .map((outcome) => outcome.botId),
+        failed: outcomes
+          .filter(
+            (outcome): outcome is { botId: string; error: string } =>
+              "error" in outcome,
+          )
+          .map(({ botId, error }) => ({ botId, error })),
+      };
+    },
+
+    /**
+     * Wipe a computer's persistent state.
+     *
+     * The most destructive button we have. Browser profile, logins, workspace and quarantine are
+     * gone and no undo exists, so the row is written whatever happens next.
      */
     async resetComputer(botId: string, actor: ActionActor) {
       const result = await provider.reset(botId);
       /*
        * The row goes in HERE, before the two deletes below, because this line is the point of no
-       * return: the profile is already gone and nothing after it can put the logins back.
+       * return: the persistent Computer state is already gone and nothing after it can put the
+       * logins or workspace back.
        *
        * Both clears are Postgres deletes, and a connection reset, a failover or a statement timeout
        * in either used to throw before the row was written -- leaving a computer wiped with nothing

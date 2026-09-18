@@ -16,6 +16,7 @@ import type { ZodType } from "zod";
 import { AbstractAvatar } from "@/components/agents/abstract-avatar";
 import { CallbackTokenPanel } from "@/components/agents/callback-token-panel";
 import { ComputerFilesDialog } from "@/components/computers/computer-files-dialog";
+import { ComputerScreenDialog } from "@/components/computers/computer-screen-dialog";
 import { HandoffPanel } from "@/components/agents/handoff-panel";
 import { InstructionsPanel } from "@/components/agents/instructions-panel";
 import { KnowledgePanel } from "@/components/agents/knowledge-panel";
@@ -78,7 +79,10 @@ import {
 } from "@/lib/agents/mutations";
 import { type AgentProfile, agentQueryOptions } from "@/lib/agents/queries";
 import { isComposing } from "@/lib/composing";
-import { setComputerStateMutationOptions } from "@/lib/computers/mutations";
+import {
+  type ComputerAction,
+  setComputerStateMutationOptions,
+} from "@/lib/computers/mutations";
 import { agentPluginsQueryOptions } from "@/lib/plugins/queries";
 import { readToolName } from "@/lib/plugins/tool-name";
 
@@ -271,9 +275,11 @@ function GeneralSection({
   const updateAgent = useMutation(updateAgentMutationOptions(queryClient));
   const computer = useMutation(setComputerStateMutationOptions(queryClient));
   const [filesOpen, setFilesOpen] = useState(false);
+  const [screenOpen, setScreenOpen] = useState(false);
+  const [confirmingReset, setConfirmingReset] = useState(false);
   const [computerStatus, setComputerStatus] = useState<string | null>(null);
 
-  const startComputer = async (openFiles = false) => {
+  const startComputer = async (after?: "files" | "screen") => {
     // A managed coworker runs at somebody else's AG-UI endpoint. It has no deployment-owned
     // browser/workspace to start, so keep the local Computer gateway a built-in-only action even if
     // this callback is reached through a stale render.
@@ -284,12 +290,36 @@ function GeneralSection({
       setComputerStatus(
         "Computer ready. Browser profile and workspace are preserved.",
       );
-      if (openFiles) setFilesOpen(true);
+      if (after === "files") setFilesOpen(true);
+      if (after === "screen") setScreenOpen(true);
     } catch (error) {
       setComputerStatus(
         error instanceof Error
           ? error.message
           : "The computer could not be started.",
+      );
+    }
+  };
+
+  const changeComputerState = async (
+    action: Exclude<ComputerAction, "start">,
+  ) => {
+    if (!profile.builtIn) return;
+    setComputerStatus(null);
+    try {
+      await computer.mutateAsync({ botId: agentId, action });
+      setComputerStatus(
+        action === "reset"
+          ? "Computer reset. Browser logins and workspace files were erased."
+          : action === "restart"
+            ? "Computer restarted. Browser profile and workspace were preserved."
+            : "Computer stopped. Browser profile and workspace were preserved.",
+      );
+    } catch (error) {
+      setComputerStatus(
+        error instanceof Error
+          ? error.message
+          : `The computer could not be ${action}.`,
       );
     }
   };
@@ -376,7 +406,7 @@ function GeneralSection({
           <ItemActions>
             <Button
               disabled={computer.isPending}
-              onClick={() => void startComputer(false)}
+              onClick={() => void startComputer()}
               size="sm"
               variant="outline"
             >
@@ -384,10 +414,56 @@ function GeneralSection({
             </Button>
             <Button
               disabled={computer.isPending}
-              onClick={() => void startComputer(true)}
+              onClick={() => void startComputer("screen")}
+              size="sm"
+              variant="outline"
+            >
+              Screen
+            </Button>
+            <Button
+              disabled={computer.isPending}
+              onClick={() => void startComputer("files")}
               size="sm"
             >
               Files
+            </Button>
+          </ItemActions>
+        </Item>
+      ) : null}
+
+      {profile.builtIn ? (
+        <Item variant="muted">
+          <ItemContent>
+            <ItemTitle>Computer lifecycle</ItemTitle>
+            <ItemDescription>
+              Stop and Restart keep browser logins and workspace files. Reset
+              permanently erases both and creates a clean Computer next time.
+            </ItemDescription>
+          </ItemContent>
+          <ItemActions className="flex-wrap justify-end">
+            <Button
+              disabled={computer.isPending}
+              onClick={() => void changeComputerState("restart")}
+              size="sm"
+              variant="outline"
+            >
+              Restart
+            </Button>
+            <Button
+              disabled={computer.isPending}
+              onClick={() => void changeComputerState("stop")}
+              size="sm"
+              variant="outline"
+            >
+              Stop
+            </Button>
+            <Button
+              disabled={computer.isPending}
+              onClick={() => setConfirmingReset(true)}
+              size="sm"
+              variant="destructive"
+            >
+              Reset
             </Button>
           </ItemActions>
         </Item>
@@ -417,12 +493,58 @@ function GeneralSection({
       </Item>
 
       {profile.builtIn ? (
-        <ComputerFilesDialog
-          botId={agentId}
-          botName={profile.name}
-          onOpenChange={setFilesOpen}
-          open={filesOpen}
-        />
+        <>
+          <ComputerFilesDialog
+            botId={agentId}
+            botName={profile.name}
+            onOpenChange={setFilesOpen}
+            open={filesOpen}
+          />
+          <ComputerScreenDialog
+            botId={agentId}
+            botName={profile.name}
+            onOpenChange={setScreenOpen}
+            open={screenOpen}
+          />
+          <Dialog
+            onOpenChange={(next) => !next && setConfirmingReset(false)}
+            open={confirmingReset}
+          >
+            <DialogContent
+              className="max-w-sm"
+              overlayClassName="bg-black/20 supports-backdrop-filter:backdrop-blur-sm"
+            >
+              <DialogHeader>
+                <DialogTitle>Reset {profile.name}&apos;s Computer?</DialogTitle>
+                <DialogDescription>
+                  This permanently deletes its browser profile, logins and all
+                  workspace files. Stop or Restart instead if you want to keep
+                  them.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button
+                  onClick={() => setConfirmingReset(false)}
+                  size="sm"
+                  variant="outline"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  disabled={computer.isPending}
+                  onClick={async () => {
+                    await changeComputerState("reset");
+                    setConfirmingReset(false);
+                  }}
+                  size="sm"
+                  variant="destructive"
+                >
+                  {computer.isPending ? "Resetting…" : "Reset Computer"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </>
       ) : null}
     </>
   );

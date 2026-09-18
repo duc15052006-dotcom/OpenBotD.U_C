@@ -28,6 +28,8 @@ export function environmentFor(
     );
   }
   const browserMode = rawBrowserMode;
+  const workspaceMaxBytes =
+    env.COMPUTER_WORKSPACE_MAX_BYTES?.trim() || undefined;
   return [
     `COMPUTER_BOT_ID=${botId}`,
     ...(computerToken ? [`COMPUTER_TOKEN=${computerToken}`] : []),
@@ -35,6 +37,9 @@ export function environmentFor(
       ? ["SPIFFE_ENDPOINT_SOCKET=/tmp/spire-agent/public/api.sock"]
       : []),
     ...(browserMode ? [`COMPUTER_BROWSER_MODE=${browserMode}`] : []),
+    ...(workspaceMaxBytes
+      ? [`COMPUTER_WORKSPACE_MAX_BYTES=${workspaceMaxBytes}`]
+      : []),
     ...passthrough.map(([key, value]) => `${key}=${value ?? ""}`),
   ];
 }

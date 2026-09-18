@@ -1467,9 +1467,9 @@ async fn start_stack_inner<R: tauri::Runtime>(
 /// This dedicated command accepts no setting, value, root or policy from the webview.
 /// Stop what this started, and only what this started.
 ///
-/// A Bot's computer belongs to the supervisor rather than to Compose and is deliberately left
-/// running: its files and browser profile are volumes, and killing it here would sign somebody out
-/// of everything their Bot had logged into.
+/// A Bot's computer belongs to the supervisor rather than to Compose, so shutdown must explicitly
+/// stop those runtime-created containers too. Their persistent volumes are left intact: Stop ends
+/// CPU/RAM/network activity without signing the Bot out or deleting its workspace.
 #[tauri::command]
 async fn stop_stack<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -3356,14 +3356,41 @@ fn main() {
             let _ = window
                 .eval("document.addEventListener('contextmenu', e => e.preventDefault(), true)");
         })
-        // Closing the window hides it. A tray application whose window is destroyed on close has a
-        // menu item that points at nothing: `get_webview_window` returns None from then on, and the
-        // only way back is to quit and start again, with a stack still running that nothing on
-        // screen can reach.
+        // Closing the window is an explicit product choice, not a hidden background transition.
+        //
+        // Minimize never comes through this branch and keeps running. The X button asks whether the
+        // person wants the same tray behaviour or a real Exit. A real Exit goes through RunEvent::
+        // ExitRequested below, which is the one cleanup path that retires host processes, folder
+        // operations, supervisor-created Computers and Compose services before the process exits.
+        //
+        // The window itself is hidden rather than destroyed for "Keep running": the tray's Open item
+        // must still have a WebView to restore, and a hidden window costs far less than an Agent
+        // Computer while making the running state recoverable and visible.
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+
                 api.prevent_close();
-                let _ = window.hide();
+                let app = window.app_handle();
+                let keep_running = app
+                    .dialog()
+                    .message(
+                        "OpenBot is still running. Keep Agents and Computers running in the system tray, or exit OpenBot and stop all Agents?",
+                    )
+                    .title("Close OpenBot")
+                    .kind(MessageDialogKind::Warning)
+                    .buttons(MessageDialogButtons::OkCancelCustom(
+                        "Keep running in tray".into(),
+                        "Exit and stop all Agents".into(),
+                    ))
+                    .parent(window)
+                    .blocking_show();
+
+                if keep_running {
+                    let _ = window.hide();
+                } else {
+                    app.exit(0);
+                }
             }
         })
         .setup(|app| {
@@ -3391,8 +3418,14 @@ fn main() {
             let open = MenuItem::with_id(app, "open", "Open OpenBot", true, None::<&str>)?;
             let updates =
                 MenuItem::with_id(app, "updates", "Check for updates", true, None::<&str>)?;
-            let stop = MenuItem::with_id(app, "stop", "Stop OpenBot", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "Quit", true, quit_menu_accelerator())?;
+            let stop = MenuItem::with_id(app, "stop", "STOP ALL AGENTS", true, None::<&str>)?;
+            let quit = MenuItem::with_id(
+                app,
+                "quit",
+                "Exit OpenBot and stop all Agents",
+                true,
+                quit_menu_accelerator(),
+            )?;
             let menu = Menu::with_items(app, &[&open, &updates, &stop, &quit])?;
 
             TrayIconBuilder::with_id("openbot")
@@ -3414,9 +3447,15 @@ fn main() {
             let window_open = MenuItem::with_id(app, "open", "Open OpenBot", true, None::<&str>)?;
             let window_updates =
                 MenuItem::with_id(app, "updates", "Check for updates", true, None::<&str>)?;
-            let window_stop = MenuItem::with_id(app, "stop", "Stop OpenBot", true, None::<&str>)?;
-            let window_quit =
-                MenuItem::with_id(app, "quit", "Quit", true, quit_menu_accelerator())?;
+            let window_stop =
+                MenuItem::with_id(app, "stop", "STOP ALL AGENTS", true, None::<&str>)?;
+            let window_quit = MenuItem::with_id(
+                app,
+                "quit",
+                "Exit OpenBot and stop all Agents",
+                true,
+                quit_menu_accelerator(),
+            )?;
             // A submenu, because a top-level entry in a menu bar has to be one to open at all.
             let openbot = Submenu::with_items(
                 app,

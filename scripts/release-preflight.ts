@@ -147,6 +147,248 @@ function checkDesktopBoundary(): void {
   }
 }
 
+function checkComputerSandboxBoundary(): void {
+  const compose = read("docker-compose.yml");
+  const supervisor = read("supervisor/src/docker.ts");
+  const supervisorIndex = read("supervisor/src/index.ts");
+  const names = read("supervisor/src/names.ts");
+  const policy = read("server/src/computer/policy-store.ts");
+  const schema = read("server/src/computer/schema.ts");
+  const stack = read("desktop/src-tauri/src/stack.rs");
+
+  for (const evidence of [
+    `COMPUTER_MEMORY_BYTES: \${COMPUTER_MEMORY_BYTES:-2147483648}`,
+    `COMPUTER_NANO_CPUS: \${COMPUTER_NANO_CPUS:-2000000000}`,
+    `COMPUTER_MAX_ACTIVE: \${COMPUTER_MAX_ACTIVE:-3}`,
+    `COMPUTER_WORKSPACE_MAX_BYTES: \${COMPUTER_WORKSPACE_MAX_BYTES:-4294967296}`,
+  ]) {
+    if (!compose.includes(evidence)) {
+      fail(`computer: Windows-first resource ceiling is missing ${evidence}`);
+    }
+  }
+
+  for (const evidence of [
+    'SecurityOpt: ["no-new-privileges:true"]',
+    'CapDrop: ["ALL"]',
+    "Memory: options.memoryBytes",
+    "NanoCpus: options.nanoCpus",
+    "PidsLimit: options.pidsLimit ?? 512",
+    `\${names.profileVolume}:/profiles`,
+    `\${names.workspaceVolume}:/workspace`,
+    `\${names.quarantineVolume}:/quarantine`,
+  ]) {
+    if (!supervisor.includes(evidence)) {
+      fail(`computer: per-Agent confinement is missing ${evidence}`);
+    }
+  }
+
+  for (const evidence of [
+    "computerMemoryBytes(process.env.COMPUTER_MEMORY_BYTES)",
+    "computerNanoCpus(process.env.COMPUTER_NANO_CPUS)",
+    "computerMaxActive(process.env.COMPUTER_MAX_ACTIVE)",
+  ]) {
+    if (!supervisorIndex.includes(evidence)) {
+      fail(`computer: strict resource parsing is missing ${evidence}`);
+    }
+  }
+
+  for (const evidence of [
+    `profileVolume: \`\${NAMESPACE}-profile-\${botId}\``,
+    `workspaceVolume: \`\${NAMESPACE}-workspace-\${botId}\``,
+    `quarantineVolume: \`\${NAMESPACE}-quarantine-\${botId}\``,
+  ]) {
+    if (!names.includes(evidence)) {
+      fail(`computer: per-Agent storage naming is missing ${evidence}`);
+    }
+  }
+
+  if (!policy.includes(`deny: ['tool.name == "computer_run_command"']`)) {
+    fail("computer: raw shell execution is not denied by default");
+  }
+  if (
+    !schema.includes('"computer_run_command"') ||
+    !schema.includes("COMPUTER_ACTING_TOOLS")
+  ) {
+    fail("computer: command execution is not pinned as a governed acting tool");
+  }
+
+  for (const evidence of [
+    "pub fn stop_computers(",
+    'const SUPERVISOR_FILTER: &str = "label=openbot.supervisor=true"',
+    "label=openbot.namespace=",
+    "if !stop_computers(engine, root)?",
+  ]) {
+    if (!stack.includes(evidence)) {
+      fail(
+        `desktop: Quit/Stop no longer proves per-Agent Computer shutdown through ${evidence}`,
+      );
+    }
+  }
+
+  for (const evidence of [
+    "STOP ALL AGENTS",
+    "Exit OpenBot and stop all Agents",
+    "WindowEvent::CloseRequested",
+    "window.hide()",
+  ]) {
+    if (!read("desktop/src-tauri/src/main.rs").includes(evidence)) {
+      fail(
+        `desktop: Agent runtime state is no longer explicit through ${evidence}`,
+      );
+    }
+  }
+
+  for (const evidence of [
+    "removeOwnedVolume(names, volume)",
+    'if (ownership === "foreign") throw new NameHeldError(volume, "volume")',
+    "Reset was not completed",
+    "await ensureOwnedVolume(names, volume)",
+  ]) {
+    if (!supervisor.includes(evidence)) {
+      fail(
+        `computer: owned-volume fail-closed lifecycle is missing ${evidence}`,
+      );
+    }
+  }
+
+  for (const evidence of [
+    "names.profileVolume",
+    "names.workspaceVolume",
+    "names.quarantineVolume",
+  ]) {
+    if (!supervisor.includes(evidence)) {
+      fail(
+        `computer: Reset/storage boundary lost persistent volume ${evidence}`,
+      );
+    }
+  }
+
+  const downloads = read("agent-computer/src/download-quarantine.ts");
+  const profiles = read("agent-computer/src/profiles.ts");
+  for (const evidence of [
+    'status: "quarantined"',
+    "download.saveAs(file)",
+    "quarantineDirectoryFor(root, botId)",
+  ]) {
+    if (!downloads.includes(evidence)) {
+      fail(`computer: download quarantine is missing ${evidence}`);
+    }
+  }
+  if (
+    !profiles.includes("quarantineDownload(QUARANTINE_ROOT, botId, download)")
+  ) {
+    fail("computer: Chromium downloads no longer flow through quarantine");
+  }
+
+  const screen = read(
+    "app/src/components/computers/computer-screen-dialog.tsx",
+  );
+  for (const evidence of [
+    "Take control",
+    "Return control",
+    "Stop viewing",
+    "releaseControl(botId)",
+    "sendHumanInput",
+  ]) {
+    if (!screen.includes(evidence)) {
+      fail(`computer: human live-screen control is missing ${evidence}`);
+    }
+  }
+
+  const computersPage = read("app/src/routes/_authed/admin/computers.tsx");
+  const computerRoutes = read("server/src/computer/routes.ts");
+  for (const evidence of [
+    "KILL ALL COMPUTERS",
+    "ComputerScreenDialog",
+    "Browser sleeping",
+    "Reset",
+  ]) {
+    if (!computersPage.includes(evidence)) {
+      fail(`computer: Computer Manager is missing ${evidence}`);
+    }
+  }
+  if (!computerRoutes.includes('routes.post("/stop-all"')) {
+    fail("computer: admin Kill All Computers route is missing");
+  }
+
+  const workspace = read("agent-computer/src/workspace.ts");
+  for (const evidence of [
+    "totalBytes: 4 * 1024 * 1024 * 1024",
+    "workspaceUsageBytes",
+    "withWriteLock",
+  ]) {
+    if (!workspace.includes(evidence)) {
+      fail(`computer: workspace disk quota is missing ${evidence}`);
+    }
+  }
+}
+
+function checkInteractiveComputerControls(): void {
+  const screen = read(
+    "app/src/components/computers/computer-screen-dialog.tsx",
+  );
+  const computers = read("app/src/routes/_authed/admin/computers.tsx");
+  const desktop = read("desktop/src-tauri/src/main.rs");
+  const profiles = read("agent-computer/src/profiles.ts");
+  const quarantine = read("agent-computer/src/download-quarantine.ts");
+
+  for (const evidence of [
+    "Take control",
+    "Return control",
+    "Stop viewing",
+    "releaseControl(botId)",
+    'sendHumanInput(botId, "click"',
+    'sendHumanInput(botId, "type"',
+    "supplySecret(botId, secretText)",
+  ]) {
+    if (!screen.includes(evidence)) {
+      fail(`computer: human screen/takeover control is missing ${evidence}`);
+    }
+  }
+
+  for (const evidence of [
+    "ComputerScreenDialog",
+    "showScreen(computer.botId, computer.running)",
+    '"KILL ALL COMPUTERS"',
+    "resourceSummary(computer.metrics)",
+  ]) {
+    if (!computers.includes(evidence)) {
+      fail(`computer: Computer Manager is missing ${evidence}`);
+    }
+  }
+
+  for (const evidence of [
+    '"Keep running in tray"',
+    '"Exit and stop all Agents"',
+    '"STOP ALL AGENTS"',
+    "app.exit(0)",
+  ]) {
+    if (!desktop.includes(evidence)) {
+      fail(`desktop: close/stop runtime choice is missing ${evidence}`);
+    }
+  }
+
+  for (const evidence of [
+    'target.on("download"',
+    "quarantineDownload(QUARANTINE_ROOT, botId, download)",
+  ]) {
+    if (!profiles.includes(evidence)) {
+      fail(
+        `computer: browser download quarantine wiring is missing ${evidence}`,
+      );
+    }
+  }
+
+  for (const evidence of [
+    'status: "quarantined"',
+    "Do not execute or export without explicit user approval",
+  ]) {
+    if (!quarantine.includes(evidence)) {
+      fail(`computer: download quarantine metadata is missing ${evidence}`);
+    }
+  }
+}
+
 function checkReleaseWiring(): void {
   const releaseProposalSource = read(".github/workflows/release.yml");
   for (const evidence of [
@@ -738,6 +980,8 @@ function checkVersionSources(): void {
 }
 
 checkDesktopBoundary();
+checkComputerSandboxBoundary();
+checkInteractiveComputerControls();
 checkReleaseWiring();
 checkDesktopUpdatePath();
 checkDesktopCredentialBoundary();

@@ -1,4 +1,5 @@
 import { readFile, statfs } from "node:fs/promises";
+import { workspaceUsageBytes } from "./workspace";
 import { availableParallelism } from "node:os";
 
 export type ComputerResourceMetrics = {
@@ -106,10 +107,24 @@ async function memoryMetrics(): Promise<{
   };
 }
 
-async function diskMetrics(workspaceRoot: string): Promise<{
+async function diskMetrics(
+  workspaceRoot: string,
+  workspaceLimitBytes?: number,
+): Promise<{
   diskUsedBytes: number;
   diskTotalBytes: number;
 }> {
+  if (
+    workspaceLimitBytes !== undefined &&
+    Number.isFinite(workspaceLimitBytes) &&
+    workspaceLimitBytes > 0
+  ) {
+    return {
+      diskUsedBytes: await workspaceUsageBytes(workspaceRoot),
+      diskTotalBytes: workspaceLimitBytes,
+    };
+  }
+
   try {
     const stats = await statfs(workspaceRoot);
     const total = finiteNonNegative(stats.blocks * stats.bsize);
@@ -127,18 +142,20 @@ async function diskMetrics(workspaceRoot: string): Promise<{
  * Resource usage of this computer container.
  *
  * CPU and memory prefer cgroup v2 so Chromium child processes count too. The process fallback keeps
- * local development useful on hosts without cgroups. Disk is the filesystem that backs /workspace.
+ * local development useful on hosts without cgroups. When a workspace quota is configured, Disk is
+ * the Agent's workspace usage against that quota; otherwise it falls back to the backing filesystem.
  */
 export async function collectComputerMetrics(
   workspaceRoot: string,
   sampleMs = 100,
+  workspaceLimitBytes?: number,
 ): Promise<ComputerResourceMetrics> {
   const [cpu, memory, disk] = await Promise.all([
     cgroupCpuPercent(sampleMs).then((value) =>
       value === null ? processCpuPercent(sampleMs) : value,
     ),
     memoryMetrics(),
-    diskMetrics(workspaceRoot),
+    diskMetrics(workspaceRoot, workspaceLimitBytes),
   ]);
 
   return {

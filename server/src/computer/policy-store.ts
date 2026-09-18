@@ -41,17 +41,15 @@ export const ACTION_POLICY_TOPIC = "action_policy_changed";
 /**
  * What a deployment allows when it has not said otherwise.
  *
- * Permissive, and written down rather than implied. The policy engine is fail-closed: an absent
- * policy denies, and a broken rule denies. This default is a separate decision, and it is deliberately
- * an explicit `allow` rather than a special "unconfigured" case, because a Bot that can look at a page
- * and touch nothing is not a product, and the first thing a person does is ask it to fill something in.
- *
- * Out of the box, OpenBot lets a Bot act, records every action and gives an administrator somewhere
- * to write the first restriction.
+ * Browser, workspace and brokered-tool actions retain the existing out-of-box behaviour, but a raw
+ * shell is different: it can execute a downloaded script, install packages and exercise every
+ * capability the container exposes. Note 2313 treats unknown executable/script execution as a
+ * high-risk action, so command execution is denied until an administrator explicitly removes or
+ * replaces this rule. The policy engine still fails closed for absent/broken policies.
  */
 export const DEFAULT_ACTION_POLICY: ActionPolicy = {
   mode: "enforce",
-  deny: [],
+  deny: ['tool.name == "computer_run_command"'],
   allow: ["true"],
 };
 

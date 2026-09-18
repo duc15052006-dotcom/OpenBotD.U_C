@@ -39,6 +39,7 @@ import { type BrowserContext, chromium, type Page } from "playwright";
 import { profileDirectoryFor } from "./bot-id";
 import { browserModeFromEnv } from "./browser-mode";
 import { chooseEvictions, chooseIdle } from "./browser-eviction";
+import { quarantineDownload } from "./download-quarantine";
 import { egressFor, egressLabel } from "./egress";
 import { numberFromEnv, settleWithin } from "./env";
 import { chooseLivePage } from "./live-page";
@@ -93,6 +94,7 @@ const SINGLETON_FILES = ["SingletonLock", "SingletonSocket", "SingletonCookie"];
  */
 const SANDBOX_ENABLED = process.env.COMPUTER_SANDBOX === "on";
 const BROWSER_MODE = browserModeFromEnv(process.env.COMPUTER_BROWSER_MODE);
+const QUARANTINE_ROOT = process.env.QUARANTINE_DIR?.trim() || "/quarantine";
 
 const LAUNCH_ARGS = [
   ...(SANDBOX_ENABLED ? [] : ["--no-sandbox"]),
@@ -433,6 +435,31 @@ export function createProfiles(root: string, onClosed: BrowserClosed) {
         });
         // Persistent contexts open with a page already; reuse it rather than leaving an extra blank tab.
         const page = context.pages()[0] ?? (await context.newPage());
+        const watchDownloads = (target: Page) => {
+          target.on("download", (download) => {
+            void quarantineDownload(QUARANTINE_ROOT, botId, download)
+              .then(({ file }) => {
+                console.info(
+                  JSON.stringify({
+                    type: "computer-download-quarantined",
+                    botId,
+                    file,
+                  }),
+                );
+              })
+              .catch((error) => {
+                console.error(
+                  JSON.stringify({
+                    type: "computer-download-quarantine-failed",
+                    botId,
+                    error: String(error),
+                  }),
+                );
+              });
+          });
+        };
+        for (const opened of context.pages()) watchDownloads(opened);
+
         const record: LiveBrowser = {
           context,
           page,
@@ -455,6 +482,7 @@ export function createProfiles(root: string, onClosed: BrowserClosed) {
         // Without this the Bot stays pinned to the page it launched with, so a sign-in the site opens
         // in a new window is neither shown to the person taking the wheel nor reachable by input.
         context.on("page", (opened) => {
+          watchDownloads(opened);
           record.retarget();
           // A popup closes itself when it succeeds, and the record must move back to the opener
           // rather than leave a closed page to be read as a dead browser.
