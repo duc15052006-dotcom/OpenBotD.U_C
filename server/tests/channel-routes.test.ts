@@ -280,11 +280,7 @@ describe("channel routes", () => {
         },
       ],
     });
-    expect(store.calls).toContainEqual([
-      "listDelegations",
-      actor,
-      "channel-1",
-    ]);
+    expect(store.calls).toContainEqual(["listDelegations", actor, "channel-1"]);
   });
 
   test("attaches authentication middleware to every route before calling the store", async () => {

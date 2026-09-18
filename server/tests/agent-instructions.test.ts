@@ -15,7 +15,9 @@ import {
 describe("per-Agent instructions", () => {
   test("normalizes writes and accepts clearing", () => {
     expect(
-      parseAgentInstructionsInput({ instructions: "  Cite primary sources.  " }),
+      parseAgentInstructionsInput({
+        instructions: "  Cite primary sources.  ",
+      }),
     ).toEqual({
       ok: true,
       value: { instructions: "Cite primary sources." },
@@ -110,8 +112,8 @@ describe("per-Agent instructions", () => {
       type: "remote_ag_ui",
     });
     expect(
-      (registered as { standingMessage?: { content?: string } })
-        .standingMessage?.content,
+      (registered as { standingMessage?: { content?: string } }).standingMessage
+        ?.content,
     ).toContain("Prefer primary sources.");
   });
 

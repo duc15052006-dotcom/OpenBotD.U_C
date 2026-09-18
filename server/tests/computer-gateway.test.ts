@@ -259,7 +259,9 @@ describe("the computer gateway", () => {
       diskUsedBytes: 2147483648,
       diskTotalBytes: 4294967296,
     });
-    expect(requests.some((request) => new URL(request.url).pathname === "/metrics")).toBe(true);
+    expect(
+      requests.some((request) => new URL(request.url).pathname === "/metrics"),
+    ).toBe(true);
   });
 
   test("never sends the computer token to an unsafe provider metrics address", async () => {
@@ -291,7 +293,9 @@ describe("the computer gateway", () => {
     expect(calls).toContain("stop:bot-1");
     expect(calls.some((call) => call.startsWith("reset:"))).toBe(false);
     // One locate happened for the setup snapshot and one for the restart wake.
-    expect(addressedAs.filter((botId) => botId === "bot-1").length).toBeGreaterThanOrEqual(2);
+    expect(
+      addressedAs.filter((botId) => botId === "bot-1").length,
+    ).toBeGreaterThanOrEqual(2);
     expect(rows.at(-1)?.eventType).toBe("computer.restarted");
   });
 
