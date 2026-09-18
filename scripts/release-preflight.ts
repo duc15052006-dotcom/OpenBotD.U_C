@@ -527,7 +527,7 @@ function checkProviderConnectionTest(): void {
     "model_probe_never_allowed_host",
     "metadata.google.internal",
     "169, 254, 169, 254",
-    "64:ff9b",
+    "0x00, 0x64, 0xff, 0x9b",
   ]) {
     if (!native.includes(evidence)) {
       fail(`desktop: native provider test is missing ${evidence}`);
