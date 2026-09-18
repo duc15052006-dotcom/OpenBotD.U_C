@@ -28,7 +28,7 @@ export function environmentFor(
     );
   }
   const browserMode = rawBrowserMode;
-  const workspaceMaxBytes = env.COMPUTER_WORKSPACE_MAX_BYTES?.trim() || undefined;
+  const workspaceMaxBytes =\n    env.COMPUTER_WORKSPACE_MAX_BYTES?.trim() || undefined;
   return [
     `COMPUTER_BOT_ID=${botId}`,
     ...(computerToken ? [`COMPUTER_TOKEN=${computerToken}`] : []),
