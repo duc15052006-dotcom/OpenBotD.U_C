@@ -49,7 +49,7 @@ export const ACTION_POLICY_TOPIC = "action_policy_changed";
  */
 export const DEFAULT_ACTION_POLICY: ActionPolicy = {
   mode: "enforce",
-  deny: ['intent == "run_command"'],
+  deny: ['tool.name == "computer_run_command"'],
   allow: ["true"],
 };
 

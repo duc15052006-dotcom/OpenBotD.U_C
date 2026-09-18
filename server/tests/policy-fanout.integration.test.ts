@@ -63,7 +63,7 @@ describe("a rule added on one server", () => {
     const listener = await startPolicyListener(databaseUrl, otherServer);
 
     try {
-      expect(otherServer.get().deny).toEqual([]);
+      expect(otherServer.get().deny).toEqual(DEFAULT_ACTION_POLICY.deny);
 
       await wroteIt.set({ mode: "enforce", deny: [RULE], allow: ["true"] });
 
@@ -89,8 +89,12 @@ describe("a rule added on one server", () => {
     try {
       await wroteIt.reset();
 
-      await until(() => otherServer.get().deny.length === 0);
-      expect(otherServer.get().deny).toEqual([]);
+      await until(
+        () =>
+          JSON.stringify(otherServer.get().deny) ===
+          JSON.stringify(DEFAULT_ACTION_POLICY.deny),
+      );
+      expect(otherServer.get().deny).toEqual(DEFAULT_ACTION_POLICY.deny);
       expect(otherServer.get().allow).toEqual(DEFAULT_ACTION_POLICY.allow);
     } finally {
       await listener.stop();
@@ -145,15 +149,18 @@ describe("a server that was not listening when it changed", () => {
     const wroteIt = createPolicyStore(DEFAULT_ACTION_POLICY, database);
     const wasDown = createPolicyStore(DEFAULT_ACTION_POLICY, database);
     await wasDown.load();
-    expect(wasDown.get().deny).toEqual([]);
+    expect(wasDown.get().deny).toEqual(DEFAULT_ACTION_POLICY.deny);
 
     // Changed while nothing on this server is listening.
     await wroteIt.set({ mode: "enforce", deny: [RULE], allow: ["true"] });
-    expect(wasDown.get().deny).toEqual([]);
+    expect(wasDown.get().deny).toEqual(DEFAULT_ACTION_POLICY.deny);
 
     const listener = await startPolicyListener(databaseUrl, wasDown);
     try {
-      await until(() => wasDown.get().deny.length > 0);
+      await until(
+        () =>
+          wasDown.get().deny.length === 1 && wasDown.get().deny[0] === RULE,
+      );
       expect(wasDown.get().deny).toEqual([RULE]);
     } finally {
       await listener.stop();
@@ -192,7 +199,7 @@ describe("the announcement itself", () => {
 
       // Nothing was saved, so nothing should have been announced and nobody should have moved.
       await new Promise((resolve) => setTimeout(resolve, 200));
-      expect(listening.get().deny).toEqual([]);
+      expect(listening.get().deny).toEqual(DEFAULT_ACTION_POLICY.deny);
     } finally {
       await listener.stop();
     }

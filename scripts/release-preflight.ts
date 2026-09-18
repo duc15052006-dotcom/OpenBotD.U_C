@@ -202,7 +202,7 @@ function checkComputerSandboxBoundary(): void {
     }
   }
 
-  if (!policy.includes(`deny: ['intent == "run_command"']`)) {
+  if (!policy.includes(`deny: ['tool.name == "computer_run_command"']`)) {
     fail("computer: raw shell execution is not denied by default");
   }
   if (
@@ -311,7 +311,9 @@ function checkComputerSandboxBoundary(): void {
 }
 
 function checkInteractiveComputerControls(): void {
-  const screen = read("app/src/components/computers/computer-screen-dialog.tsx");
+  const screen = read(
+    "app/src/components/computers/computer-screen-dialog.tsx",
+  );
   const computers = read("app/src/routes/_authed/admin/computers.tsx");
   const desktop = read("desktop/src-tauri/src/main.rs");
   const profiles = read("agent-computer/src/profiles.ts");
@@ -322,8 +324,8 @@ function checkInteractiveComputerControls(): void {
     '"Return control"',
     '"Stop viewing"',
     "releaseControl(botId)",
-    "sendHumanInput(botId, \"click\"",
-    "sendHumanInput(botId, \"type\"",
+    'sendHumanInput(botId, "click"'
+    'sendHumanInput(botId, "type"'
     "supplySecret(botId, secretText)",
   ]) {
     if (!screen.includes(evidence)) {
@@ -358,7 +360,9 @@ function checkInteractiveComputerControls(): void {
     "quarantineDownload(QUARANTINE_ROOT, botId, download)",
   ]) {
     if (!profiles.includes(evidence)) {
-      fail(`computer: browser download quarantine wiring is missing ${evidence}`);
+      fail(
+        `computer: browser download quarantine wiring is missing ${evidence}`,
+      );
     }
   }
 

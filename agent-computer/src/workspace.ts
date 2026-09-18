@@ -427,7 +427,6 @@ async function nearestExistingAncestor(
   }
 }
 
-
 /** Bytes occupied by ordinary files inside a workspace, without following symlinks outside it. */
 export async function workspaceUsageBytes(root: string): Promise<number> {
   let total = 0;
