@@ -540,138 +540,138 @@ export async function ensure(
   const reserved = await reserveActiveSlot(names, options.maxActiveComputers);
   try {
     for (let attempt = ATTEMPTS; attempt > 0; attempt--) {
-    let existing = await inspectOwned(names);
+      let existing = await inspectOwned(names);
 
-    /*
-     * An upgrade reaches a computer that already exists, by replacing it.
-     *
-     * Safe to do: the profile and the workspace are named volumes and are not removed here, so the
-     * Bot keeps its logins and its files and comes back on the new image. That is the difference
-     * between this and `reset`, which is asked for deliberately and does take the profile.
-     *
-     * What is lost is whatever the old computer held in memory: an open page and an outstanding
-     * request for a person to take the wheel. Both belong to a run that the upgrade has already
-     * ended, and a Bot carrying an hour-old handover prompt into a new conversation is the symptom
-     * that found this.
-     */
-    if (
-      existing &&
-      (!(await runsCurrentImage(existing.image, options.image)) ||
-        !holdsCurrentToken(existing.token, options.environment))
-    ) {
-      try {
-        await docker
-          .getContainer(names.container)
-          .remove({ force: true, v: false });
-      } catch (error) {
-        // Already gone is the outcome this wanted. Anything else and the computer stays as it is,
-        // which is the same answer this function gave before it could replace one at all.
-        if (statusOf(error) !== 404) {
-          throw new DockerUnavailableError(String(error));
-        }
-      }
-      existing = null;
-    }
-
-    if (!existing) {
-      for (const volume of [
-        names.profileVolume,
-        names.workspaceVolume,
-        names.quarantineVolume,
-      ]) {
+      /*
+       * An upgrade reaches a computer that already exists, by replacing it.
+       *
+       * Safe to do: the profile and the workspace are named volumes and are not removed here, so the
+       * Bot keeps its logins and its files and comes back on the new image. That is the difference
+       * between this and `reset`, which is asked for deliberately and does take the profile.
+       *
+       * What is lost is whatever the old computer held in memory: an open page and an outstanding
+       * request for a person to take the wheel. Both belong to a run that the upgrade has already
+       * ended, and a Bot carrying an hour-old handover prompt into a new conversation is the symptom
+       * that found this.
+       */
+      if (
+        existing &&
+        (!(await runsCurrentImage(existing.image, options.image)) ||
+          !holdsCurrentToken(existing.token, options.environment))
+      ) {
         try {
-          await docker.createVolume({
-            Name: volume,
+          await docker
+            .getContainer(names.container)
+            .remove({ force: true, v: false });
+        } catch (error) {
+          // Already gone is the outcome this wanted. Anything else and the computer stays as it is,
+          // which is the same answer this function gave before it could replace one at all.
+          if (statusOf(error) !== 404) {
+            throw new DockerUnavailableError(String(error));
+          }
+        }
+        existing = null;
+      }
+
+      if (!existing) {
+        for (const volume of [
+          names.profileVolume,
+          names.workspaceVolume,
+          names.quarantineVolume,
+        ]) {
+          try {
+            await docker.createVolume({
+              Name: volume,
+              Labels: labelsFor(names),
+            });
+          } catch (error) {
+            // Already exists is success for a restarted supervisor.
+            if (statusOf(error) !== 409) {
+              throw new DockerUnavailableError(String(error));
+            }
+          }
+        }
+
+        try {
+          await docker.createContainer({
+            name: names.container,
+            Image: options.image,
+            // The Bot id is a label because that is what a SPIRE docker workload attestor selects on:
+            // an identity per Bot then falls out of the same fact that names the container.
             Labels: labelsFor(names),
+            Env: options.environment,
+            ExposedPorts: { [COMPUTER_PORT]: {} },
+            Healthcheck: COMPUTER_HEALTHCHECK,
+            HostConfig: hostConfig(names, options),
           });
         } catch (error) {
-          // Already exists is success for a restarted supervisor.
           if (statusOf(error) !== 409) {
+            throw new DockerUnavailableError(String(error));
+          }
+          /*
+           * Something already holds the name, and 409 does not say what.
+           *
+           * Usually it is the other request creating the same computer, which is what idempotent means
+           * here, and its container is the one this request goes on to start. The other case is a
+           * container this supervisor does not own: left by a deployment that used a different
+           * namespace, made by hand, or put there by somebody who guessed the name. Ownership is
+           * checked everywhere else precisely so that one is treated as absent, and starting it here
+           * on a 409 was the one path that adopted it instead: `start` names the container, not the
+           * container this supervisor made, and the address goes back to a server that then sends the
+           * deployment's computer token to whatever is listening inside it.
+           */
+          if (!(await inspectOwned(names))) {
+            throw new NameHeldError(names.container);
+          }
+        }
+      }
+
+      if (existing?.status !== "running") {
+        try {
+          await docker.getContainer(names.container).start();
+        } catch (error) {
+          const status = statusOf(error);
+          /*
+           * Gone between creating it and starting it: a concurrent reset took the container away, the
+           * create this request lost the race to was itself rolled back, or the daemon has not yet
+           * published the name this request just created. Nothing about the Bot has changed, so the
+           * answer is to build it again rather than to report Docker as unreachable.
+           *
+           * Paused first, because the retry is the whole budget. Going straight back round arrives
+           * within a millisecond, sees the same not-yet-published name, and spends the second attempt
+           * on the state that failed the first: the first browser action a Bot is ever asked for fails,
+           * and the second one, seconds later, works. One poll interval is what the health wait uses
+           * for the same question.
+           */
+          if (status === 404 && attempt > 1) {
+            await pause(250);
+            continue;
+          }
+          // 304 is "already running", which is success for an idempotent verb.
+          if (status !== 304) {
             throw new DockerUnavailableError(String(error));
           }
         }
       }
 
-      try {
-        await docker.createContainer({
-          name: names.container,
-          Image: options.image,
-          // The Bot id is a label because that is what a SPIRE docker workload attestor selects on:
-          // an identity per Bot then falls out of the same fact that names the container.
-          Labels: labelsFor(names),
-          Env: options.environment,
-          ExposedPorts: { [COMPUTER_PORT]: {} },
-          Healthcheck: COMPUTER_HEALTHCHECK,
-          HostConfig: hostConfig(names, options),
-        });
-      } catch (error) {
-        if (statusOf(error) !== 409) {
-          throw new DockerUnavailableError(String(error));
-        }
-        /*
-         * Something already holds the name, and 409 does not say what.
-         *
-         * Usually it is the other request creating the same computer, which is what idempotent means
-         * here, and its container is the one this request goes on to start. The other case is a
-         * container this supervisor does not own: left by a deployment that used a different
-         * namespace, made by hand, or put there by somebody who guessed the name. Ownership is
-         * checked everywhere else precisely so that one is treated as absent, and starting it here
-         * on a 409 was the one path that adopted it instead: `start` names the container, not the
-         * container this supervisor made, and the address goes back to a server that then sends the
-         * deployment's computer token to whatever is listening inside it.
-         */
-        if (!(await inspectOwned(names))) {
-          throw new NameHeldError(names.container);
-        }
-      }
+      const settled = await inspectOwned(names);
+      await waitUntilAnswering(names.container, options.readyTimeoutMs);
+
+      return {
+        botId: names.botId,
+        container: names.container,
+        status: settled?.status ?? "unknown",
+        ...(settled?.startedAt ? { startedAt: settled.startedAt } : {}),
+        ...(settled?.port ? { port: settled.port } : {}),
+        // How to reach it. A name on a shared network, a host port otherwise, the caller does not have
+        // to know which arrangement it is in.
+        ...(options.network
+          ? { url: `http://${names.container}:4100` }
+          : settled?.port
+            ? { url: `http://127.0.0.1:${settled.port}` }
+            : {}),
+      };
     }
-
-    if (existing?.status !== "running") {
-      try {
-        await docker.getContainer(names.container).start();
-      } catch (error) {
-        const status = statusOf(error);
-        /*
-         * Gone between creating it and starting it: a concurrent reset took the container away, the
-         * create this request lost the race to was itself rolled back, or the daemon has not yet
-         * published the name this request just created. Nothing about the Bot has changed, so the
-         * answer is to build it again rather than to report Docker as unreachable.
-         *
-         * Paused first, because the retry is the whole budget. Going straight back round arrives
-         * within a millisecond, sees the same not-yet-published name, and spends the second attempt
-         * on the state that failed the first: the first browser action a Bot is ever asked for fails,
-         * and the second one, seconds later, works. One poll interval is what the health wait uses
-         * for the same question.
-         */
-        if (status === 404 && attempt > 1) {
-          await pause(250);
-          continue;
-        }
-        // 304 is "already running", which is success for an idempotent verb.
-        if (status !== 304) {
-          throw new DockerUnavailableError(String(error));
-        }
-      }
-    }
-
-    const settled = await inspectOwned(names);
-    await waitUntilAnswering(names.container, options.readyTimeoutMs);
-
-    return {
-      botId: names.botId,
-      container: names.container,
-      status: settled?.status ?? "unknown",
-      ...(settled?.startedAt ? { startedAt: settled.startedAt } : {}),
-      ...(settled?.port ? { port: settled.port } : {}),
-      // How to reach it. A name on a shared network, a host port otherwise, the caller does not have
-      // to know which arrangement it is in.
-      ...(options.network
-        ? { url: `http://${names.container}:4100` }
-        : settled?.port
-          ? { url: `http://127.0.0.1:${settled.port}` }
-          : {}),
-    };
-  }
 
     throw new DockerUnavailableError(
       `The computer for ${names.botId} was removed while it was being started.`,
@@ -699,8 +699,9 @@ export async function stop(names: ComputerNames): Promise<boolean> {
 /**
  * Throw this Bot's computer away so the next request builds a clean one.
  *
- * Reset is deliberately destructive: the browser profile, workspace and download quarantine go with it. Stop and
- * restart are the non-destructive lifecycle controls; reset is the recovery path for an unwanted
+ * Reset is deliberately destructive: the browser profile, workspace and download quarantine go
+ * with it. Stop and restart are the non-destructive lifecycle controls; reset is the recovery path
+ * for an unwanted
  * download, broken profile or workspace state and must leave no persistent Computer data behind.
  */
 export async function reset(names: ComputerNames): Promise<boolean> {
