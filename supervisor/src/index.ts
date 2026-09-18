@@ -174,6 +174,9 @@ app.post("/computers/:botId/reset", async (context) => {
     const wasThere = await reset(parsed.names);
     return context.json({ reset: wasThere });
   } catch (error) {
+    if (error instanceof NameHeldError) {
+      return context.json({ error: error.message }, 409);
+    }
     if (error instanceof DockerUnavailableError) {
       return context.json({ error: error.message }, 503);
     }

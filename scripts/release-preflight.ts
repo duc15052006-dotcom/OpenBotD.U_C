@@ -239,6 +239,17 @@ function checkComputerSandboxBoundary(): void {
   }
 
   for (const evidence of [
+    "removeOwnedVolume(names, volume)",
+    'if (ownership === "foreign") throw new NameHeldError(volume, "volume")',
+    "Reset was not completed",
+    "await ensureOwnedVolume(names, volume)",
+  ]) {
+    if (!supervisor.includes(evidence)) {
+      fail(`computer: owned-volume fail-closed lifecycle is missing ${evidence}`);
+    }
+  }
+
+  for (const evidence of [
     "names.profileVolume",
     "names.workspaceVolume",
     "names.quarantineVolume",

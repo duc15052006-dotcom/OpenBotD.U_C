@@ -103,9 +103,9 @@ export type ComputerState = {
  * holding the name and decides whether it should be there.
  */
 export class NameHeldError extends Error {
-  constructor(container: string) {
+  constructor(resource: string, kind: "container" | "volume" = "container") {
     super(
-      `A container named ${container} already exists and does not belong to this deployment. Remove it or rename it; it will not be adopted.`,
+      `A ${kind} named ${resource} already exists and does not belong to this Bot in this deployment. Remove it or rename it; it will not be adopted.`,
     );
     this.name = "NameHeldError";
   }
@@ -182,6 +182,14 @@ export function parseHostPort(value: unknown): number | undefined {
 function ours(labels: Record<string, string> | undefined): boolean {
   if (labels?.[OWNER_LABEL] !== "true") return false;
   return (labels[NAMESPACE_LABEL] ?? DEFAULT_NAMESPACE) === NAMESPACE;
+}
+
+/** A resource belongs to this exact Bot as well as this deployment. */
+function oursFor(
+  names: ComputerNames,
+  labels: Record<string, string> | undefined,
+): boolean {
+  return ours(labels) && labels?.[BOT_LABEL] === names.botId;
 }
 
 /** The labels every container and volume this supervisor creates carries. */
@@ -281,7 +289,7 @@ async function inspectOwned(names: ComputerNames): Promise<{
 } | null> {
   try {
     const info = await docker.getContainer(names.container).inspect();
-    if (!ours(info.Config?.Labels)) return null;
+    if (!oursFor(names, info.Config?.Labels)) return null;
     const published =
       info.NetworkSettings?.Ports?.[COMPUTER_PORT]?.[0]?.HostPort;
     const port = parseHostPort(published);
@@ -308,6 +316,90 @@ async function inspectOwned(names: ComputerNames): Promise<{
     if ((error as { statusCode?: number }).statusCode === 404) return null;
     throw new DockerUnavailableError(String(error));
   }
+}
+
+/**
+ * Whether a predictable named volume is absent, ours, or belongs to somebody else.
+ *
+ * Docker creates a missing named volume automatically when a container binds it. That behaviour is
+ * convenient and unsafe here: if createVolume raced with a delete, or a foreign volume held the
+ * name, blindly proceeding would mount storage whose ownership labels were never checked.
+ */
+async function volumeOwnership(
+  names: ComputerNames,
+  volume: string,
+): Promise<"missing" | "ours" | "foreign"> {
+  try {
+    const info = await docker.getVolume(volume).inspect();
+    return oursFor(names, info.Labels) ? "ours" : "foreign";
+  } catch (error) {
+    if (statusOf(error) === 404) return "missing";
+    throw new DockerUnavailableError(String(error));
+  }
+}
+
+async function ensureOwnedVolume(
+  names: ComputerNames,
+  volume: string,
+): Promise<void> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await docker.createVolume({
+        Name: volume,
+        Labels: labelsFor(names),
+      });
+      return;
+    } catch (error) {
+      if (statusOf(error) !== 409) {
+        throw new DockerUnavailableError(String(error));
+      }
+      const ownership = await volumeOwnership(names, volume);
+      if (ownership === "ours") return;
+      if (ownership === "foreign") throw new NameHeldError(volume, "volume");
+      if (attempt === 0) {
+        await pause(100);
+        continue;
+      }
+      throw new DockerUnavailableError(
+        `Volume ${volume} disappeared while its ownership was being verified.`,
+      );
+    }
+  }
+}
+
+/**
+ * Remove only storage this exact Bot owns.
+ *
+ * A just-removed container can keep a volume "in use" briefly on some engines. Retry that bounded
+ * transition, but never report Reset complete while the volume still exists.
+ */
+async function removeOwnedVolume(
+  names: ComputerNames,
+  volume: string,
+): Promise<boolean> {
+  const ownership = await volumeOwnership(names, volume);
+  if (ownership === "missing") return false;
+  if (ownership === "foreign") throw new NameHeldError(volume, "volume");
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    try {
+      await docker.getVolume(volume).remove();
+      return true;
+    } catch (error) {
+      const status = statusOf(error);
+      if (status === 404) return true;
+      if (status === 409 && attempt < 7) {
+        await pause(125);
+        continue;
+      }
+      throw new DockerUnavailableError(
+        status === 409
+          ? `Volume ${volume} is still in use after the Computer was removed; Reset was not completed.`
+          : String(error),
+      );
+    }
+  }
+  return false;
 }
 
 /**
@@ -579,17 +671,7 @@ export async function ensure(
           names.workspaceVolume,
           names.quarantineVolume,
         ]) {
-          try {
-            await docker.createVolume({
-              Name: volume,
-              Labels: labelsFor(names),
-            });
-          } catch (error) {
-            // Already exists is success for a restarted supervisor.
-            if (statusOf(error) !== 409) {
-              throw new DockerUnavailableError(String(error));
-            }
-          }
+          await ensureOwnedVolume(names, volume);
         }
 
         try {
@@ -705,32 +787,29 @@ export async function stop(names: ComputerNames): Promise<boolean> {
  * download, broken profile or workspace state and must leave no persistent Computer data behind.
  */
 export async function reset(names: ComputerNames): Promise<boolean> {
-  if (!(await inspectOwned(names))) return false;
+  const existing = await inspectOwned(names);
+  let hadState = existing !== null;
 
-  try {
-    await docker
-      .getContainer(names.container)
-      .remove({ force: true, v: false });
-  } catch (error) {
-    if ((error as { statusCode?: number }).statusCode !== 404) {
-      throw new DockerUnavailableError(String(error));
+  if (existing) {
+    try {
+      await docker
+        .getContainer(names.container)
+        .remove({ force: true, v: false });
+    } catch (error) {
+      if (statusOf(error) !== 404) {
+        throw new DockerUnavailableError(String(error));
+      }
     }
   }
 
+  // Volumes can outlive a crashed or manually removed container. Reset means "clean machine", not
+  // "remove storage only when a container happens to exist", so orphaned owned volumes count too.
   for (const volume of [
     names.profileVolume,
     names.workspaceVolume,
     names.quarantineVolume,
   ]) {
-    try {
-      await docker.getVolume(volume).remove();
-    } catch (error) {
-      const status = (error as { statusCode?: number }).statusCode;
-      // 409 is "still in use", which resolves itself once the container is gone.
-      if (status !== 404 && status !== 409) {
-        throw new DockerUnavailableError(String(error));
-      }
-    }
+    hadState = (await removeOwnedVolume(names, volume)) || hadState;
   }
-  return true;
+  return hadState;
 }
