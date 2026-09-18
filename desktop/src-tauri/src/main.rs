@@ -4741,7 +4741,7 @@ mod tests {
                 .expect_err("a container endpoint URL must be an absolute HTTP(S) URL");
         assert_eq!(
             problem.said,
-            "Enter a valid http:// or https:// address for the container model endpoint."
+            "Enter a valid http:// or https:// address for your container model endpoint."
         );
     }
 
