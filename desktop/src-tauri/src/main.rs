@@ -13,7 +13,7 @@ mod test_support;
 use openbot_desktop_lib::{
     acquire, deployment, deployment_release, engine, env as openbot_env, harness, host_access,
     install, preparation, problem::Problem, provider, pull_metrics, quiet, stack, supervise,
-    telemetry, tray, windows as win,
+    telemetry, tray, update, windows as win,
 };
 
 const QUIT_CLEANUP_NOTICE_FILE: &str = ".openbot-quit-cleanup-notice";
@@ -2923,13 +2923,64 @@ fn stop_from_menu<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
     });
 }
 
-/// What each of the three items does, wherever it was chosen from.
+fn check_for_updates(app: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+        use tauri_plugin_opener::OpenerExt;
+
+        match update::check_latest_release().await {
+            Ok(info) if info.update_available => {
+                app.dialog()
+                    .message(format!(
+                        "OpenBot {} is available. This computer has {}. The verified release page will open in your browser.",
+                        info.latest_version, info.current_version
+                    ))
+                    .title("OpenBot update available")
+                    .kind(MessageDialogKind::Info)
+                    .show();
+                if let Err(error) = app.opener().open_url(info.release_url, None::<&str>) {
+                    app.dialog()
+                        .message(format!(
+                            "The update was found, but its release page could not be opened: {error}"
+                        ))
+                        .title("Could not open the update")
+                        .kind(MessageDialogKind::Error)
+                        .show();
+                }
+            }
+            Ok(info) => {
+                app.dialog()
+                    .message(format!(
+                        "OpenBot {} is already the latest stable release.",
+                        info.current_version
+                    ))
+                    .title("OpenBot is up to date")
+                    .kind(MessageDialogKind::Info)
+                    .show();
+            }
+            Err(error) => {
+                app.dialog()
+                    .message(format!(
+                        "OpenBot could not check GitHub for a stable release. {error}"
+                    ))
+                    .title("Update check failed")
+                    .kind(MessageDialogKind::Error)
+                    .show();
+            }
+        }
+    });
+}
+
+/// What each menu item does, wherever it was chosen from.
 ///
 /// The tray and the window menu carry the same items, so they share one function: two copies would
-/// be two chances for Stop to mean something different depending on where somebody clicked.
+/// be two chances for Stop or Update to mean something different depending on where somebody clicked.
 fn chose(app: &tauri::AppHandle, item: &str) {
     match item {
         "open" => show_whichever_applies(app),
+        // Native rather than a WebView link. The app navigates to local OpenBot after setup and that
+        // remote page deliberately has no Tauri IPC capability, so the menu remains available there.
+        "updates" => check_for_updates(app.clone()),
         // Stop without quitting: the stack is what costs something to leave running, and somebody
         // who wants it stopped does not necessarily want the application gone.
         "stop" => stop_from_menu(app.clone()),
@@ -3028,9 +3079,11 @@ fn main() {
             use tauri::tray::TrayIconBuilder;
 
             let open = MenuItem::with_id(app, "open", "Open OpenBot", true, None::<&str>)?;
+            let updates =
+                MenuItem::with_id(app, "updates", "Check for updates", true, None::<&str>)?;
             let stop = MenuItem::with_id(app, "stop", "Stop OpenBot", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, quit_menu_accelerator())?;
-            let menu = Menu::with_items(app, &[&open, &stop, &quit])?;
+            let menu = Menu::with_items(app, &[&open, &updates, &stop, &quit])?;
 
             TrayIconBuilder::with_id("openbot")
                 .icon(tray::icon())
@@ -3049,6 +3102,8 @@ fn main() {
             // outlive each other. The ids match so both arrive at the same function.
             use tauri::menu::Submenu;
             let window_open = MenuItem::with_id(app, "open", "Open OpenBot", true, None::<&str>)?;
+            let window_updates =
+                MenuItem::with_id(app, "updates", "Check for updates", true, None::<&str>)?;
             let window_stop = MenuItem::with_id(app, "stop", "Stop OpenBot", true, None::<&str>)?;
             let window_quit =
                 MenuItem::with_id(app, "quit", "Quit", true, quit_menu_accelerator())?;
@@ -3057,7 +3112,7 @@ fn main() {
                 app,
                 "OpenBot",
                 true,
-                &[&window_open, &window_stop, &window_quit],
+                &[&window_open, &window_updates, &window_stop, &window_quit],
             )?;
             /*
              * AN EDIT MENU, WITHOUT WHICH COMMAND-V DOES NOTHING.
