@@ -41,11 +41,16 @@ export async function quarantineDownload(
 
   const failure = await download.failure();
   if (failure) {
-    throw new Error(\n      `The browser download failed before quarantine: ${failure}`,\n    );
+    throw new Error(
+      `The browser download failed before quarantine: ${failure}`,
+    );
   }
 
   const id = `${Date.now()}-${randomUUID()}`;
-  const file = join(\n    directory,\n    `${id}-${safeDownloadName(download.suggestedFilename())}`,\n  );
+  const file = join(
+    directory,
+    `${id}-${safeDownloadName(download.suggestedFilename())}`,
+  );
   await download.saveAs(file);
 
   const metadata = `${file}.openbot.json`;
