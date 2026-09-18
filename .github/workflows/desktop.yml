@@ -183,6 +183,18 @@ jobs:
           }
           Write-Host "Installed application: $($appBinaries[0].FullName)"
 
+          # Open the installed artifact, not the build-tree binary. The setup wizard may report a
+          # missing Windows prerequisite on this runner and that is fine; what must not happen is an
+          # immediate loader/WebView/resource crash before a window can stay alive.
+          $app = Start-Process -FilePath $appBinaries[0].FullName -PassThru
+          Start-Sleep -Seconds 5
+          $app.Refresh()
+          if ($app.HasExited) {
+            throw "The installed OpenBot executable exited during its first five seconds (exit $($app.ExitCode))."
+          }
+          Stop-Process -Id $app.Id -Force
+          Wait-Process -Id $app.Id -ErrorAction SilentlyContinue
+
           $uninstallers = @(
             Get-ChildItem $target -Recurse -Filter 'uninstall*.exe' -File
           )
