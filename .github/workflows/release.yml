@@ -65,12 +65,17 @@ jobs:
           set -euo pipefail
           current=$(bun -e 'console.log(require("./package.json").version)')
 
-          # The version in package.json must be one that was actually released, or the bump is
-          # computed from a number nobody published. The exception is the first release, where there
-          # is no tag to find yet.
-          if [ -n "$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --merged HEAD)" ]; then
+          # The version in package.json must be the release this branch actually descends from.
+          # Checking existence alone is not enough: a tag on another history line would make the
+          # next version look valid while skipping the release this checkout was supposed to extend.
+          # The only exception is the repository's first release, when no numeric SemVer tag exists.
+          if [ -n "$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*')" ]; then
             git rev-parse --verify "refs/tags/v$current" >/dev/null 2>&1 || {
               echo "::error::package.json says $current but v$current was never tagged."
+              exit 1
+            }
+            git merge-base --is-ancestor "refs/tags/v$current" HEAD || {
+              echo "::error::v$current exists but is not an ancestor of HEAD."
               exit 1
             }
           fi
