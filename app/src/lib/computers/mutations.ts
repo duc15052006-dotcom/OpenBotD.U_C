@@ -3,8 +3,8 @@ import { client } from "@/lib/client";
 import { clearActivity } from "./activity";
 import { type ActionPolicy, computerKeys } from "./queries";
 
-/** Stopping frees the container; resetting also deletes the browser profile. */
-export type ComputerAction = "stop" | "reset";
+/** Lifecycle controls. Reset is the only action that deletes the saved browser profile. */
+export type ComputerAction = "start" | "restart" | "stop" | "reset";
 
 function invalidateComputers(queryClient: QueryClient) {
   return queryClient.invalidateQueries({ queryKey: computerKeys.all });
@@ -24,7 +24,7 @@ export function setComputerStateMutationOptions(queryClient: QueryClient) {
         },
       );
     },
-    /** A reset deletes the profile those commands ran on; a stop keeps it, so only reset forgets. */
+    /** Only reset deletes the profile those commands ran on, so only reset forgets local activity. */
     onSuccess: (_result, variables) => {
       if (variables.action === "reset") clearActivity(variables.botId);
       return invalidateComputers(queryClient);
