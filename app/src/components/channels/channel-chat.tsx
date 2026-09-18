@@ -229,12 +229,18 @@ function describeAttachments(attachments: readonly Attachment[]): string {
 export function ChannelChat({
   channel,
   runtimeAgentId: initialRuntimeAgentId,
+  onRuntimeAgentChange,
 }: {
   channel: AgentChannel;
   runtimeAgentId: string;
+  onRuntimeAgentChange?: (agentId: string) => void;
 }) {
   // A group channel keeps one shared thread while the responder may change per message.
   const [runtimeAgentId, setRuntimeAgentId] = useState(initialRuntimeAgentId);
+
+  useEffect(() => {
+    onRuntimeAgentChange?.(runtimeAgentId);
+  }, [onRuntimeAgentChange, runtimeAgentId]);
   // The core attaches the frontend tool registry; direct agent runs do not.
   const { copilotkit } = useCopilotKit();
   // Mentions are scoped to the channel's permitted agents.
