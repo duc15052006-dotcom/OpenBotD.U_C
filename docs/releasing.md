@@ -57,6 +57,9 @@ Then, in order:
 
 - the version in the tree is checked against the branch that is publishing it, and the changelog is
   checked for a section with that number
+- the normal CI workflow **and the Desktop workflow** run again against the release commit; desktop
+  packaging must pass on macOS/Linux and the Windows NSIS artifact must build, install, launch, and
+  uninstall before any release image is pushed
 - one image is built and pushed to `ghcr.io/copilotkit/openbot`, tagged with the version, the commit
   and `latest`
 - the services `docker-compose.yml` can build are published too, one image each, at
@@ -123,6 +126,7 @@ A job added to `ci.yml` is covered by it without anybody updating a list.
 | `migrations` | a schema change with no migration, or a snapshot that has drifted |
 | `image` | an image that builds but does not boot, or a supervised service that respawns |
 | `component dockerfiles` | a Dockerfile a release would publish that no longer builds, or one the publish list has stopped covering |
+| `Desktop` reusable workflow | a desktop regression or package failure; on Windows, an NSIS artifact that cannot install, stay alive on first launch, or uninstall |
 
 `image` matters more than its position suggests. Everything above it can pass on a tree whose image
 never starts, because nothing else here runs the thing it ships. It builds the container, boots it
