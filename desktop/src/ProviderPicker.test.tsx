@@ -382,7 +382,6 @@ test("a compatible endpoint does not inherit a saved OpenAI API key", async () =
 
   const view = await renderPickerWithHeld(
     {
-      OPENAI_API_KEY: "sk-synthetic-openai",
       saved: {
         modelApiKeys: {
           openai: true,
@@ -422,7 +421,6 @@ test("a compatible endpoint submits the key typed into its endpoint key field", 
 
   const view = await renderPickerWithHeld(
     {
-      OPENAI_API_KEY: "sk-synthetic-openai",
       saved: {
         modelApiKeys: {
           openai: true,

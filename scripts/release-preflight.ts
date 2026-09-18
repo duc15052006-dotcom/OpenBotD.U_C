@@ -393,6 +393,75 @@ function checkDesktopUpdatePath(): void {
   }
 }
 
+function checkDesktopCredentialBoundary(): void {
+  const native = read("desktop/src-tauri/src/main.rs");
+  const app = read("desktop/src/App.tsx");
+  const picker = read("desktop/src/ProviderPicker.tsx");
+
+  for (const secret of [
+    "INTELLIGENCE_API_KEY",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+  ]) {
+    if (!native.includes(`values.remove("${secret}")`)) {
+      fail(
+        `desktop: already_configured no longer strips ${secret} before WebView IPC`,
+      );
+    }
+  }
+
+  for (const forbidden of [
+    "values.INTELLIGENCE_API_KEY",
+    'invoke<string>("intelligence_key_for"',
+  ]) {
+    if (app.includes(forbidden)) {
+      fail(
+        `desktop: renderer credential boundary regressed through ${forbidden}`,
+      );
+    }
+  }
+  for (const forbidden of [
+    "OPENAI_API_KEY?: string",
+    "ANTHROPIC_API_KEY?: string",
+  ]) {
+    if (picker.includes(forbidden)) {
+      fail(
+        `desktop: saved model secret is exposed in HeldConfiguration through ${forbidden}`,
+      );
+    }
+  }
+
+  for (const evidence of [
+    "pending_intelligence_key",
+    "Some(PendingIntelligenceKey { root, key })",
+  ]) {
+    if (!native.includes(evidence)) {
+      fail(
+        `desktop: native Intelligence credential handoff is missing ${evidence}`,
+      );
+    }
+  }
+  if (
+    !/intelligence_key_for_start\(\s*&root,\s*api_key,\s*pending_intelligence_key,\s*saved_secret,?\s*\)/.test(
+      native,
+    )
+  ) {
+    fail("desktop: Start no longer resolves the root-bound pending Intelligence key");
+  }
+
+  const keyCommand = native
+    .split("async fn intelligence_key_for(", 2)[1]
+    ?.split("/// The model screen", 1)[0];
+  if (
+    !keyCommand?.includes(
+      "-> Result<(), openbot_desktop_lib::problem::Problem>",
+    )
+  ) {
+    fail("desktop: provisioned Intelligence key can cross the WebView response");
+  }
+}
+
 function checkProviderConnectionTest(): void {
   const picker = read("desktop/src/ProviderPicker.tsx");
   const native = read("desktop/src-tauri/src/main.rs");
@@ -493,6 +562,7 @@ function checkVersionSources(): void {
 checkDesktopBoundary();
 checkReleaseWiring();
 checkDesktopUpdatePath();
+checkDesktopCredentialBoundary();
 checkProviderConnectionTest();
 checkFirstCoworkerHandoff();
 checkVersionSources();
