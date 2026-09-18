@@ -366,6 +366,33 @@ function checkDesktopUpdatePath(): void {
   }
 }
 
+function checkProviderConnectionTest(): void {
+  const picker = read("desktop/src/ProviderPicker.tsx");
+  const native = read("desktop/src-tauri/src/main.rs");
+
+  for (const evidence of [
+    '"Test connection"',
+    '"test_model_connection"',
+    "connectionFingerprint",
+  ]) {
+    if (!picker.includes(evidence)) {
+      fail(`desktop: provider setup no longer exposes ${evidence}`);
+    }
+  }
+
+  for (const evidence of [
+    "async fn test_model_connection(",
+    ".redirect(reqwest::redirect::Policy::none())",
+    "https://api.openai.com/v1/models",
+    "https://api.anthropic.com/v1/models?limit=1",
+    "models_probe_url",
+  ]) {
+    if (!native.includes(evidence)) {
+      fail(`desktop: native provider test is missing ${evidence}`);
+    }
+  }
+}
+
 function checkVersionSources(): void {
   const pkg = json("package.json");
   const version = pkg.version;
@@ -390,6 +417,7 @@ function checkVersionSources(): void {
 checkDesktopBoundary();
 checkReleaseWiring();
 checkDesktopUpdatePath();
+checkProviderConnectionTest();
 checkVersionSources();
 
 if (failures.length > 0) {
