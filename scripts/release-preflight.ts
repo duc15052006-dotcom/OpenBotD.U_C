@@ -153,6 +153,21 @@ function checkReleaseWiring(): void {
   const desktop = workflow(".github/workflows/desktop.yml");
   const signing = workflow(".github/workflows/desktop-signing.yml");
   const release = workflow(".github/workflows/publish-release.yml");
+  const releaseSource = read(".github/workflows/publish-release.yml");
+
+  if (releaseSource.includes("ghcr.io/copilotkit/")) {
+    fail("release: container publishing is still hard-coded to the upstream GHCR namespace");
+  }
+  for (const evidence of [
+    "registry_owner: ${{ steps.release.outputs.registry_owner }}",
+    "REGISTRY_OWNER: ${{ github.repository_owner }}",
+    "registry_owner=$registry_owner",
+    "ghcr.io/${{ needs.metadata.outputs.registry_owner }}/openbot",
+  ]) {
+    if (!releaseSource.includes(evidence)) {
+      fail(`release: repository-owned GHCR publishing is missing ${evidence}`);
+    }
+  }
 
   for (const [name, flow] of [
     ["CI", ci],
