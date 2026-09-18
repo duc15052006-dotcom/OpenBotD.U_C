@@ -13,6 +13,20 @@ export type ComputerResourceMetrics = {
   browserRunning?: boolean;
 };
 
+export type QuarantineEntry = {
+  id: string;
+  status: "quarantined";
+  originalName: string;
+  sourceUrl: string;
+  savedAt: string;
+  bytes: number;
+  sha256: string;
+};
+
+export type QuarantineList = {
+  downloads: QuarantineEntry[];
+};
+
 export type ComputerProfile = {
   botId: string;
   running: boolean;
@@ -51,6 +65,7 @@ export const computerKeys = {
   all: ["computers"] as const,
   fleet: () => ["computers", "fleet"] as const,
   policy: () => ["computers", "policy"] as const,
+  quarantine: (botId: string) => ["computers", "quarantine", botId] as const,
 };
 
 /**
@@ -75,6 +90,21 @@ export function computerFleetQueryOptions() {
     // Resource samples are useful only while fresh. TanStack Query pauses this in the background,
     // so an open Admin page updates without turning hidden tabs into a monitoring daemon.
     refetchInterval: 5_000,
+  });
+}
+
+export function quarantineQueryOptions(botId: string) {
+  return queryOptions({
+    queryKey: computerKeys.quarantine(botId),
+    queryFn: async (): Promise<QuarantineList> => {
+      const response = await client(
+        `/api/computers/quarantine?botId=${encodeURIComponent(botId)}`,
+        {
+          fallback: "The quarantine could not be listed.",
+        },
+      );
+      return response.json();
+    },
   });
 }
 
