@@ -769,7 +769,7 @@ mod tests {
         else {
             panic!("crewai should install a harness image");
         };
-        assert_eq!(image, "ghcr.io/copilotkit/openbot-agent-crewai@sha256:abc");
+        assert_eq!(image, release_image_reference("agent-crewai"));
         assert_eq!(port, 4202);
         assert!(!mastra);
         assert!(remote_agent_id.is_empty());
