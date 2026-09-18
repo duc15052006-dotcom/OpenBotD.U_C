@@ -36,13 +36,19 @@ pub struct Installed {
 ///
 /// A release asset rather than a branch, and https rather than git, so nothing needs a git client
 /// or credentials to get a deployment.
-pub fn tarball_url(version: &str) -> String {
-    format!("https://github.com/CopilotKit/OpenBot/archive/refs/tags/{version}.tar.gz")
+pub fn tarball_url(version: &str) -> Result<String, String> {
+    let repository = crate::update::release_repository()?;
+    Ok(format!(
+        "https://github.com/{repository}/archive/refs/tags/{version}.tar.gz"
+    ))
 }
 
 /// Where the release publishes its image manifest.
-pub fn images_url(version: &str) -> String {
-    format!("https://github.com/CopilotKit/OpenBot/releases/download/{version}/{IMAGES}")
+pub fn images_url(version: &str) -> Result<String, String> {
+    let repository = crate::update::release_repository()?;
+    Ok(format!(
+        "https://github.com/{repository}/releases/download/{version}/{IMAGES}"
+    ))
 }
 
 pub fn images_path(root: &Path) -> PathBuf {
@@ -192,7 +198,8 @@ pub const ALSO_COPIED: [&str; 7] = [
 /// The stamp is written last. Anything that fails before that leaves a directory without one, which
 /// `needs_fetch` treats as absent, so an interrupted download is retried rather than half-run.
 pub fn fetch(root: &Path, version: &str) -> Result<(), String> {
-    let body = get(&tarball_url(version)).map_err(|error| {
+    let tarball = tarball_url(version)?;
+    let body = get(&tarball).map_err(|error| {
         format!("could not fetch {version}: {error}. Is that a released version?")
     })?;
 
@@ -291,7 +298,8 @@ pub fn unpack(root: &Path, body: &[u8]) -> Result<(), String> {
 /// Parsed here rather than at start-up so a release missing an image fails while the person is
 /// still looking at a screen that says what is being fetched, not later inside Compose's output.
 fn fetch_images(root: &Path, version: &str) -> Result<(), String> {
-    let body = get(&images_url(version))
+    let images = images_url(version)?;
+    let body = get(&images)
         .map_err(|error| format!("could not fetch the image list for {version}: {error}"))?;
     let manifest: Images = serde_json::from_slice(&body)
         .map_err(|error| format!("the image list for {version} is not readable: {error}"))?;
@@ -387,15 +395,22 @@ mod tests {
     }
 
     #[test]
+    fn deployment_downloads_use_the_repository_baked_into_this_desktop_build() {
+        let repository = crate::update::release_repository().unwrap();
+        assert!(tarball_url("v0.0.7").unwrap().contains(repository));
+        assert!(images_url("v0.0.7").unwrap().contains(repository));
+    }
+
+    #[test]
     fn the_image_manifest_is_fetched_from_the_same_version_as_the_tree() {
-        let url = images_url("v0.0.7");
+        let url = images_url("v0.0.7").unwrap();
         assert!(url.contains("/download/v0.0.7/"), "{url}");
         assert!(url.ends_with("container-images.json"), "{url}");
     }
 
     #[test]
     fn the_tarball_is_a_tag_rather_than_a_branch() {
-        let url = tarball_url("v0.0.7");
+        let url = tarball_url("v0.0.7").unwrap();
         assert!(url.contains("/refs/tags/v0.0.7"), "{url}");
         assert!(!url.contains("/heads/"), "a branch is not a version: {url}");
         assert!(
