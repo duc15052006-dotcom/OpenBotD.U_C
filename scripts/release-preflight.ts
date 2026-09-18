@@ -297,11 +297,11 @@ function checkComputerSandboxBoundary(): void {
 
   const resourceProfiles = read("supervisor/src/resource-profile.ts");
   for (const evidence of [
-    'light: {',
-    'normal: {',
-    'heavy: {',
-    'memoryBytes: 4_294_967_296',
-    'nanoCpus: 3_000_000_000',
+    "light: {",
+    "normal: {",
+    "heavy: {",
+    "memoryBytes: 4_294_967_296",
+    "nanoCpus: 3_000_000_000",
   ]) {
     if (!resourceProfiles.includes(evidence)) {
       fail(`computer: resource profile mapping is missing ${evidence}`);
