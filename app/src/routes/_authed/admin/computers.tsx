@@ -173,7 +173,9 @@ function ComputersPage() {
           Scheduler capacity:{" "}
           <strong>{capacity.logicalCpus ?? "?"} logical CPUs</strong> ·{" "}
           <strong>
-            {capacity.memoryBytes ? formatBytes(capacity.memoryBytes) : "RAM unknown"}
+            {capacity.memoryBytes
+              ? formatBytes(capacity.memoryBytes)
+              : "RAM unknown"}
           </strong>
           {capacity.maxActiveComputers
             ? ` · up to ${capacity.maxActiveComputers} active Computers`
@@ -709,7 +711,6 @@ function pendingLabel(request: HostAccessPendingOperation) {
       return "Folder access awaiting approval";
   }
 }
-
 
 export function computerStartWarning(
   fleet:
