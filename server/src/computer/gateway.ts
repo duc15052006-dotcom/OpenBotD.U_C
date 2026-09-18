@@ -48,6 +48,8 @@ import type { ComputerProvider } from "./provider";
 import type {
   ActionResult,
   ClickInput,
+  ComputerResourceMetrics,
+  ComputerResourceReport,
   ComputerStatus,
   ControlState,
   HumanInput,
@@ -128,6 +130,7 @@ export interface ComputerGateway {
   readonly provider: ComputerProvider;
   locate(botId: string): Promise<string>;
   status(botId: string): Promise<ComputerStatus>;
+  resourceMetrics(botId: string): Promise<ComputerResourceReport>;
   screenshot(botId: string): Promise<ScreenshotResult>;
   snapshot(botId: string): Promise<SnapshotResult>;
   read(botId: string): Promise<ReadResult>;
@@ -644,6 +647,25 @@ export function createComputerGateway(
 
     status(botId: string): Promise<ComputerStatus> {
       return provider.status(botId);
+    },
+
+    /**
+     * Resource telemetry must never be the thing that wakes a computer.
+     *
+     * Ask the provider first. Only a computer already reported ready is located and queried; a
+     * suspended Sandbox answers "absent" here without changing operatingMode.
+     */
+    async resourceMetrics(botId: string): Promise<ComputerResourceReport> {
+      const status = await provider.status(botId);
+      if (status.state !== "ready") {
+        return {
+          botId,
+          state: status.state,
+          ...(status.reason ? { reason: status.reason } : {}),
+        };
+      }
+      const metrics = await get<ComputerResourceMetrics>(botId, "/metrics");
+      return { botId, state: "ready", metrics };
     },
 
     /**
