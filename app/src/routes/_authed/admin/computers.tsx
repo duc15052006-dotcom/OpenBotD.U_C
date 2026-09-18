@@ -8,6 +8,7 @@ import {
   PageShell,
 } from "@/components/layout/page-shell";
 import { StaggerItem } from "@/components/layout/stagger";
+import { ComputerFilesDialog } from "@/components/computers/computer-files-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -47,6 +48,8 @@ function ComputersPage() {
   const [busy, setBusy] = useState<string | null>(null);
   /** Reset deletes the browser profile, so it requires confirmation. */
   const [confirming, setConfirming] = useState<string | null>(null);
+  /** Computer whose persistent workspace is open in the file manager. */
+  const [filesFor, setFilesFor] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const nameFor = useBotNames();
 
@@ -214,6 +217,14 @@ function ComputersPage() {
                       </Button>
                     )}
                     <Button
+                      disabled={!computer.running || busy === computer.botId}
+                      onClick={() => setFilesFor(computer.botId)}
+                      size="sm"
+                      variant="outline"
+                    >
+                      Files
+                    </Button>
+                    <Button
                       disabled={busy === computer.botId}
                       onClick={() => setConfirming(computer.botId)}
                       size="sm"
@@ -229,6 +240,15 @@ function ComputersPage() {
           </PageRows>
         )}
       </PageSection>
+
+      {filesFor ? (
+        <ComputerFilesDialog
+          botId={filesFor}
+          botName={nameFor(filesFor)}
+          onOpenChange={(open) => !open && setFilesFor(null)}
+          open
+        />
+      ) : null}
 
       {/*
        * A DIALOG RATHER THAN AN INLINE CONFIRM. Resetting signs a Bot out of everything it has ever
