@@ -463,6 +463,9 @@ function hostConfig(names: ComputerNames, options: EnsureOptions) {
     Binds: [
       `${names.profileVolume}:/profiles`,
       `${names.workspaceVolume}:/workspace`,
+      // Browser downloads are untrusted until explicitly released. Keep them off the ordinary
+      // workspace and in a volume that belongs only to this Bot.
+      `${names.quarantineVolume}:/quarantine`,
       // Read-only: a computer asks the agent what it is and has nothing to tell it.
       ...(options.spireSocketVolume
         ? [`${options.spireSocketVolume}:/tmp/spire-agent/public:ro`]
@@ -548,7 +551,11 @@ export async function ensure(
     }
 
     if (!existing) {
-      for (const volume of [names.profileVolume, names.workspaceVolume]) {
+      for (const volume of [
+        names.profileVolume,
+        names.workspaceVolume,
+        names.quarantineVolume,
+      ]) {
         try {
           await docker.createVolume({
             Name: volume,
@@ -669,7 +676,7 @@ export async function stop(names: ComputerNames): Promise<boolean> {
 /**
  * Throw this Bot's computer away so the next request builds a clean one.
  *
- * Reset is deliberately destructive: both the browser profile and workspace go with it. Stop and
+ * Reset is deliberately destructive: the browser profile, workspace and download quarantine go with it. Stop and
  * restart are the non-destructive lifecycle controls; reset is the recovery path for an unwanted
  * download, broken profile or workspace state and must leave no persistent Computer data behind.
  */
@@ -686,7 +693,11 @@ export async function reset(names: ComputerNames): Promise<boolean> {
     }
   }
 
-  for (const volume of [names.profileVolume, names.workspaceVolume]) {
+  for (const volume of [
+    names.profileVolume,
+    names.workspaceVolume,
+    names.quarantineVolume,
+  ]) {
     try {
       await docker.getVolume(volume).remove();
     } catch (error) {
