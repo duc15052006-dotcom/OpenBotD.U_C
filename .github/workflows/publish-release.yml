@@ -500,8 +500,12 @@ jobs:
           awk -v v="## ${VERSION#v}" '$0==v{f=1;next} /^## /{if(f)exit} f' CHANGELOG.md > notes.md
           test -s notes.md
 
-          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$VERSION" >/dev/null 2>&1; then
-            echo "$VERSION is already tagged; only refreshing the release."
+          if existing_tag="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$VERSION" --jq '.object.type + " " + .object.sha' 2>/dev/null)"; then
+            if [ "$existing_tag" != "commit $GITHUB_SHA" ]; then
+              echo "::error::$VERSION already exists but does not point directly at release commit $GITHUB_SHA (found: $existing_tag)."
+              exit 1
+            fi
+            echo "$VERSION is already tagged at this exact release commit; only refreshing the release."
           else
             gh api "repos/$GITHUB_REPOSITORY/git/refs" \
               -f "ref=refs/tags/$VERSION" -f "sha=$GITHUB_SHA" >/dev/null
