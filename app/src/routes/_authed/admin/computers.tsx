@@ -43,7 +43,7 @@ export const Route = createFileRoute("/_authed/admin/computers")({
 });
 
 function ComputersPage() {
-  /** Bot id currently running a stop/reset request. */
+  /** Bot id currently running a lifecycle request. */
   const [busy, setBusy] = useState<string | null>(null);
   /** Reset deletes the browser profile, so it requires confirmation. */
   const [confirming, setConfirming] = useState<string | null>(null);
@@ -85,7 +85,10 @@ function ComputersPage() {
           ? stopHostAccess.error.message
           : null;
 
-  const run = (botId: string, action: "stop" | "reset") => {
+  const run = (
+    botId: string,
+    action: "start" | "restart" | "stop" | "reset",
+  ) => {
     setBusy(botId);
     setConfirming(null);
     setState.mutate({ action, botId }, { onSettled: () => setBusy(null) });
@@ -174,14 +177,35 @@ function ComputersPage() {
                     </ItemDescription>
                   </ItemContent>
                   <ItemActions>
-                    <Button
-                      disabled={busy === computer.botId || !computer.running}
-                      onClick={() => void run(computer.botId, "stop")}
-                      size="sm"
-                      variant="outline"
-                    >
-                      {busy === computer.botId ? "Working…" : "Stop browser"}
-                    </Button>
+                    {computer.running ? (
+                      <>
+                        <Button
+                          disabled={busy === computer.botId}
+                          onClick={() => void run(computer.botId, "restart")}
+                          size="sm"
+                          variant="outline"
+                        >
+                          {busy === computer.botId ? "Working…" : "Restart"}
+                        </Button>
+                        <Button
+                          disabled={busy === computer.botId}
+                          onClick={() => void run(computer.botId, "stop")}
+                          size="sm"
+                          variant="outline"
+                        >
+                          Stop
+                        </Button>
+                      </>
+                    ) : (
+                      <Button
+                        disabled={busy === computer.botId}
+                        onClick={() => void run(computer.botId, "start")}
+                        size="sm"
+                        variant="outline"
+                      >
+                        {busy === computer.botId ? "Starting…" : "Start"}
+                      </Button>
+                    )}
                     <Button
                       disabled={busy === computer.botId}
                       onClick={() => setConfirming(computer.botId)}
@@ -244,10 +268,11 @@ function ComputersPage() {
       </Dialog>
 
       <p className="mt-4 text-muted-foreground text-sm">
-        <strong>Stop</strong> closes the browser and keeps its logins: the next
-        thing the Bot does starts it again where it left off.{" "}
-        <strong>Reset</strong> deletes the profile, so the Bot is signed out of
-        everything and starts clean. Both are recorded in{" "}
+        <strong>Start</strong> wakes a stopped computer, <strong>Restart</strong>{" "}
+        cycles it without deleting its saved profile, and <strong>Stop</strong> closes
+        the browser while keeping its logins. <strong>Reset</strong> deletes the
+        profile, signs the Bot out of everything, and starts clean. Lifecycle actions
+        are recorded in{" "}
         <Link className="underline" to="/admin/audit">
           Audit
         </Link>
