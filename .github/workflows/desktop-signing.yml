@@ -9,6 +9,18 @@ on:
         options: [none, keyvault]
         default: none
         required: true
+  workflow_call:
+    inputs:
+      signing-mode:
+        description: Signing mode requested by a trusted caller workflow
+        type: string
+        default: none
+        required: false
+      release-build:
+        description: Emit the plain release version instead of an internal validation version
+        type: boolean
+        default: false
+        required: false
   # A label permits validation before this workflow exists on main. New pushes
   # run only the checks: remove/reapply the label to request signing a new head.
   pull_request:
@@ -44,7 +56,7 @@ jobs:
     name: Sign and verify app and NSIS installer
     needs: checks
     if: >-
-      (github.event_name == 'workflow_dispatch' && inputs.signing-mode == 'keyvault') ||
+      (inputs.signing-mode == 'keyvault' && github.event_name != 'pull_request') ||
       (github.event_name == 'pull_request' && github.event.action == 'labeled' &&
        github.event.label.name == 'windows-signing' &&
        github.event.pull_request.head.repo.full_name == github.repository)
@@ -112,9 +124,18 @@ jobs:
         working-directory: desktop
       - run: bun run typecheck
         working-directory: desktop
-      - name: Prepare internal build version
-        run: bun scripts/desktop-version.ts internal
+      - name: Prepare build version
+        shell: pwsh
         working-directory: desktop
+        env:
+          RELEASE_SIGNING: ${{ inputs.release-build && 'true' || 'false' }}
+        run: |
+          if ($env:RELEASE_SIGNING -eq 'true') {
+            bun scripts/desktop-version.ts release
+          } else {
+            bun scripts/desktop-version.ts internal
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'Could not prepare desktop build version.' }
       - name: Build and sign
         env:
           WINDOWS_SIGNING: keyvault
@@ -135,7 +156,7 @@ jobs:
       - name: Retain verified binaries
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: openbot-windows-signed-${{ github.run_id }}-${{ github.run_attempt }}
+          name: openbot-windows-signed
           path: |
             desktop/signed-app/openbot-desktop.exe
             desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
@@ -146,7 +167,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: openbot-windows-signatures-${{ github.run_id }}-${{ github.run_attempt }}
+          name: openbot-windows-signatures
           path: desktop/signing-evidence/
           if-no-files-found: warn
           retention-days: 14
