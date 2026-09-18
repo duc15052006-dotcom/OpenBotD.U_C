@@ -1,4 +1,4 @@
-import type { MiddlewareHandler } from "hono";
+import type { Context, MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import type { AppVariables } from "../auth/guards";
 import {
@@ -18,9 +18,10 @@ export function createAgentKnowledgeRoutes(
 ) {
   const routes = new Hono<{ Variables: AppVariables }>();
 
-  const mapError = (context: Parameters<typeof routes.get>[1] extends never
-    ? never
-    : any, error: unknown) => {
+  const mapError = (
+    context: Context<{ Variables: AppVariables }>,
+    error: unknown,
+  ) => {
     if (error instanceof AgentNotFoundError) {
       return context.json({ error: "Agent not found." }, 404);
     }
