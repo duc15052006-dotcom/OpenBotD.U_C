@@ -507,6 +507,10 @@ function checkProviderConnectionTest(): void {
     "https://api.openai.com/v1/models",
     "https://api.anthropic.com/v1/models?limit=1",
     "models_probe_url",
+    "model_probe_never_allowed_host",
+    "metadata.google.internal",
+    "169, 254, 169, 254",
+    "64:ff9b",
   ]) {
     if (!native.includes(evidence)) {
       fail(`desktop: native provider test is missing ${evidence}`);
