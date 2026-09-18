@@ -853,13 +853,13 @@ export function createComputerGateway(
         stopped: outcomes
           .filter(
             (outcome): outcome is { botId: string; wasRunning: true } =>
-              "wasRunning" in outcome && outcome.wasRunning,
+              "wasRunning" in outcome && outcome.wasRunning === true,
           )
           .map((outcome) => outcome.botId),
         alreadyStopped: outcomes
           .filter(
             (outcome): outcome is { botId: string; wasRunning: false } =>
-              "wasRunning" in outcome && !outcome.wasRunning,
+              "wasRunning" in outcome && outcome.wasRunning === false,
           )
           .map((outcome) => outcome.botId),
         failed: outcomes
