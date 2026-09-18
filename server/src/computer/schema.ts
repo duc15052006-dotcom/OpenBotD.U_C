@@ -28,6 +28,7 @@ export const COMPUTER_TOOLS = [
   "computer_read_file",
   "computer_write_file",
   "computer_list_files",
+  "computer_run_command",
 ] as const;
 
 /**
@@ -55,6 +56,7 @@ export const COMPUTER_ACTING_TOOLS = [
   "computer_read_file",
   "computer_write_file",
   "computer_list_files",
+  "computer_run_command",
 ] as const;
 
 export type ComputerActingToolName = (typeof COMPUTER_ACTING_TOOLS)[number];
