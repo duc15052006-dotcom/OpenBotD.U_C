@@ -5,6 +5,7 @@ import YAML from "yaml";
 type WorkflowJob = {
   uses?: unknown;
   needs?: unknown;
+  with?: unknown;
 };
 
 type Workflow = {
@@ -35,6 +36,7 @@ for (const name of readdirSync(workflows).filter((file) => /\.ya?ml$/.test(file)
     const expectedCalls: Record<string, string> = {
       checks: "./.github/workflows/ci.yml",
       "desktop-checks": "./.github/workflows/desktop.yml",
+      "windows-signing": "./.github/workflows/desktop-signing.yml",
     };
     for (const [jobName, expected] of Object.entries(expectedCalls)) {
       if (jobs[jobName]?.uses !== expected) {
@@ -46,6 +48,20 @@ for (const name of readdirSync(workflows).filter((file) => /\.ya?ml$/.test(file)
       }
     }
 
+    const signingInputs =
+      jobs["windows-signing"]?.with &&
+      typeof jobs["windows-signing"]?.with === "object"
+        ? (jobs["windows-signing"]?.with as Record<string, unknown>)
+        : {};
+    if (
+      signingInputs["signing-mode"] !== "keyvault" ||
+      signingInputs["release-build"] !== true
+    ) {
+      failures.push(
+        `${name} job windows-signing: release must request keyvault signing with release-build: true`,
+      );
+    }
+
     for (const jobName of ["image", "component-images"]) {
       const raw = jobs[jobName]?.needs;
       const needs = Array.isArray(raw)
@@ -53,7 +69,7 @@ for (const name of readdirSync(workflows).filter((file) => /\.ya?ml$/.test(file)
         : typeof raw === "string"
           ? [raw]
           : [];
-      for (const gate of ["checks", "desktop-checks"]) {
+      for (const gate of ["checks", "desktop-checks", "windows-signing"]) {
         if (!needs.includes(gate)) {
           failures.push(
             `${name} job ${jobName}: publishing must wait for ${gate}`,
@@ -114,6 +130,41 @@ for (const name of readdirSync(workflows).filter((file) => /\.ya?ml$/.test(file)
       failures.push(
         `${name} job ${jobName}: ${uses} is referenced as reusable but has no on.workflow_call trigger`,
       );
+      continue;
+    }
+
+    const workflowCall = (trigger as Record<string, unknown>)["workflow_call"];
+    const declaredInputs =
+      workflowCall && typeof workflowCall === "object"
+        ? ((workflowCall as Record<string, unknown>).inputs as
+            | Record<string, unknown>
+            | undefined)
+        : undefined;
+    const passedInputs =
+      job.with && typeof job.with === "object"
+        ? (job.with as Record<string, unknown>)
+        : {};
+
+    for (const input of Object.keys(passedInputs)) {
+      if (!declaredInputs || !(input in declaredInputs)) {
+        failures.push(
+          `${name} job ${jobName}: passes undeclared input ${input} to ${uses}`,
+        );
+      }
+    }
+
+    for (const [input, raw] of Object.entries(declaredInputs ?? {})) {
+      const spec =
+        raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+      if (
+        spec.required === true &&
+        !("default" in spec) &&
+        !(input in passedInputs)
+      ) {
+        failures.push(
+          `${name} job ${jobName}: required input ${input} is missing for ${uses}`,
+        );
+      }
     }
   }
 }
