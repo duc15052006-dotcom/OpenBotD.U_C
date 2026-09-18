@@ -219,6 +219,25 @@ function checkComputerSandboxBoundary(): void {
       );
     }
   }
+
+  for (const evidence of [
+    "STOP ALL AGENTS",
+    "Exit OpenBot and stop all Agents",
+    "WindowEvent::CloseRequested",
+    "window.hide()",
+  ]) {
+    if (!read("desktop/src-tauri/src/main.rs").includes(evidence)) {
+      fail(`desktop: Agent runtime state is no longer explicit through ${evidence}`);
+    }
+  }
+
+  if (
+    !supervisor.includes(
+      "for (const volume of [names.profileVolume, names.workspaceVolume])",
+    )
+  ) {
+    fail("computer: Reset no longer clears both browser profile and workspace");
+  }
 }
 
 function checkReleaseWiring(): void {
