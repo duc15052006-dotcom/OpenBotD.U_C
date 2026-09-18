@@ -355,3 +355,13 @@ export type ComputerStatus = {
   /** Set when state is "unreachable", in words a person can act on. */
   reason?: string;
 };
+
+/** Resource usage reported by a running computer container. */
+export type ComputerResourceMetrics = {
+  capturedAt: string;
+  cpuPercent: number;
+  memoryUsedBytes: number;
+  memoryLimitBytes: number | null;
+  diskUsedBytes: number;
+  diskTotalBytes: number;
+};
