@@ -1278,6 +1278,8 @@ async function writeControlEvent(
     | "computer.control_released"
     | "computer.secret_requested"
     | "computer.secret_supplied"
+    | "computer.started"
+    | "computer.restarted"
     | "computer.stopped"
     | "computer.reset",
   entry: {
