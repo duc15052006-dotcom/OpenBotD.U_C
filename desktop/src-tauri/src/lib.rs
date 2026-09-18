@@ -20,6 +20,7 @@ pub mod stack;
 pub mod supervise;
 pub mod telemetry;
 pub mod tray;
+pub mod update;
 pub mod vault;
 pub mod windows;
 
