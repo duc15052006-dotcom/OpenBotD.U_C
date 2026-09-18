@@ -8,11 +8,11 @@ mod desktop_host_access;
 mod desktop_telemetry;
 
 #[cfg(test)]
-mod test_support;
-#[cfg(test)]
 mod model_connection_tests;
 #[cfg(test)]
 mod show_route_tests;
+#[cfg(test)]
+mod test_support;
 
 use openbot_desktop_lib::{
     acquire, deployment, deployment_release, engine, env as openbot_env, harness, host_access,
@@ -707,20 +707,16 @@ fn model_endpoint_url(raw: &str, label: &str) -> Result<reqwest::Url, Problem> {
         ))
     })?;
     if !matches!(url.scheme(), "http" | "https") || !url.has_host() {
-        return Err(
-            format!("Enter a valid http:// or https:// address for your {label}.").into(),
-        );
+        return Err(format!("Enter a valid http:// or https:// address for your {label}.").into());
     }
     if !url.username().is_empty() || url.password().is_some() {
         return Err(format!("{label} addresses must not contain credentials.").into());
     }
     if url.host_str().is_some_and(model_probe_never_allowed_host) {
-        return Err(
-            format!(
-                "That {label} is reserved for cloud instance credentials and cannot be saved."
-            )
-            .into(),
-        );
+        return Err(format!(
+            "That {label} is reserved for cloud instance credentials and cannot be saved."
+        )
+        .into());
     }
     Ok(url)
 }
@@ -890,9 +886,8 @@ fn model_probe_never_allowed_host(host: &str) -> bool {
             }
 
             let bytes = address.octets();
-            let mapped = bytes[..10].iter().all(|byte| *byte == 0)
-                && bytes[10] == 0xff
-                && bytes[11] == 0xff;
+            let mapped =
+                bytes[..10].iter().all(|byte| *byte == 0) && bytes[10] == 0xff && bytes[11] == 0xff;
             let compatible = bytes[..12].iter().all(|byte| *byte == 0);
             let nat64 = bytes[..4] == [0x00, 0x64, 0xff, 0x9b]
                 && bytes[4..12].iter().all(|byte| *byte == 0);
@@ -921,10 +916,7 @@ fn models_probe_url(base_url: &str) -> Result<reqwest::Url, Problem> {
     Ok(url)
 }
 
-async fn provider_probe(
-    request: reqwest::RequestBuilder,
-    provider: &str,
-) -> Result<(), Problem> {
+async fn provider_probe(request: reqwest::RequestBuilder, provider: &str) -> Result<(), Problem> {
     let response = request.send().await.map_err(|error| {
         Problem::with(
             format!("OpenBot could not reach {provider}."),
@@ -1240,12 +1232,8 @@ async fn start_stack_inner<R: tauri::Runtime>(
             .as_ref()
             .filter(|pending| pending.root == root)
             .map(|pending| pending.key.clone());
-        let api_key = intelligence_key_for_start(
-            &root,
-            api_key,
-            pending_intelligence_key,
-            saved_secret,
-        )?;
+        let api_key =
+            intelligence_key_for_start(&root, api_key, pending_intelligence_key, saved_secret)?;
         let existing_secrets = openbot_desktop_lib::vault::already_given_no_ui(
             &root,
             &root.join(".env"),
@@ -2241,10 +2229,7 @@ fn show_openbot_on<R: tauri::Runtime>(
     show_openbot_route_on(app, ports, None)
 }
 
-fn openbot_route_url(
-    base: &str,
-    route: Option<(&str, &str)>,
-) -> Result<tauri::Url, String> {
+fn openbot_route_url(base: &str, route: Option<(&str, &str)>) -> Result<tauri::Url, String> {
     let mut url: tauri::Url = base
         .parse()
         .map_err(|error| format!("{base} is not a URL: {error}"))?;
@@ -2925,8 +2910,10 @@ async fn intelligence_key_for(
         openbot_desktop_lib::problem::Problem::plain(format!("A key could not be created: {error}"))
     })??;
     *app.state::<Shell>().intelligence_credential.lock().unwrap() = None;
-    *app.state::<Shell>().pending_intelligence_key.lock().unwrap() =
-        Some(PendingIntelligenceKey { root, key });
+    *app.state::<Shell>()
+        .pending_intelligence_key
+        .lock()
+        .unwrap() = Some(PendingIntelligenceKey { root, key });
     Ok(())
 }
 
@@ -4111,35 +4098,29 @@ mod tests {
             .build(tauri::test::mock_context(tauri::test::noop_assets()))
             .unwrap();
 
-        *app.state::<Shell>().pending_intelligence_key.lock().unwrap() =
-            Some(PendingIntelligenceKey {
-                root: root_a.clone(),
-                key: "synthetic-pending-key".into(),
-            });
+        *app.state::<Shell>()
+            .pending_intelligence_key
+            .lock()
+            .unwrap() = Some(PendingIntelligenceKey {
+            root: root_a.clone(),
+            key: "synthetic-pending-key".into(),
+        });
 
-        let _ = already_configured(
-            app.handle().clone(),
-            root_a.to_string_lossy().into_owned(),
-        );
-        assert!(
-            app.state::<Shell>()
-                .pending_intelligence_key
-                .lock()
-                .unwrap()
-                .is_some()
-        );
+        let _ = already_configured(app.handle().clone(), root_a.to_string_lossy().into_owned());
+        assert!(app
+            .state::<Shell>()
+            .pending_intelligence_key
+            .lock()
+            .unwrap()
+            .is_some());
 
-        let _ = already_configured(
-            app.handle().clone(),
-            root_b.to_string_lossy().into_owned(),
-        );
-        assert!(
-            app.state::<Shell>()
-                .pending_intelligence_key
-                .lock()
-                .unwrap()
-                .is_none()
-        );
+        let _ = already_configured(app.handle().clone(), root_b.to_string_lossy().into_owned());
+        assert!(app
+            .state::<Shell>()
+            .pending_intelligence_key
+            .lock()
+            .unwrap()
+            .is_none());
 
         let _ = std::fs::remove_dir_all(root_a);
         let _ = std::fs::remove_dir_all(root_b);
