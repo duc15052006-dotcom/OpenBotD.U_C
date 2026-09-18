@@ -6109,7 +6109,7 @@ fn main() {
             images.images.insert(
                 name.into(),
                 deployment::Image {
-                    reference: format!("localhost/{name}@sha256:00"),
+                    reference: fixture_release_image_reference(name),
                 },
             );
         }
@@ -6293,7 +6293,7 @@ fn main() {
         } else if let Some(image) = expected_image {
             assert_eq!(
                 settings.get("PICKED_HARNESS_IMAGE"),
-                Some(&format!("localhost/{image}@sha256:00"))
+                Some(&fixture_release_image_reference(image))
             );
             assert_ne!(settings.get("PICKED_HARNESS_URL"), Some(&remote));
         } else {
@@ -7007,6 +7007,20 @@ fn main() {
         let _ = std::fs::remove_dir_all(record.parent().expect("record parent"));
     }
 
+    fn fixture_release_image_reference(published: &str) -> String {
+        let repository =
+            crate::update::release_repository().expect("release repository should be valid");
+        let owner = repository
+            .split_once('/')
+            .expect("release repository should contain an owner and name")
+            .0
+            .to_ascii_lowercase();
+        format!(
+            "ghcr.io/{owner}/openbot-{published}@sha256:{}",
+            "0".repeat(64)
+        )
+    }
+
     fn write_installed_deployment(root: &Path) {
         const DEPLOYMENT_VERSION: &str = "v0.0.8";
         std::fs::create_dir_all(root.join("server")).unwrap();
@@ -7024,31 +7038,31 @@ fn main() {
                 (
                     "server".into(),
                     deployment::Image {
-                        reference: "localhost/openbot-server@sha256:00".into(),
+                        reference: fixture_release_image_reference("server"),
                     },
                 ),
                 (
                     "supervisor".into(),
                     deployment::Image {
-                        reference: "localhost/openbot-supervisor@sha256:00".into(),
+                        reference: fixture_release_image_reference("supervisor"),
                     },
                 ),
                 (
                     "agent-computer".into(),
                     deployment::Image {
-                        reference: "localhost/openbot-agent-computer@sha256:00".into(),
+                        reference: fixture_release_image_reference("agent-computer"),
                     },
                 ),
                 (
                     "agent-bot".into(),
                     deployment::Image {
-                        reference: "localhost/openbot-agent-bot@sha256:00".into(),
+                        reference: fixture_release_image_reference("agent-bot"),
                     },
                 ),
                 (
                     "agent-langgraph".into(),
                     deployment::Image {
-                        reference: "localhost/openbot-agent-langgraph@sha256:00".into(),
+                        reference: fixture_release_image_reference("agent-langgraph"),
                     },
                 ),
             ]),
