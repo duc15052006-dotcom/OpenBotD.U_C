@@ -543,6 +543,7 @@ describe("GET /:channelId/attachments", () => {
           attachedAt: sentAt.toISOString(),
         },
       ],
+      truncated: false,
     });
   });
 
@@ -563,7 +564,7 @@ describe("GET /:channelId/attachments", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ attachments: [] });
+    expect(await response.json()).toEqual({ attachments: [], truncated: false });
   });
 });
 
