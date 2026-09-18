@@ -60,6 +60,8 @@ import type {
   ReadFileInput,
   ReadFileResult,
   ReadResult,
+  QuarantineListResult,
+  QuarantineRecord,
   RunCommandInput,
   RunCommandResult,
   ScreenshotResult,
@@ -132,6 +134,17 @@ export interface ComputerGateway {
   screenshot(botId: string): Promise<ScreenshotResult>;
   snapshot(botId: string): Promise<SnapshotResult>;
   read(botId: string): Promise<ReadResult>;
+  listQuarantine(botId: string): Promise<QuarantineListResult>;
+  scanQuarantine(
+    botId: string,
+    actor: ActionActor,
+    id: string,
+  ): Promise<QuarantineRecord>;
+  approveQuarantine(
+    botId: string,
+    actor: ActionActor,
+    id: string,
+  ): Promise<QuarantineRecord>;
   navigate(
     botId: string,
     actor: ActionActor,
@@ -649,6 +662,38 @@ export function createComputerGateway(
     screenshot,
     snapshot,
     read,
+
+    listQuarantine(botId: string): Promise<QuarantineListResult> {
+      return get<QuarantineListResult>(botId, "/quarantine");
+    },
+
+    async scanQuarantine(botId: string, actor: ActionActor, id: string) {
+      const result = await post<QuarantineRecord>(
+        botId,
+        "/quarantine/scan",
+        { id },
+      );
+      await writeControlEvent(auditStore, "computer.quarantine_scanned", {
+        botId,
+        actor,
+        reason: `${id}: ${result.status}`,
+      });
+      return result;
+    },
+
+    async approveQuarantine(botId: string, actor: ActionActor, id: string) {
+      const result = await post<QuarantineRecord>(
+        botId,
+        "/quarantine/approve",
+        { id, botId, confirm: "APPROVE" },
+      );
+      await writeControlEvent(auditStore, "computer.quarantine_approved", {
+        botId,
+        actor,
+        reason: `${id}: explicitly approved after clean scan`,
+      });
+      return result;
+    },
 
     status(botId: string): Promise<ComputerStatus> {
       return provider.status(botId);
@@ -1348,7 +1393,9 @@ async function writeControlEvent(
     | "computer.started"
     | "computer.restarted"
     | "computer.stopped"
-    | "computer.reset",
+    | "computer.reset"
+    | "computer.quarantine_scanned"
+    | "computer.quarantine_approved",
   entry: {
     botId: string;
     actor: ActionActor;
