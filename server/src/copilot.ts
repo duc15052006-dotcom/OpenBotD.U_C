@@ -28,6 +28,10 @@ import {
   PROVENANCE_GUIDANCE,
 } from "../../shared/bot-prompt";
 import { builtInModelConfiguration } from "./agents/built-in-model";
+import {
+  agentInstructionsGuidance,
+  storedAgentInstructionsFromOverride,
+} from "./agents/instructions";
 import { sanitizeSeededHistory } from "./agents/history-sanitize";
 import type { AgentActor } from "./agents/profile-types";
 import type { RuntimeAgentModel } from "./agents/runtime-model";
@@ -74,6 +78,8 @@ type RegisteredBuiltInAgent = {
   name: string;
   type: "built_in";
   systemPrompt: string;
+  /** Deployment-owned instructions that refine this Agent's package/base role. */
+  instructions?: string;
 };
 
 type RegisteredRemoteAgentFacts = {
@@ -144,13 +150,16 @@ export type AgentStandingProfile = {
  */
 export function standingRoleMessage(
   profile: AgentStandingProfile,
+  instructions?: string | null,
 ): StandingRoleMessage {
+  const agentInstructions = agentInstructionsGuidance(instructions);
   return {
     id: `standing-role:${profile.id}`,
     role: "system",
     content: [
       `You are ${profile.name}, ${profile.title}.`,
       profile.roleDescription,
+      ...(agentInstructions ? [agentInstructions] : []),
       "This standing role applies in every channel. Treat channel messages as task-specific instructions within it.",
       /*
        * Here rather than in the package, because for a remote Bot the standing role is the only
@@ -200,6 +209,8 @@ type RuntimeAgentRow = {
   name: string;
   type: "built_in" | "remote_ag_ui" | "remote_mastra";
   configuration: unknown;
+  /** Deployment-owned mutable namespaces such as model, computer, and instructions. */
+  override?: unknown;
   title: string;
   roleDescription: string;
 };
@@ -211,6 +222,7 @@ export function registeredAgentFromRow(
     return null;
   }
   const configuration = row.configuration;
+  const instructions = storedAgentInstructionsFromOverride(row.override);
   if (row.type === "built_in") {
     const systemPrompt = configuration?.systemPrompt;
     const trimmedSystemPrompt =
@@ -221,6 +233,7 @@ export function registeredAgentFromRow(
           name: row.name,
           type: "built_in",
           systemPrompt: trimmedSystemPrompt,
+          ...(instructions ? { instructions } : {}),
         }
       : null;
   }
@@ -243,7 +256,7 @@ export function registeredAgentFromRow(
         ...(typeof remoteAgentId === "string" && remoteAgentId.length > 0
           ? { remoteAgentId }
           : {}),
-        standingMessage: standingRoleMessage(row),
+        standingMessage: standingRoleMessage(row, instructions),
       }
     : null;
 }
@@ -361,6 +374,7 @@ export function builtInAgentConfiguration(
     };
   }
 
+  const agentInstructions = agentInstructionsGuidance(agent.instructions);
   const standing = standingInstructionsGuidance(standingInstructions);
 
   return {
@@ -379,6 +393,7 @@ export function builtInAgentConfiguration(
      */
     prompt: [
       agent.systemPrompt,
+      ...(agentInstructions ? [agentInstructions] : []),
       ...(standing ? [standing] : []),
       /*
        * Unconditional, unlike the two below it.
