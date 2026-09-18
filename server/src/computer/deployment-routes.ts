@@ -15,5 +15,6 @@ export const DEPLOYMENT_ROUTES = new Set([
   "policy",
   "fleet",
   "stop-all",
+  "quarantine",
   "policy-dry-run",
 ]);
