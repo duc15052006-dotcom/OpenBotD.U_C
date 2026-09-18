@@ -111,6 +111,16 @@ export class NameHeldError extends Error {
   }
 }
 
+/** A per-Bot persistent volume exists, but its labels do not prove this deployment created it. */
+export class VolumeHeldError extends Error {
+  constructor(volume: string) {
+    super(
+      `A volume named ${volume} already exists and does not belong to this Bot in this deployment. It will not be mounted or deleted.`,
+    );
+    this.name = "VolumeHeldError";
+  }
+}
+
 /**
  * The container started and the computer inside it never answered.
  *
@@ -182,6 +192,74 @@ function labelsFor(names: ComputerNames): Record<string, string> {
     [BOT_LABEL]: names.botId,
     [NAMESPACE_LABEL]: NAMESPACE,
   };
+}
+
+/** Existing storage is adopted only when all ownership labels match this exact Bot. */
+function volumeOurs(
+  labels: Record<string, string> | undefined,
+  names: ComputerNames,
+): boolean {
+  return ours(labels) && labels?.[BOT_LABEL] === names.botId;
+}
+
+async function ensureOwnedVolume(
+  volumeName: string,
+  names: ComputerNames,
+): Promise<void> {
+  try {
+    await docker.createVolume({
+      Name: volumeName,
+      Labels: labelsFor(names),
+    });
+    return;
+  } catch (error) {
+    if (statusOf(error) !== 409) {
+      throw new DockerUnavailableError(String(error));
+    }
+  }
+
+  try {
+    const info = await docker.getVolume(volumeName).inspect();
+    if (!volumeOurs(info.Labels, names)) {
+      throw new VolumeHeldError(volumeName);
+    }
+  } catch (error) {
+    if (error instanceof VolumeHeldError) throw error;
+    throw new DockerUnavailableError(String(error));
+  }
+}
+
+async function removeOwnedVolume(
+  volumeName: string,
+  names: ComputerNames,
+): Promise<void> {
+  let inspected: Docker.VolumeInspectInfo;
+  try {
+    inspected = await docker.getVolume(volumeName).inspect();
+  } catch (error) {
+    if (statusOf(error) === 404) return;
+    throw new DockerUnavailableError(String(error));
+  }
+  if (!volumeOurs(inspected.Labels, names)) {
+    throw new VolumeHeldError(volumeName);
+  }
+
+  // Container removal and volume release are separate daemon operations. A brief 409 means the
+  // mount is still being released, not permission to leave destructive Reset half-complete.
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      await docker.getVolume(volumeName).remove();
+      return;
+    } catch (error) {
+      const status = statusOf(error);
+      if (status === 404) return;
+      if (status === 409 && attempt < 19) {
+        await pause(100);
+        continue;
+      }
+      throw new DockerUnavailableError(String(error));
+    }
+  }
 }
 
 /** Every computer this supervisor owns, and only those. */
@@ -391,6 +469,8 @@ export type EnsureOptions = {
    */
   runtime?: string;
   memoryBytes?: number;
+  /** CPU quota in Docker's nanocpu unit. Omitted only when a deployment deliberately disables it. */
+  nanoCpus?: number;
   /**
    * How long a started computer is given to answer before the attempt is called a failure.
    *
@@ -452,6 +532,7 @@ function hostConfig(names: ComputerNames, options: EnsureOptions) {
     CapDrop: ["ALL"],
     // A runaway Bot is a resource problem for itself, not for every other Bot on the host.
     ...(options.memoryBytes ? { Memory: options.memoryBytes } : {}),
+    ...(options.nanoCpus ? { NanoCpus: options.nanoCpus } : {}),
     PidsLimit: options.pidsLimit ?? 512,
     // Chromium's sandbox wants shared memory and will crash on the 64MB default.
     ShmSize: 1_073_741_824,
@@ -505,17 +586,7 @@ export async function ensure(
 
     if (!existing) {
       for (const volume of [names.profileVolume, names.workspaceVolume]) {
-        try {
-          await docker.createVolume({
-            Name: volume,
-            Labels: labelsFor(names),
-          });
-        } catch (error) {
-          // Already exists is success for a restarted supervisor.
-          if (statusOf(error) !== 409) {
-            throw new DockerUnavailableError(String(error));
-          }
-        }
+        await ensureOwnedVolume(volume, names);
       }
 
       try {
@@ -620,32 +691,36 @@ export async function stop(names: ComputerNames): Promise<boolean> {
 }
 
 /**
- * Throw this Bot's computer away so the next request builds a clean one.
+ * Throw this Bot's computer and persistent state away so the next request builds a clean one.
  *
- * The profile goes with it. The workspace is left alone: files a Bot was asked to produce are work,
- * not browser state.
+ * Reset is intentionally the destructive lifecycle operation: both the browser profile and the
+ * workspace are deleted. The API server requires the literal RESET confirmation bound to this exact
+ * Bot id before this supervisor verb is called.
  */
 export async function reset(names: ComputerNames): Promise<boolean> {
-  if (!(await inspectOwned(names))) return false;
-
-  try {
-    await docker
-      .getContainer(names.container)
-      .remove({ force: true, v: false });
-  } catch (error) {
-    if ((error as { statusCode?: number }).statusCode !== 404) {
-      throw new DockerUnavailableError(String(error));
+  const existing = await inspectOwned(names);
+  if (existing) {
+    try {
+      await docker
+        .getContainer(names.container)
+        .remove({ force: true, v: false });
+    } catch (error) {
+      if (statusOf(error) !== 404) {
+        throw new DockerUnavailableError(String(error));
+      }
     }
   }
 
-  try {
-    await docker.getVolume(names.profileVolume).remove();
-  } catch (error) {
-    const status = (error as { statusCode?: number }).statusCode;
-    // 409 is "still in use", which resolves itself once the container is gone.
-    if (status !== 404 && status !== 409) {
-      throw new DockerUnavailableError(String(error));
+  let removedState = existing !== null;
+  for (const volume of [names.profileVolume, names.workspaceVolume]) {
+    try {
+      await removeOwnedVolume(volume, names);
+      removedState = true;
+    } catch (error) {
+      // A same-named foreign volume is evidence of a collision, never something Reset may erase.
+      if (error instanceof VolumeHeldError) throw error;
+      throw error;
     }
   }
-  return true;
+  return removedState;
 }
