@@ -112,6 +112,8 @@ services:
       COMPUTER_BROWSER_IDLE_MS: ${COMPUTER_BROWSER_IDLE_MS:-}
     volumes:
       - agent-workspace:/workspace
+      # Browser downloads are untrusted and stay separate from the Agent's normal workspace.
+      - agent-quarantine:/quarantine
       # Chromium's user-data directory is volume-backed so logins survive container restarts.
       - agent-profiles:/profiles
     # Gives Chromium time to flush its profile after SIGTERM before Docker sends SIGKILL.
@@ -400,6 +402,7 @@ networks:
 volumes:
   postgres-data:
   agent-workspace:
+  agent-quarantine:
   spire-server-data:
   spire-server-socket:
   spire-agent-socket:
