@@ -668,11 +668,9 @@ export function createComputerGateway(
     },
 
     async scanQuarantine(botId: string, actor: ActionActor, id: string) {
-      const result = await post<QuarantineRecord>(
-        botId,
-        "/quarantine/scan",
-        { id },
-      );
+      const result = await post<QuarantineRecord>(botId, "/quarantine/scan", {
+        id,
+      });
       await writeControlEvent(auditStore, "computer.quarantine_scanned", {
         botId,
         actor,
