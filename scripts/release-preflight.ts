@@ -205,6 +205,26 @@ function checkReleaseWiring(): void {
     fail("signing: sign job does not request OIDC id-token: write");
   }
 
+  const signedInstallerAcceptance = stepNamed(
+    signJob,
+    "Signed installer standard-user acceptance",
+  );
+  const signedInstallerRun =
+    typeof signedInstallerAcceptance?.run === "string"
+      ? signedInstallerAcceptance.run
+      : "";
+  for (const evidence of [
+    "test-windows-installer-standard-user.ps1",
+    "Expected exactly one signed NSIS installer",
+    "signed installer failed standard-user acceptance",
+  ]) {
+    if (!signedInstallerRun.toLowerCase().includes(evidence.toLowerCase())) {
+      fail(
+        `signing: protected signed installer acceptance is missing ${evidence}`,
+      );
+    }
+  }
+
   const desktopApp = desktop.jobs?.app;
   const installerSmoke = stepNamed(
     desktopApp,
