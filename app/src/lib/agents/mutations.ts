@@ -173,7 +173,17 @@ export function uploadAgentKnowledgeMutationOptions(queryClient: QueryClient) {
     mutationFn: async (variables: {
       agentId: string;
       file: File;
+      maxBytes: number;
     }): Promise<AgentKnowledgeSettings> => {
+      /*
+       * Refuse before arrayBuffer(). The server is authoritative, but without this browser-side
+       * guard a dragged multi-gigabyte file would be read into this tab just to be rejected later.
+       */
+      if (variables.file.size > variables.maxBytes) {
+        throw new Error(
+          `Knowledge files are limited to ${variables.maxBytes} bytes.`,
+        );
+      }
       const bytes = new Uint8Array(await variables.file.arrayBuffer());
       return client(
         `${agentApiPath(variables.agentId)}/knowledge`,
