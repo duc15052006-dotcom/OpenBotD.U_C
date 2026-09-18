@@ -141,12 +141,7 @@ describe("download quarantine", () => {
     const download = await addDownload("agent-a");
     expect(await listQuarantinedDownloads(root, "agent-b")).toEqual([]);
     await expect(
-      scanQuarantinedDownload(
-        root,
-        "agent-b",
-        download.id,
-        fakeScan("clean"),
-      ),
+      scanQuarantinedDownload(root, "agent-b", download.id, fakeScan("clean")),
     ).rejects.toThrow(QuarantineStateError);
   });
 });
