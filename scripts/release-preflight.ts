@@ -264,14 +264,26 @@ function checkComputerSandboxBoundary(): void {
   }
 
   const downloads = read("agent-computer/src/download-quarantine.ts");
+  const quarantineScanner = read("agent-computer/src/quarantine-scanner.ts");
   const profiles = read("agent-computer/src/profiles.ts");
   for (const evidence of [
-    'status: "quarantined"',
+    'status: "pending"',
     "download.saveAs(file)",
     "quarantineDirectoryFor(root, botId)",
+    "Only a clean scanned download can be approved for export",
   ]) {
     if (!downloads.includes(evidence)) {
       fail(`computer: download quarantine is missing ${evidence}`);
+    }
+  }
+  for (const evidence of [
+    'status: "scan_failed"',
+    "exitCode === 0",
+    "exitCode === 1",
+    "process.killed",
+  ]) {
+    if (!quarantineScanner.includes(evidence)) {
+      fail(`computer: fail-closed malware scanner is missing ${evidence}`);
     }
   }
   if (
@@ -380,11 +392,28 @@ function checkInteractiveComputerControls(): void {
   }
 
   for (const evidence of [
-    'status: "quarantined"',
-    "Do not execute or export without explicit user approval",
+    'status: "pending"',
+    'status: "clean"',
+    'status: "blocked"',
+    'status: "scan_failed"',
+    'status: "approved"',
+    'status: "released"',
+    "Only a clean scanned download can be approved for export",
   ]) {
     if (!quarantine.includes(evidence)) {
       fail(`computer: download quarantine metadata is missing ${evidence}`);
+    }
+  }
+
+  const computerRoutes = read("server/src/computer/routes.ts");
+  for (const evidence of [
+    'routes.post("/:botId/quarantine/scan"',
+    'routes.post("/:botId/quarantine/approve"',
+    'body.confirm !== "APPROVE"',
+    "body.botId !== botId",
+  ]) {
+    if (!computerRoutes.includes(evidence)) {
+      fail(`computer: explicit quarantine approval is missing ${evidence}`);
     }
   }
 }
