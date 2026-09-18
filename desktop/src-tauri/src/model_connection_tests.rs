@@ -69,6 +69,8 @@ fn protected_probe_keeps_loopback_and_private_model_hosts_available() {
 #[test]
 fn protected_probe_rejects_credentials_embedded_in_endpoint_url() {
     let url = reqwest::Url::parse("https://user:secret@127.0.0.1:8443/v1/models").unwrap();
-    let error = protected_endpoint_client(&url).expect_err("userinfo must be refused");
+    let error = protected_endpoint_client(&url)
+        .err()
+        .expect("userinfo must be refused");
     assert!(error.said.contains("credentials"));
 }
