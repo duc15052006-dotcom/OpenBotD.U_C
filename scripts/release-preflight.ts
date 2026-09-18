@@ -154,6 +154,23 @@ function checkReleaseWiring(): void {
   const signing = workflow(".github/workflows/desktop-signing.yml");
   const release = workflow(".github/workflows/publish-release.yml");
   const releaseSource = read(".github/workflows/publish-release.yml");
+  const federation = json("desktop/signing/azure-federation.json");
+  const expectedFederationSubject =
+    "repo:duc15052006-dotcom@270219086/OpenBotD.U_C@1374258280:environment:windows-signing";
+  if (federation.subject !== expectedFederationSubject) {
+    fail(
+      `signing: Azure federation subject does not match this repository: ${String(
+        federation.subject,
+      )}`,
+    );
+  }
+  if (
+    federation.issuer !== "https://token.actions.githubusercontent.com" ||
+    JSON.stringify(federation.audiences) !==
+      JSON.stringify(["api://AzureADTokenExchange"])
+  ) {
+    fail("signing: Azure federation issuer or audience drifted");
+  }
 
   if (releaseSource.includes("ghcr.io/copilotkit/")) {
     fail("release: container publishing is still hard-coded to the upstream GHCR namespace");
