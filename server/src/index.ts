@@ -5,7 +5,7 @@ import {
   IntelligenceAgentRunner,
 } from "@copilotkit/runtime/v2";
 import { serve } from "bun";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { COMPUTER_GUIDANCE } from "../../shared/bot-prompt";
 import { workOwner } from "../../shared/work-owner";
 import { mintRunAssertion, readRunAssertion } from "./agents/callback-token";
@@ -89,7 +89,12 @@ import {
   resolveModelApiKey,
 } from "./credentials";
 import { createDatabase } from "./db/client";
-import { intelligenceChannelMappings } from "./db/schema";
+import {
+  channelAgents,
+  channelMemberships,
+  channels,
+  intelligenceChannelMappings,
+} from "./db/schema";
 import { createHostAccessBroker } from "./host-access/broker";
 import { hostAccessTools } from "./host-access/tools";
 import { createOnboardingStore } from "./people/onboarding";
