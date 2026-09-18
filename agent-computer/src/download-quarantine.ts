@@ -59,7 +59,9 @@ export type QuarantinedDownload = {
   entry: QuarantineEntry;
 };
 
-async function fingerprint(file: string): Promise<{ bytes: number; sha256: string }> {
+async function fingerprint(
+  file: string,
+): Promise<{ bytes: number; sha256: string }> {
   const info = await lstat(file);
   if (!info.isFile() || info.isSymbolicLink()) {
     throw new Error("A quarantined download must be a regular file.");
@@ -170,10 +172,12 @@ export async function listQuarantinedDownloads(
   botId: string,
 ): Promise<QuarantineEntry[]> {
   const directory = quarantineDirectoryFor(root, botId);
-  const names = await readdir(directory).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === "ENOENT") return [] as string[];
-    throw error;
-  });
+  const names = await readdir(directory).catch(
+    (error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return [] as string[];
+      throw error;
+    },
+  );
   const entries: QuarantineEntry[] = [];
 
   for (const metadataName of names) {
@@ -182,7 +186,9 @@ export async function listQuarantinedDownloads(
     const metadataPath = join(directory, metadataName);
     const file = join(directory, storedName);
     try {
-      const parsed = JSON.parse(await readFile(metadataPath, "utf8")) as unknown;
+      const parsed = JSON.parse(
+        await readFile(metadataPath, "utf8"),
+      ) as unknown;
       if (!validMetadata(parsed, botId, storedName)) continue;
       const info = await lstat(file);
       if (!info.isFile() || info.isSymbolicLink()) continue;
@@ -225,9 +231,11 @@ export async function deleteQuarantinedDownload(
     if (!validMetadata(parsed, botId, storedName) || parsed.id !== id) continue;
 
     // Only paths derived from the directory listing are removed. The request never supplies a path.
-    await unlink(join(directory, storedName)).catch((error: NodeJS.ErrnoException) => {
-      if (error.code !== "ENOENT") throw error;
-    });
+    await unlink(join(directory, storedName)).catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code !== "ENOENT") throw error;
+      },
+    );
     await unlink(metadataPath);
     return true;
   }
