@@ -107,7 +107,18 @@ jobs:
   checks:
     needs: [metadata, verify]
     if: needs.metadata.outputs.is_release == 'true'
-    uses: $/.github/workflows/ci.yml
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  # Desktop is a release product too. Reuse the exact cross-platform build/install workflow rather
+  # than treating an image-only CI pass as permission to publish a release. The Windows leg builds
+  # the NSIS artifact, installs the exact executable, launches it, and uninstalls it; the other legs
+  # prove the same tree packages on macOS and Linux.
+  desktop-checks:
+    needs: [metadata, verify]
+    if: needs.metadata.outputs.is_release == 'true'
+    uses: ./.github/workflows/desktop.yml
     permissions:
       contents: read
 
@@ -115,7 +126,7 @@ jobs:
   # is deployed and there is no second build to disagree with the first.
   image:
     name: image
-    needs: [metadata, verify, checks]
+    needs: [metadata, verify, checks, desktop-checks]
     if: needs.metadata.outputs.is_release == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -174,7 +185,7 @@ jobs:
   # would be the slower and less reliable option at no saving.
   component-images:
     name: ${{ matrix.image }} ${{ matrix.platform.arch }}
-    needs: [metadata, verify, checks]
+    needs: [metadata, verify, checks, desktop-checks]
     if: needs.metadata.outputs.is_release == 'true'
     runs-on: ${{ matrix.platform.runner }}
     permissions:
