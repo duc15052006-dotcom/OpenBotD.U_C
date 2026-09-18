@@ -505,6 +505,28 @@ mod tests {
     }
 
     #[test]
+    fn a_manifest_with_a_different_or_malformed_source_commit_is_refused() {
+        let names: Vec<&str> = IMAGE_VARIABLES.iter().map(|(name, _)| *name).collect();
+
+        let mut wrong = manifest(&names);
+        wrong.commit = OTHER_COMMIT.into();
+        let dir = scratch("manifest-commit-mismatch");
+        record(&dir, "v0.0.7", TEST_COMMIT).unwrap();
+        std::fs::write(
+            images_path(&dir),
+            serde_json::to_string(&wrong).unwrap(),
+        )
+        .unwrap();
+        assert!(needs_fetch(&dir, "v0.0.7"));
+        assert!(image_variables(&dir).is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+
+        let mut malformed = manifest(&names);
+        malformed.commit = "not-a-commit".into();
+        assert!(ensure_manifest_commit(&malformed).is_err());
+    }
+
+    #[test]
     fn mutable_or_cross_repository_image_references_are_refused() {
         let names: Vec<&str> = IMAGE_VARIABLES.iter().map(|(name, _)| *name).collect();
 
@@ -547,7 +569,7 @@ mod tests {
     #[test]
     fn deployment_downloads_use_the_repository_baked_into_this_desktop_build() {
         let repository = crate::update::release_repository().unwrap();
-        assert!(tarball_url("v0.0.7").unwrap().contains(repository));
+        assert!(tarball_url(TEST_COMMIT).unwrap().contains(repository));
         assert!(images_url("v0.0.7").unwrap().contains(repository));
     }
 
@@ -559,14 +581,16 @@ mod tests {
     }
 
     #[test]
-    fn the_tarball_is_a_tag_rather_than_a_branch() {
-        let url = tarball_url("v0.0.7").unwrap();
-        assert!(url.contains("/refs/tags/v0.0.7"), "{url}");
-        assert!(!url.contains("/heads/"), "a branch is not a version: {url}");
-        assert!(
-            url.starts_with("https://"),
-            "must not need a git client: {url}"
-        );
+    fn the_source_tarball_is_bound_to_an_immutable_commit() {
+        let url = tarball_url(TEST_COMMIT).unwrap();
+        assert!(url.contains(TEST_COMMIT), "{url}");
+        assert!(!url.contains("/refs/tags/"), "a mutable tag is not source identity: {url}");
+        assert!(!url.contains("/heads/"), "a branch is not source identity: {url}");
+        assert!(url.starts_with("https://"), "must not need a git client: {url}");
+
+        for invalid in ["v0.0.7", "main", "ABCDEF", "1234"] {
+            assert!(tarball_url(invalid).is_err(), "{invalid} became a source ref");
+        }
     }
 
     #[test]
