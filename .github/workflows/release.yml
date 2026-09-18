@@ -108,6 +108,10 @@ jobs:
               bump === "major" ? [major + 1, 0, 0] :
               bump === "minor" ? [major, minor + 1, 0] :
               [major, minor, patch + 1];
+            if (!next.every(Number.isSafeInteger)) {
+              console.error(`The requested ${bump} bump would exceed JavaScript's safe integer range.`);
+              process.exit(1);
+            }
             pkg.version = next.join(".");
             fs.writeFileSync("package.json", `${JSON.stringify(pkg, null, 2)}\n`);
             console.log(pkg.version);
