@@ -114,6 +114,39 @@ describe("reading and writing inside the workspace", () => {
     await expect(ws.read("big.txt")).rejects.toThrow();
   });
 
+  test("the total workspace quota refuses a write that would exceed it", async () => {
+    const ws = createWorkspace(root, {
+      readBytes: 1000,
+      writeBytes: 1000,
+      listEntries: 500,
+      totalBytes: 10,
+    });
+    await ws.write("one.txt", "123456");
+    await expect(ws.write("two.txt", "12345")).rejects.toThrow(
+      WorkspaceFileError,
+    );
+    expect((await ws.read("one.txt")).text).toBe("123456");
+  });
+
+  test("concurrent writes cannot race past the total workspace quota", async () => {
+    const ws = createWorkspace(root, {
+      readBytes: 1000,
+      writeBytes: 1000,
+      listEntries: 500,
+      totalBytes: 10,
+    });
+    const outcomes = await Promise.allSettled([
+      ws.write("one.txt", "123456"),
+      ws.write("two.txt", "abcdef"),
+    ]);
+    expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(
+      1,
+    );
+    expect(outcomes.filter((outcome) => outcome.status === "rejected")).toHaveLength(
+      1,
+    );
+  });
+
   test("reading something that is not there says so plainly", async () => {
     await expect(workspace().read("nope.txt")).rejects.toThrow(
       WorkspaceFileError,
