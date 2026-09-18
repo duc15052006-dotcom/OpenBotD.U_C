@@ -15,7 +15,10 @@ import type { AgentKnowledgeStore } from "./agents/knowledge-store";
 import { createAgentModelConfigRoutes } from "./agents/model-config-routes";
 import type { AgentModelConfigStore } from "./agents/model-config-store";
 import type { AgentModelConnectionService } from "./agents/model-connection-service";
-import type { BotAccessCheck } from "./agents/profile-policy";
+import {
+  type BotAccessCheck,
+  canManageAgentRuntimeSettings,
+} from "./agents/profile-policy";
 import type { AgentProfileStore } from "./agents/profile-store";
 import { createAgentRoutes } from "./agents/routes";
 import {
@@ -1071,6 +1074,20 @@ export function createApp(
         (await agentProfileStore.get(actor, botId)) !== null
     : async () => true;
 
+  /*
+   * Lifecycle controls are stronger than use. Owners/admins may manage user-owned Agents; only an
+   * admin may change the runtime behind package/system Agents. With no profile store there is no
+   * ownership row to consult, so lifecycle management is deployment administration.
+   */
+  const canManageBotComputer: BotAccessCheck = agentProfileStore
+    ? async (actor, botId) => {
+        const profile = await agentProfileStore.get(actor, botId);
+        return profile
+          ? canManageAgentRuntimeSettings(actor, profile)
+          : false;
+      }
+    : async (actor) => actor.role === "admin";
+
   // The Bot computer. Acting on a page needs the gateway and the policy it enforces, so both arrive
   // together or the routes are not mounted. An ungoverned computer is not a reduced feature. It is
   // the one shape of this feature that must not exist.
@@ -1084,6 +1101,7 @@ export function createApp(
         canUseBot,
         pageFrames,
         auditReader,
+        canManageBotComputer,
       ),
     );
   }
