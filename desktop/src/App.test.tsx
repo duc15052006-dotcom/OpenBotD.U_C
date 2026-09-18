@@ -791,11 +791,8 @@ test("disabled Virtual Machine Platform displays its feature-specific fix and bl
 });
 
 type ExistingConfigurationValues = {
-  INTELLIGENCE_API_KEY?: string;
   INTELLIGENCE_API_URL?: string;
   INTELLIGENCE_GATEWAY_WS_URL?: string;
-  OPENAI_API_KEY?: string;
-  ANTHROPIC_API_KEY?: string;
   OPENAI_BASE_URL?: string;
 };
 
@@ -1043,10 +1040,7 @@ test("Change the model after an Ask failure stops the stack and reaches the prov
     if (command === "default_root") return "/tmp/openbot-app-test";
     if (command === "already_configured") {
       return {
-        values: {
-          INTELLIGENCE_API_KEY: "ck-test",
-          OPENAI_API_KEY: "sk-test",
-        },
+        values: {},
         saved: {
           intelligenceApiKey: true,
           modelApiKeys: { openai: true, anthropic: false },
@@ -1124,9 +1118,9 @@ test("Change the model after an Ask failure stops the stack and reaches the prov
   expect(view.queryByRole("button", { name: "Stop OpenBot" })).toBeNull();
 });
 
-test("empty Intelligence projects keep sign-in retryable while Start waits for a project key", async () => {
+test("project selection keeps the provisioned Intelligence key out of WebView state", async () => {
   let projectLists = 0;
-  invokeHandler = async (command) => {
+  invokeHandler = async (command, args) => {
     if (command === "prepare_installation") return null;
     if (command === "detect_engine") {
       return {
@@ -1139,9 +1133,7 @@ test("empty Intelligence projects keep sign-in retryable while Start waits for a
     if (command === "default_root") return "/tmp/openbot-app-test";
     if (command === "already_configured") {
       return {
-        values: {
-          OPENAI_API_KEY: "sk-test",
-        },
+        values: {},
         saved: {
           intelligenceApiKey: false,
           modelApiKeys: { openai: true, anthropic: false },
@@ -1187,6 +1179,14 @@ test("empty Intelligence projects keep sign-in retryable while Start waits for a
       if (projectLists === 1) return [];
       return [{ id: "project-1", name: "Project One" }];
     }
+    if (command === "intelligence_key_for") {
+      expect(args).toEqual({
+        root: "/tmp/openbot-app-test",
+        project: "project-1",
+      });
+      return null;
+    }
+    if (command === "start_stack") return null;
     throw new Error(`unexpected command ${command}`);
   };
 
@@ -1215,18 +1215,32 @@ test("empty Intelligence projects keep sign-in retryable while Start waits for a
 
   await userEvent.click(view.getByRole("button", { name: "Sign in again" }));
 
-  expect(await view.findByRole("button", { name: "Project One" })).toBeTruthy();
-
   await userEvent.click(
-    view.getByText("Point at your own Intelligence server"),
+    await view.findByRole("button", { name: "Project One" }),
   );
-  await userEvent.type(view.getByLabelText("Project key"), "ck-test");
+
   await waitFor(() =>
     expect(view.getByRole("button", { name: "Start OpenBot" })).toHaveProperty(
       "disabled",
       false,
     ),
   );
+  expect(view.getByText("Connected to CopilotKit.")).toBeTruthy();
+  expect(view.getByLabelText("Project key")).toHaveProperty("value", "");
+
+  await userEvent.click(view.getByRole("button", { name: "Start OpenBot" }));
+  expect(getStartStackPayload().apiKey).toBe("");
+  expect(
+    invokeCalls.filter((call) => call.command === "intelligence_key_for"),
+  ).toEqual([
+    {
+      command: "intelligence_key_for",
+      args: {
+        root: "/tmp/openbot-app-test",
+        project: "project-1",
+      },
+    },
+  ]);
 });
 
 test("mount navigates to OpenBot only when the selected root is already owned and running", async () => {
@@ -1607,7 +1621,6 @@ test.each([
       pending.response.resolve({
         ...savedOpenAiConfiguration(),
         values: {
-          INTELLIGENCE_API_KEY: "ck-synthetic-stale",
           INTELLIGENCE_API_URL: "https://stale.example/api",
           INTELLIGENCE_GATEWAY_WS_URL: "wss://stale.example/ws",
         },
@@ -1886,9 +1899,7 @@ test.each([
 test.each(["http://localhost:11434/v1", "https://models.example/v1"])(
   "custom compatible endpoint startup for URL %s does not submit a saved OpenAI API key",
   async (baseUrl) => {
-    useCompatibleEndpointSetup({
-      OPENAI_API_KEY: "sk-synthetic-openai",
-    });
+    useCompatibleEndpointSetup({});
 
     await startWithCompatibleEndpoint("", baseUrl);
 
@@ -1965,9 +1976,7 @@ test("saved compatible endpoint restores the optional container URL", async () =
 });
 
 test("custom compatible endpoint startup submits an explicitly typed endpoint key", async () => {
-  useCompatibleEndpointSetup({
-    OPENAI_API_KEY: "sk-synthetic-openai",
-  });
+  useCompatibleEndpointSetup({});
 
   await startWithCompatibleEndpoint("endpoint-key");
 
@@ -2280,9 +2289,7 @@ for (const provider of [
 }
 
 test("Start credential failures do not expose a restore action", async () => {
-  useCompatibleEndpointSetup({
-    INTELLIGENCE_API_KEY: "synthetic-intelligence",
-  });
+  useCompatibleEndpointSetup({});
   const previous = invokeHandler;
   invokeHandler = async (command, args) => {
     if (command === "start_stack")
