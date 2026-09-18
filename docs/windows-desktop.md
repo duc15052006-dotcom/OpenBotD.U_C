@@ -97,6 +97,11 @@ Model/provider credentials are write-only from browser-facing APIs and are store
 encrypted credential vault. Per-Agent custom credentials are resolved server-side; credential ids
 and key values are not returned to the browser.
 
+The desktop setup follows the same rule for passive hydration. If an older installation still has a
+legacy key in `.env`, opening the desktop app returns only a saved/not-saved indicator to the WebView,
+not the plaintext bytes. User-triggered Start/Test actions resolve that legacy value natively through
+the compatibility reader and migrate/store it on the trusted side.
+
 Do not put API keys in repository files, channel messages or tenant YAML.
 
 ## Diagnostics and recovery
