@@ -315,7 +315,11 @@ export function runForDuplicate(
       return {
         type: "remote_mastra",
         configuration: remoteAgentId
-          ? { endpoint, remoteAgentId, computerResourceProfile: resourceProfile }
+          ? {
+              endpoint,
+              remoteAgentId,
+              computerResourceProfile: resourceProfile,
+            }
           : { endpoint, computerResourceProfile: resourceProfile },
       };
     }
