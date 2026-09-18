@@ -715,11 +715,13 @@ export function createComputerGateway(
      */
     async startComputer(botId: string, actor: ActionActor) {
       const before = await provider.status(botId);
-      const result = provider.start
-        ? await provider.start(botId)
-        : (await provider.locate(botId), {
-            wasRunning: before.state === "ready",
-          });
+      let result: { wasRunning: boolean };
+      if (provider.start) {
+        result = await provider.start(botId);
+      } else {
+        await provider.locate(botId);
+        result = { wasRunning: before.state === "ready" };
+      }
       // A stopped browser/container may have left a last snapshot in Postgres. It belongs to the
       // previous run and must not survive an explicit start on providers that cannot report sessions.
       await snapshots.clear(botId);
@@ -741,11 +743,14 @@ export function createComputerGateway(
      */
     async restartComputer(botId: string, actor: ActionActor) {
       const before = await provider.status(botId);
-      const result = provider.restart
-        ? await provider.restart(botId)
-        : (await provider.stop(botId),
-          await provider.locate(botId),
-          { wasRunning: before.state === "ready" });
+      let result: { wasRunning: boolean };
+      if (provider.restart) {
+        result = await provider.restart(botId);
+      } else {
+        await provider.stop(botId);
+        await provider.locate(botId);
+        result = { wasRunning: before.state === "ready" };
+      }
       await snapshots.clear(botId);
       await writeControlEvent(auditStore, "computer.restarted", {
         botId,
