@@ -59,7 +59,10 @@ Then, in order:
   checked for a section with that number
 - the normal CI workflow **and the Desktop workflow** run again against the release commit; desktop
   packaging must pass on macOS/Linux and the Windows NSIS artifact must build, install, launch, and
-  uninstall before any release image is pushed
+  uninstall
+- the protected Windows signing workflow signs and verifies the app plus NSIS installer from that
+  same release commit; its `windows-signing` environment approval is the publisher-certificate
+  boundary, and nothing is published before it succeeds
 - one image is built and pushed to `ghcr.io/copilotkit/openbot`, tagged with the version, the commit
   and `latest`
 - the services `docker-compose.yml` can build are published too, one image each, at
@@ -69,8 +72,9 @@ Then, in order:
   stops matching the Dockerfiles in the tree
 - a build provenance attestation is signed with the workflow's OIDC identity and pushed alongside
   every one of them
-- the commit is tagged and a GitHub Release is created, carrying the changelog section as its notes
-  and `container-images.json` as an asset
+- the commit is tagged and a GitHub Release is created, carrying the changelog section as its notes,
+  `container-images.json`, the verified signed Windows `*-setup.exe`, its build metadata, and
+  `signatures.json` as assets
 
 ## Deploying a release
 
@@ -127,6 +131,7 @@ A job added to `ci.yml` is covered by it without anybody updating a list.
 | `image` | an image that builds but does not boot, or a supervised service that respawns |
 | `component dockerfiles` | a Dockerfile a release would publish that no longer builds, or one the publish list has stopped covering |
 | `Desktop` reusable workflow | a desktop regression or package failure; on Windows, an NSIS artifact that cannot install, stay alive on first launch, or uninstall |
+| `Desktop Windows signing` reusable workflow | a release installer whose embedded version, publisher, timestamp, signature chain, or signed-file hash does not match the release commit |
 
 `image` matters more than its position suggests. Everything above it can pass on a tree whose image
 never starts, because nothing else here runs the thing it ships. It builds the container, boots it
@@ -137,7 +142,10 @@ These checks run again, against the release commit, when the release PR is merge
 publish rather than the proposal, which is why the release PR arriving without its own checks does
 not matter: a pull request opened by a workflow does not trigger them.
 
-**No secrets are required.** Every workflow here uses only the built-in `GITHUB_TOKEN`.
+The image/build checks require no repository secret. Windows release signing uses GitHub OIDC to the
+protected `windows-signing` environment and the existing Azure Key Vault certificate; no client
+secret, PFX, exported private key, or signing key is stored in GitHub. An environment reviewer must
+approve access before the signed installer can become a release asset.
 
 ## The one thing CI cannot do
 
