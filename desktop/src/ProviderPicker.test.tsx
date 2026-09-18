@@ -208,7 +208,7 @@ test("Test connection checks the exact current API-key choice without saving it"
   await waitFor(() =>
     expect(view.getByText(/OpenAI accepted this API key/)).toBeTruthy(),
   );
-  expect(view.getByText(/sk-synthetic-connection-test/)).toBeNull();
+  expect(view.queryByText(/sk-synthetic-connection-test/)).toBeNull();
   expect(
     invokeCalls.filter((call) => call.command === "test_model_connection"),
   ).toHaveLength(1);
