@@ -46,7 +46,7 @@ export const Route = createFileRoute("/_authed/admin/computers")({
 function ComputersPage() {
   /** Bot id currently running a lifecycle request. */
   const [busy, setBusy] = useState<string | null>(null);
-  /** Reset deletes the browser profile, so it requires confirmation. */
+  /** Reset deletes the browser profile and workspace, so it requires confirmation. */
   const [confirming, setConfirming] = useState<string | null>(null);
   /** Computer whose persistent workspace is open in the file manager. */
   const [filesFor, setFilesFor] = useState<string | null>(null);
@@ -99,7 +99,7 @@ function ComputersPage() {
 
   return (
     <PageShell
-      description="Each Bot's browser and the profile it keeps. A profile is what makes a Bot still signed in tomorrow, and resetting one signs it out of everything."
+      description="Each Bot's isolated browser, profile and workspace. Stop/Restart preserve them; Reset deliberately removes both persistent stores."
       title="Computers"
     >
       {problem ? (
@@ -251,10 +251,10 @@ function ComputersPage() {
       ) : null}
 
       {/*
-       * A DIALOG RATHER THAN AN INLINE CONFIRM. Resetting signs a Bot out of everything it has ever
-       * logged into and cannot be undone, and the row it was confirmed on was one of several
-       * identical-looking rows. The dialog names the Bot, so the sentence somebody agrees to says
-       * which computer it destroys.
+       * A DIALOG RATHER THAN AN INLINE CONFIRM. Resetting deletes both persistent stores: browser
+       * logins and workspace files. It cannot be undone, and the row it was confirmed on was one of
+       * several identical-looking rows. The dialog names the Bot so the destructive acknowledgement
+       * is visibly scoped to the same computer the server requires in its RESET body.
        */}
       <Dialog
         onOpenChange={(open) => {
@@ -268,8 +268,9 @@ function ComputersPage() {
               Reset {confirming ? nameFor(confirming) : ""}'s computer?
             </DialogTitle>
             <DialogDescription>
-              Its profile is deleted, so the Bot is signed out of every service
-              it had logged into and starts clean. This cannot be undone.
+              Its browser profile and every file in its private workspace are
+              deleted. The Bot is signed out and starts with an empty computer.
+              This cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -296,10 +297,10 @@ function ComputersPage() {
 
       <p className="mt-4 text-muted-foreground text-sm">
         <strong>Start</strong> wakes a stopped computer,{" "}
-        <strong>Restart</strong> cycles it without deleting its saved profile,
-        and <strong>Stop</strong> closes the browser while keeping its logins.{" "}
-        <strong>Reset</strong> deletes the profile, signs the Bot out of
-        everything, and starts clean. Lifecycle actions are recorded in{" "}
+        <strong>Restart</strong> cycles it without deleting its saved profile
+        or workspace, and <strong>Stop</strong> shuts it down while preserving
+        both. <strong>Reset</strong> deletes the profile and workspace, signs
+        the Bot out of everything, and starts clean. Lifecycle actions are recorded in{" "}
         <Link className="underline" to="/admin/audit">
           Audit
         </Link>
