@@ -142,6 +142,31 @@ describe("Agent knowledge routes", () => {
     expect(writes).toBe(0);
   });
 
+  test("rejects an oversized request before JSON parsing", async () => {
+    let writes = 0;
+    const app = appWith(
+      store({
+        add: async () => {
+          writes += 1;
+          return EMPTY;
+        },
+      }),
+    );
+
+    const response = await app.request("/api/agents/writer/knowledge", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: "huge.txt",
+        mimeType: "text/plain",
+        bytesBase64: "A".repeat(100 * 1024),
+      }),
+    });
+
+    expect(response.status).toBe(413);
+    expect(writes).toBe(0);
+  });
+
   test("maps the Agent authorization boundary to 403", async () => {
     const app = appWith(
       store({
