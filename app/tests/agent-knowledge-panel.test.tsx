@@ -35,11 +35,14 @@ const base = {
   },
 };
 
-function draw() {
+function draw(canManage = true) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   });
-  queryClient.setQueryData(agentKeys.knowledge("writer"), base);
+  queryClient.setQueryData(agentKeys.knowledge("writer"), {
+    ...base,
+    canManage,
+  });
   return render(
     <QueryClientProvider client={queryClient}>
       <KnowledgePanel agentId="writer" />
@@ -73,6 +76,18 @@ test("removes a knowledge file through the Agent endpoint", async () => {
     expect(requested).toBe("/api/agents/writer/knowledge/doc-1"),
   );
   await waitFor(() => expect(view.queryByText("policy.txt")).toBeNull());
+});
+
+test("read-only viewers can inspect metadata but cannot mutate it", () => {
+  const view = draw(false);
+
+  expect(
+    (view.getByLabelText("Upload knowledge file") as HTMLInputElement).disabled,
+  ).toBe(true);
+  expect(view.getByRole("button", { name: "Remove" })).toBeDisabled();
+  expect(
+    view.getByText(/you cannot change them/i),
+  ).toBeTruthy();
 });
 
 test("uploads the original bytes as bounded base64 JSON", async () => {
