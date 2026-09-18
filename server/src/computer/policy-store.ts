@@ -41,18 +41,21 @@ export const ACTION_POLICY_TOPIC = "action_policy_changed";
 /**
  * What a deployment allows when it has not said otherwise.
  *
- * Permissive, and written down rather than implied. The policy engine is fail-closed: an absent
- * policy denies, and a broken rule denies. This default is a separate decision, and it is deliberately
- * an explicit `allow` rather than a special "unconfigured" case, because a Bot that can look at a page
- * and touch nothing is not a product, and the first thing a person does is ask it to fill something in.
+ * Default-deny by enumeration. The product's existing browser, workspace and explicitly granted
+ * plugin effects are named here; anything new is refused until somebody deliberately adds it.
+ * Most importantly, a shell is NOT an ambient capability. `run_command` requires an explicit
+ * deployment policy, so adding Computer to a Bot does not also give arbitrary code execution.
  *
- * Out of the box, OpenBot lets a Bot act, records every action and gives an administrator somewhere
- * to write the first restriction.
+ * This is separate from the evaluator's fail-closed behavior: an absent policy, an empty allow list
+ * and a broken rule all deny as well. Keeping both layers means neither a new action kind nor a
+ * configuration failure silently widens what a Bot can do.
  */
 export const DEFAULT_ACTION_POLICY: ActionPolicy = {
   mode: "enforce",
   deny: [],
-  allow: ["true"],
+  allow: [
+    'intent == "read" || intent == "navigate" || intent == "activate" || intent == "type" || intent == "read_file" || intent == "write_file" || intent == "list_files" || intent == "read_tool" || intent == "write_tool"',
+  ],
 };
 
 export type PolicyStore = {
