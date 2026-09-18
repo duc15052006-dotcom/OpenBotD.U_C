@@ -21,6 +21,10 @@ import {
   NO_SECRET_PENDING,
   TAKE_CONTROL_FIRST,
 } from "./control";
+import {
+  deleteQuarantinedDownload,
+  listQuarantinedDownloads,
+} from "./download-quarantine";
 import { identity } from "./identity";
 import { collectComputerMetrics } from "./metrics";
 import { createProfiles, numberFromEnv, VIEWPORT } from "./profiles";
@@ -211,6 +215,7 @@ function botIdOf(request: Request, fallback?: string | null): string {
  * lives in workspace.ts.
  */
 const WORKSPACE_ROOT = process.env.WORKSPACE_DIR?.trim() || "/workspace";
+const QUARANTINE_ROOT = process.env.QUARANTINE_DIR?.trim() || "/quarantine";
 const WORKSPACE_MAX_BYTES = numberFromEnv(
   "COMPUTER_WORKSPACE_MAX_BYTES",
   4 * 1024 * 1024 * 1024,
@@ -971,6 +976,48 @@ serve<StreamData>({
         return json(
           { error: describe(error, "The folder could not be listed.") },
           fileStatus(error),
+        );
+      }
+    }
+
+    /**
+     * Untrusted browser downloads.
+     *
+     * The response is metadata only: no bytes and no container path. The API server keeps these
+     * routes administrator-only, while the computer token remains the service-to-service boundary.
+     */
+    if (url.pathname === "/quarantine" && request.method === "GET") {
+      try {
+        return json({
+          downloads: await listQuarantinedDownloads(QUARANTINE_ROOT, botId),
+        });
+      } catch (error) {
+        return json(
+          { error: describe(error, "The quarantine could not be listed.") },
+          500,
+        );
+      }
+    }
+
+    if (url.pathname === "/quarantine/delete" && request.method === "POST") {
+      const body = (await request.json().catch(() => null)) as {
+        id?: unknown;
+      } | null;
+      if (typeof body?.id !== "string" || !body.id) {
+        return json({ error: "A quarantine id is required." }, 400);
+      }
+      try {
+        return json({
+          deleted: await deleteQuarantinedDownload(
+            QUARANTINE_ROOT,
+            botId,
+            body.id,
+          ),
+        });
+      } catch (error) {
+        return json(
+          { error: describe(error, "The quarantined file could not be deleted.") },
+          400,
         );
       }
     }
