@@ -366,4 +366,6 @@ export type ComputerResourceMetrics = {
   memoryLimitBytes: number | null;
   diskUsedBytes: number;
   diskTotalBytes: number;
+  /** Whether Chromium is resident. Absent on older Computer images. */
+  browserRunning?: boolean;
 };
