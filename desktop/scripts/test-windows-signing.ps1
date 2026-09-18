@@ -24,7 +24,7 @@ $app = Join-Path $directory 'OpenBot app.exe'
 $installer = Join-Path $installerDirectory 'OpenBot test-setup.exe'
 Set-Content -LiteralPath $app -Value 'unsigned app fixture'
 Set-Content -LiteralPath $installer -Value 'unsigned installer fixture'
-$environmentNames = @('WINDOWS_SIGNING', 'AZURE_KEY_VAULT_URL', 'CODE_SIGNING_CERT_NAME', 'AZURE_ACCESS_TOKEN')
+$environmentNames = @('WINDOWS_SIGNING', 'AZURE_KEY_VAULT_URL', 'CODE_SIGNING_CERT_NAME', 'CODE_SIGNING_PUBLISHER', 'AZURE_ACCESS_TOKEN')
 $originalEnvironment = @{}
 foreach ($name in $environmentNames) { $originalEnvironment[$name] = [Environment]::GetEnvironmentVariable($name) }
 
@@ -33,7 +33,7 @@ foreach ($name in $environmentNames) { $originalEnvironment[$name] = [Environmen
 $global:SigningTestState = @{
     azExit = 0; signExit = 0; verifyExit = 0; token = 'synthetic-test-token'
     signCalls = 0; signArguments = @(); verifyCalls = @(); status = 'Valid'
-    publisher = 'Tawkit, Inc.'; timestamp = $true; invalidFile = ''
+    publisher = 'OpenBot Test Publisher'; timestamp = $true; invalidFile = ''
     productVersion = '0.0.10-internal.gabcdef012345'; fileVersion = '0.0.10-internal.gabcdef012345'; wrongVersionFile = ''
 }
 function global:Get-Item {
@@ -68,7 +68,7 @@ function global:Test-SignTool {
 }
 function global:Get-AuthenticodeSignature {
     param([string]$LiteralPath)
-    $certificate = [pscustomobject]@{ Subject = 'CN="Tawkit, Inc."'; Thumbprint = 'TEST-CERTIFICATE' }
+    $certificate = [pscustomobject]@{ Subject = 'CN="OpenBot Test Publisher"'; Thumbprint = 'TEST-CERTIFICATE' }
     $certificate | Add-Member ScriptMethod GetNameInfo { return $global:SigningTestState.publisher }
     [pscustomobject]@{
         Status = if ($global:SigningTestState.invalidFile -eq '' -or $LiteralPath -eq $global:SigningTestState.invalidFile) { $global:SigningTestState.status } else { 'Valid' }
@@ -84,6 +84,7 @@ try {
         AppPath = $app; InstallerDirectory = $installerDirectory
         EvidenceDirectory = $evidenceDirectory; SignToolPath = 'Test-SignTool'; SourceSha = 'test-source-sha'
     }
+    $env:CODE_SIGNING_PUBLISHER = 'OpenBot Test Publisher'
     $env:WINDOWS_SIGNING = ''
     Assert-Throws { & $sign -Path $app } 'WINDOWS_SIGNING=keyvault'
     $env:WINDOWS_SIGNING = 'keyvault'
@@ -122,9 +123,13 @@ try {
         }
     }
     $global:SigningTestState.status = 'Valid'
-    $global:SigningTestState.publisher = 'Tawkit, Inc. imposter'
+    $savedPublisher = $env:CODE_SIGNING_PUBLISHER
+    $env:CODE_SIGNING_PUBLISHER = ''
+    Assert-Throws { & $verify @verifyParameters } 'Expected Windows code-signing publisher is not configured'
+    $env:CODE_SIGNING_PUBLISHER = $savedPublisher
+    $global:SigningTestState.publisher = 'OpenBot Test Publisher imposter'
     Assert-Throws { & $verify @verifyParameters } 'Unexpected publisher'
-    $global:SigningTestState.publisher = 'Tawkit, Inc.'
+    $global:SigningTestState.publisher = 'OpenBot Test Publisher'
     $global:SigningTestState.timestamp = $false
     Assert-Throws { & $verify @verifyParameters } 'Missing timestamp'
     $global:SigningTestState.timestamp = $true
@@ -137,6 +142,7 @@ try {
     & $verify @verifyParameters | Out-Null
     $report = Get-Content -LiteralPath (Join-Path $evidenceDirectory 'signatures.json') -Raw | ConvertFrom-Json
     Assert-True ($report.files.Count -eq 2 -and $report.sourceSha -eq 'test-source-sha') 'Evidence does not identify both files and source.'
+    Assert-True ($report.expectedPublisher -ceq 'OpenBot Test Publisher') 'Evidence does not identify the expected publisher.'
     Assert-True ($report.files[0].sha256 -eq (Get-FileHash -LiteralPath $app).Hash) 'App evidence digest is incorrect.'
     Assert-True ($report.files[1].sha256 -eq (Get-FileHash -LiteralPath $installer).Hash) 'Installer evidence digest is incorrect.'
     Assert-True ($global:SigningTestState.verifyCalls.Count -eq 2) 'SignTool did not verify both files.'
