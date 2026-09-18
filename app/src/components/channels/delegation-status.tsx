@@ -30,6 +30,10 @@ export function DelegationStatus({ channelId }: { channelId: string }) {
 
   // Active work first, then the newest completed work. Three rows keep this a status strip rather
   // than turning the conversation screen into a second audit page.
+  const activeCount = rows.filter(
+    (delegation) =>
+      delegation.state === "queued" || delegation.state === "working",
+  ).length;
   const visible = [...rows]
     .sort((left, right) => {
       const leftActive = left.state === "queued" || left.state === "working";
@@ -45,6 +49,10 @@ export function DelegationStatus({ channelId }: { channelId: string }) {
       className="border-border border-b bg-muted/20 px-3 py-2"
     >
       <div className="mx-auto flex max-w-3xl flex-col gap-1.5">
+        <div className="flex items-center justify-between gap-3 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+          <span>Team dispatch</span>
+          <span>{activeCount > 0 ? `${activeCount} active` : "Up to date"}</span>
+        </div>
         {visible.map((delegation) => (
           <DelegationRow
             delegation={delegation}
