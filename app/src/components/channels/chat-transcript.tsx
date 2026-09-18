@@ -45,13 +45,13 @@ import {
 } from "@/components/ui/message-scroller";
 import { Skeleton } from "@/components/ui/skeleton";
 import { attachmentUrl } from "@/lib/channels/attachments";
+import { readHandoffDisplay } from "@/lib/channels/handoff-status";
 import { readFiring } from "@/lib/channels/routine-firing";
 import { markdownComponents } from "@/lib/markdown";
 import { EASE_OUT, ENTRANCE_SECONDS } from "@/lib/motion";
 import { readToolName } from "@/lib/plugins/tool-name";
 import { asText, forDisplay, REFUSAL_MARKER } from "@/lib/plugins/tool-result";
 import { cn } from "@/lib/utils";
-import { HANDED_OVER } from "../../../../shared/handoff-markers";
 import {
   attachmentModality,
   type SentAttachment,
@@ -1316,28 +1316,28 @@ function ServerToolLine({ name, result }: { name: string; result?: string }) {
  * provider text.
  */
 function HandoffToolLine({ result }: { result?: string }) {
-  if (result === undefined) {
+  const display = readHandoffDisplay(
+    result === undefined ? undefined : asText(result),
+  );
+
+  if (display.state === "running") {
     return <ToolLine label="Delegating" running />;
   }
 
-  const answer = asText(result);
-  const accepted = answer.startsWith(HANDED_OVER);
-  if (!accepted) {
+  if (display.state === "refused") {
     return (
       <ToolLine label="Delegation blocked" refused running={false}>
         <Streamdown components={markdownComponents}>
-          {forDisplay(answer)}
+          {forDisplay(display.reason)}
         </Streamdown>
       </ToolLine>
     );
   }
 
-  const remainder = answer.slice(HANDED_OVER.length).trim();
-  const target = remainder.split(".")[0]?.trim() || "coworker";
   return (
-    <ToolLine label={`Delegated to ${target}`} running={false}>
+    <ToolLine label={`Delegated to ${display.target}`} running={false}>
       <span className="text-muted-foreground">
-        Waiting for {target}&apos;s answer in this conversation.
+        Waiting for {display.target}&apos;s answer in this conversation.
       </span>
     </ToolLine>
   );
