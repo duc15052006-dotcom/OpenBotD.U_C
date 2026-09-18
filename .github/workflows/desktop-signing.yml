@@ -187,5 +187,5 @@ jobs:
         with:
           name: openbot-windows-signatures
           path: desktop/signing-evidence/
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
