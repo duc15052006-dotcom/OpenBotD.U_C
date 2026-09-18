@@ -72,12 +72,18 @@ export function createAgentKnowledgeStore(
   database: Database,
   profiles: AgentProfileStore,
 ): AgentKnowledgeStore {
-  async function manageable(actor: AgentActor, agentId: string) {
+  async function readable(actor: AgentActor, agentId: string) {
     const profile = await profiles.get(actor, agentId);
     if (!profile) throw new AgentNotFoundError(agentId);
+    return profile;
+  }
+
+  async function manageable(actor: AgentActor, agentId: string) {
+    const profile = await readable(actor, agentId);
     if (!canManageAgentRuntimeSettings(actor, profile)) {
       throw new AgentNotManageableError(agentId);
     }
+    return profile;
   }
 
   async function current(agentId: string) {
@@ -91,8 +97,11 @@ export function createAgentKnowledgeStore(
 
   return {
     async list(actor, agentId) {
-      await manageable(actor, agentId);
-      return settings(await current(agentId), true);
+      const profile = await readable(actor, agentId);
+      return settings(
+        await current(agentId),
+        canManageAgentRuntimeSettings(actor, profile),
+      );
     },
 
     async add(actor, agentId, upload) {
