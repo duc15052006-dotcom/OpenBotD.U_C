@@ -489,7 +489,7 @@ const handoffDesk = createHandoffDesk({
         actorId: context.actorId,
         threadId: context.threadId,
         botId: fromBotId,
-      }).catch(() => [])
+      }).catch(() => [] as string[])
     ).includes(toBotId);
   },
   /*
