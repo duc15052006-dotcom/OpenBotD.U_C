@@ -11,6 +11,8 @@ mod desktop_telemetry;
 mod test_support;
 #[cfg(test)]
 mod model_connection_tests;
+#[cfg(test)]
+mod show_route_tests;
 
 use openbot_desktop_lib::{
     acquire, deployment, deployment_release, engine, env as openbot_env, harness, host_access,
@@ -2126,9 +2128,48 @@ fn show_openbot<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), Strin
     show_openbot_on(app, &openbot_env::Ports::default())
 }
 
+/// Successful first-run handoff: enter the product with the New coworker dialog already open.
+///
+/// No arbitrary route crosses IPC. The destination is native-owned and fixed so the high-trust
+/// desktop command cannot be repurposed as a general navigator after the WebView enters the app.
+#[tauri::command]
+fn show_agent_creator<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
+    show_openbot_route_on(
+        app,
+        &openbot_env::Ports::default(),
+        Some(("/agents", "new=true")),
+    )
+}
+
 fn show_openbot_on<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     ports: &openbot_env::Ports,
+) -> Result<(), String> {
+    show_openbot_route_on(app, ports, None)
+}
+
+fn openbot_route_url(
+    base: &str,
+    route: Option<(&str, &str)>,
+) -> Result<tauri::Url, String> {
+    let mut url: tauri::Url = base
+        .parse()
+        .map_err(|error| format!("{base} is not a URL: {error}"))?;
+    if let Some((path, query)) = route {
+        if !path.starts_with('/') || path.starts_with("//") {
+            return Err("the OpenBot route must stay on the local app origin".into());
+        }
+        url.set_path(path);
+        url.set_query((!query.is_empty()).then_some(query));
+        url.set_fragment(None);
+    }
+    Ok(url)
+}
+
+fn show_openbot_route_on<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    ports: &openbot_env::Ports,
+    route: Option<(&str, &str)>,
 ) -> Result<(), String> {
     let port = ports.app;
     // Where it answered, not where it was asked to listen. A dev server binds whichever loopback
@@ -2140,18 +2181,16 @@ fn show_openbot_on<R: tauri::Runtime>(
     if recovery_required_or_pending_quit_notice(&shell, &root) {
         return Err("Part of OpenBot needs recovery. Try starting OpenBot once more.".into());
     }
-    let url = owned_app_url(&root, ports).ok_or_else(|| {
+    let base = owned_app_url(&root, ports).ok_or_else(|| {
         format!("OpenBot could not verify its app on port {port} belongs to this installation. Try starting OpenBot again.")
     })?;
+    let url = openbot_route_url(&base, route)?;
     eprintln!("[show] navigating the window to {url}");
     let window = app
         .get_webview_window("main")
         .ok_or("the OpenBot window is not there to show it in")?;
     let outcome = window
-        .navigate(
-            url.parse()
-                .map_err(|error| format!("{url} is not a URL: {error}"))?,
-        )
+        .navigate(url)
         .map_err(|error| format!("could not show OpenBot: {error}"));
     eprintln!("[show] navigate returned {outcome:?}");
     outcome
@@ -3199,6 +3238,7 @@ fn main() {
             start_stack,
             stop_stack,
             show_openbot,
+            show_agent_creator,
             show_setup,
             already_running,
             last_failure,

@@ -34,7 +34,12 @@ The visible setup journey is:
 4. configure the model/provider used to get started
 5. use **Test connection** to check the current provider/API-key/endpoint choice before starting
 6. start OpenBot
-7. continue in the local web app
+7. answer the final proof question so the setup verifies a real Bot response
+8. choose **Create a coworker** to enter the product with the New coworker wizard already open
+
+The successful setup screen also keeps **Open OpenBot** beside the coworker action, so an existing
+deployment can skip creating another one. The primary first-run handoff uses the fixed local
+`/agents?new=true` route; no arbitrary navigation target crosses the desktop IPC boundary.
 
 Per-coworker Model/API settings, Instructions, Skills and Knowledge can then be managed from the app
 without editing source files.

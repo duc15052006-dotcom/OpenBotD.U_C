@@ -668,6 +668,11 @@ export function App() {
               setFailure(asProblem(error)),
             );
           }}
+          onCreateCoworker={() => {
+            invoke("show_agent_creator").catch((error) =>
+              setFailure(asProblem(error)),
+            );
+          }}
           onBack={changeModelAfterAskFailure}
         />
         {displayedFailure && <Failure problem={displayedFailure} />}
