@@ -311,6 +311,35 @@ function checkComputerSandboxBoundary(): void {
     fail("computer: admin Kill All Computers route is missing");
   }
 
+  const supervisorIndex = read("supervisor/src/index.ts");
+  const provider = read("server/src/computer/provider.ts");
+  const computerQueries = read("app/src/lib/computers/queries.ts");
+  for (const evidence of [
+    'app.get("/capacity"',
+    "defaultComputerMemoryBytes",
+    "defaultComputerNanoCpus",
+    "maxActiveComputers",
+  ]) {
+    if (!supervisorIndex.includes(evidence)) {
+      fail(`computer: supervisor capacity reporting is missing ${evidence}`);
+    }
+  }
+  if (!provider.includes("capacity?(): Promise<ComputerHostCapacity")) {
+    fail("computer: provider capacity contract is missing");
+  }
+  for (const evidence of [
+    "capacity?:",
+    "defaultComputerMemoryBytes",
+    "defaultComputerNanoCpus",
+  ]) {
+    if (!computerQueries.includes(evidence)) {
+      fail(`computer: Computer Manager capacity contract is missing ${evidence}`);
+    }
+  }
+  if (!computersPage.includes("computerStartWarning")) {
+    fail("computer: start-time host resource warning is missing");
+  }
+
   const workspace = read("agent-computer/src/workspace.ts");
   for (const evidence of [
     "totalBytes: 4 * 1024 * 1024 * 1024",
