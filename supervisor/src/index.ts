@@ -14,6 +14,7 @@ import {
 import { registerEntry } from "./identity";
 import { namesFor } from "./names";
 import { computerMemoryBytes } from "./computer-memory-bytes";
+import { computerNanoCpus } from "./computer-nano-cpus";
 import { listenPort } from "./listen-port";
 
 /**
@@ -69,6 +70,12 @@ if (!resolvedMemory.ok) {
   process.exit(1);
 }
 const memoryBytes = resolvedMemory.bytes;
+const resolvedCpu = computerNanoCpus(process.env.COMPUTER_NANO_CPUS);
+if (!resolvedCpu.ok) {
+  console.error(resolvedCpu.reason);
+  process.exit(1);
+}
+const nanoCpus = resolvedCpu.nanoCpus;
 const spireSocketVolume =
   process.env.SPIRE_AGENT_SOCKET_VOLUME?.trim() || undefined;
 
@@ -107,6 +114,7 @@ app.post("/computers/:botId/ensure", async (context) => {
       ...(network ? { network } : {}),
       ...(runtime ? { runtime } : {}),
       ...(memoryBytes ? { memoryBytes } : {}),
+      ...(nanoCpus ? { nanoCpus } : {}),
       ...(spireSocketVolume ? { spireSocketVolume } : {}),
     });
     return context.json({
