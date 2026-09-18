@@ -132,11 +132,11 @@ async function readStoredMetadata(
   >;
   const file = metadata.slice(0, -METADATA_SUFFIX.length);
   const filename = basename(file);
-  const id =
-    typeof raw.id === "string" && validId(raw.id)
-      ? raw.id
-      : filename.slice(0, filename.indexOf("-") + 37);
-  if (!validId(id) || raw.botId !== expectedBotId || !filename.startsWith(`${id}-`)) {
+  if (typeof raw.id !== "string" || !validId(raw.id)) {
+    throw new QuarantineStateError("Quarantine metadata has an invalid download id.");
+  }
+  const id = raw.id;
+  if (raw.botId !== expectedBotId || !filename.startsWith(`${id}-`)) {
     throw new QuarantineStateError(
       "Quarantine metadata does not belong to this Bot or download.",
     );
@@ -218,12 +218,16 @@ export async function scanQuarantinedDownload(
   }
 
   const scan = await scanner(stored.file);
+  const current = publicRecord(stored);
+  const {
+    approvedAt: _approvedAt,
+    releasedAt: _releasedAt,
+    ...unapproved
+  } = current;
   const updated: QuarantineRecord = {
-    ...publicRecord(stored),
+    ...unapproved,
     status: scan.status,
     scan,
-    approvedAt: undefined,
-    releasedAt: undefined,
   };
   await writeMetadata(stored.metadata, updated);
   return updated;
