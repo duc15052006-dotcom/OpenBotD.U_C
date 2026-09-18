@@ -843,6 +843,55 @@ fn model_probe_client() -> Result<reqwest::Client, Problem> {
         })
 }
 
+fn model_probe_never_allowed_host(host: &str) -> bool {
+    let canonical = host
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+
+    if matches!(
+        canonical.as_str(),
+        "metadata.google.internal" | "metadata.goog"
+    ) {
+        return true;
+    }
+
+    let Ok(address) = canonical.parse::<std::net::IpAddr>() else {
+        return false;
+    };
+    let forbidden_v4 = |address: std::net::Ipv4Addr| {
+        matches!(
+            address.octets(),
+            [169, 254, 169, 254] | [169, 254, 170, 2] | [100, 100, 100, 200]
+        )
+    };
+
+    match address {
+        std::net::IpAddr::V4(address) => forbidden_v4(address),
+        std::net::IpAddr::V6(address) => {
+            if address == std::net::Ipv6Addr::new(0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0254) {
+                return true;
+            }
+
+            let bytes = address.octets();
+            let mapped = bytes[..10].iter().all(|byte| *byte == 0)
+                && bytes[10] == 0xff
+                && bytes[11] == 0xff;
+            let compatible = bytes[..12].iter().all(|byte| *byte == 0);
+            let nat64 = bytes[..4] == [0x00, 0x64, 0xff, 0x9b]
+                && bytes[4..12].iter().all(|byte| *byte == 0);
+            if mapped || compatible || nat64 {
+                return forbidden_v4(std::net::Ipv4Addr::new(
+                    bytes[12], bytes[13], bytes[14], bytes[15],
+                ));
+            }
+            false
+        }
+    }
+}
+
 fn models_probe_url(base_url: &str) -> Result<reqwest::Url, Problem> {
     let mut url = reqwest::Url::parse(base_url.trim()).map_err(|_| {
         Problem::plain("Enter a valid http:// or https:// model endpoint before testing it.")
@@ -850,6 +899,12 @@ fn models_probe_url(base_url: &str) -> Result<reqwest::Url, Problem> {
     if !matches!(url.scheme(), "http" | "https") || !url.has_host() {
         return Err(
             "Enter a valid http:// or https:// model endpoint before testing it.".into(),
+        );
+    }
+    if url.host_str().is_some_and(model_probe_never_allowed_host) {
+        return Err(
+            "That model endpoint is reserved for cloud instance credentials and cannot be tested."
+                .into(),
         );
     }
     let path = format!("{}/models", url.path().trim_end_matches('/'));
