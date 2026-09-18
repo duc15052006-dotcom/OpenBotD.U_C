@@ -14,7 +14,20 @@ describe("COMPUTER_GUIDANCE", () => {
     }
   });
 
-  test("still contains the full instruction text, unchanged in wording", () => {
+  test("treats human verification as a non-bypass boundary", () => {
+    expect(COMPUTER_GUIDANCE).toContain(
+      "NEVER solve, automate, outsource, evade or bypass those challenges",
+    );
+    expect(COMPUTER_GUIDANCE).toContain(
+      "never use a CAPTCHA-solving service or another route around the verification",
+    );
+    expect(COMPUTER_GUIDANCE).toContain(
+      "A security challenge is not an isolated value even when it shows one code field",
+    );
+    expect(COMPUTER_GUIDANCE).toContain("computer_request_help");
+  });
+
+  test("still contains the full instruction text, unchanged at its stable endpoints", () => {
     expect(COMPUTER_GUIDANCE).toContain(
       "You are a Bot with your own computer, a real web browser the person can watch you use.",
     );
