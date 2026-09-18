@@ -10,10 +10,7 @@ import {
 import { basename, join } from "node:path";
 import type { Download } from "playwright";
 import { isPlainBotId } from "./bot-id";
-import {
-  scanWithClamAv,
-  type MalwareScanResult,
-} from "./quarantine-scanner";
+import { scanWithClamAv, type MalwareScanResult } from "./quarantine-scanner";
 
 /**
  * Browser downloads are hostile input until somebody explicitly releases them.
@@ -133,7 +130,9 @@ async function readStoredMetadata(
   const file = metadata.slice(0, -METADATA_SUFFIX.length);
   const filename = basename(file);
   if (typeof raw.id !== "string" || !validId(raw.id)) {
-    throw new QuarantineStateError("Quarantine metadata has an invalid download id.");
+    throw new QuarantineStateError(
+      "Quarantine metadata has an invalid download id.",
+    );
   }
   const id = raw.id;
   if (raw.botId !== expectedBotId || !filename.startsWith(`${id}-`)) {
@@ -153,16 +152,24 @@ async function readStoredMetadata(
     id,
     botId: expectedBotId,
     originalName:
-      typeof raw.originalName === "string" ? raw.originalName : filename.slice(id.length + 1),
+      typeof raw.originalName === "string"
+        ? raw.originalName
+        : filename.slice(id.length + 1),
     sourceUrl: typeof raw.sourceUrl === "string" ? raw.sourceUrl : "",
     savedAt:
-      typeof raw.savedAt === "string" ? raw.savedAt : new Date(fileInfo.mtimeMs).toISOString(),
+      typeof raw.savedAt === "string"
+        ? raw.savedAt
+        : new Date(fileInfo.mtimeMs).toISOString(),
     sizeBytes: fileInfo.size,
     ...(raw.scan && typeof raw.scan === "object"
       ? { scan: raw.scan as MalwareScanResult }
       : {}),
-    ...(typeof raw.approvedAt === "string" ? { approvedAt: raw.approvedAt } : {}),
-    ...(typeof raw.releasedAt === "string" ? { releasedAt: raw.releasedAt } : {}),
+    ...(typeof raw.approvedAt === "string"
+      ? { approvedAt: raw.approvedAt }
+      : {}),
+    ...(typeof raw.releasedAt === "string"
+      ? { releasedAt: raw.releasedAt }
+      : {}),
     file,
     metadata,
   };
@@ -197,7 +204,9 @@ export async function listQuarantinedDownloads(
   for (const entry of entries) {
     if (!entry.endsWith(METADATA_SUFFIX)) continue;
     try {
-      records.push(publicRecord(await readStoredMetadata(join(directory, entry), botId)));
+      records.push(
+        publicRecord(await readStoredMetadata(join(directory, entry), botId)),
+      );
     } catch {
       // An incomplete/corrupt sidecar is not silently called clean. It is omitted from the normal
       // list and still remains physically quarantined for diagnostics/recovery.
@@ -214,7 +223,9 @@ export async function scanQuarantinedDownload(
 ): Promise<QuarantineRecord> {
   const stored = await findStored(root, botId, id);
   if (stored.status === "released") {
-    throw new QuarantineStateError("A released download cannot be scanned in place.");
+    throw new QuarantineStateError(
+      "A released download cannot be scanned in place.",
+    );
   }
 
   const scan = await scanner(stored.file);
