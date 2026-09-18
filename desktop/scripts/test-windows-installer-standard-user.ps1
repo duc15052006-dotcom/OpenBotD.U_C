@@ -86,10 +86,23 @@ try {
     $installed = Start-Process -FilePath $Installer -ArgumentList @('/S', "/D=$InstallDir") -Wait -PassThru
     if ($installed.ExitCode -ne 0) { throw "NSIS installer exited with $($installed.ExitCode)." }
 
-    $apps = @(Get-ChildItem -LiteralPath $InstallDir -Recurse -Filter '*.exe' -File | Where-Object { $_.Name -notmatch '^uninstall' })
-    if ($apps.Count -lt 1) { throw 'Installer completed but no application executable exists.' }
+    $appPath = Join-Path $InstallDir 'openbot-desktop.exe'
+    if (-not (Test-Path -LiteralPath $appPath -PathType Leaf)) {
+        throw 'Installer completed but openbot-desktop.exe does not exist at the install root.'
+    }
 
-    $app = Start-Process -FilePath $apps[0].FullName -PassThru
+    $desktop = [Environment]::GetFolderPath('Desktop')
+    $shortcut = Join-Path $desktop 'OpenBot.lnk'
+    if (-not (Test-Path -LiteralPath $shortcut -PathType Leaf)) {
+        throw 'Installer completed but did not create OpenBot.lnk on the standard user desktop.'
+    }
+    $wsh = New-Object -ComObject WScript.Shell
+    $link = $wsh.CreateShortcut($shortcut)
+    if ([IO.Path]::GetFullPath($link.TargetPath) -ne [IO.Path]::GetFullPath($appPath)) {
+        throw "Desktop shortcut points to $($link.TargetPath), expected $appPath."
+    }
+
+    $app = Start-Process -FilePath $appPath -PassThru
     Start-Sleep -Seconds 5
     $app.Refresh()
     if ($app.HasExited) { throw "Installed OpenBot exited during first launch (exit $($app.ExitCode))." }
@@ -102,12 +115,15 @@ try {
     $removed = Start-Process -FilePath $uninstallers[0].FullName -ArgumentList '/S' -Wait -PassThru
     if ($removed.ExitCode -ne 0) { throw "NSIS uninstaller exited with $($removed.ExitCode)." }
 
-    for ($attempt = 0; $attempt -lt 30 -and (Test-Path -LiteralPath $apps[0].FullName); $attempt++) {
+    for ($attempt = 0; $attempt -lt 30 -and (Test-Path -LiteralPath $appPath); $attempt++) {
         Start-Sleep -Milliseconds 500
     }
-    if (Test-Path -LiteralPath $apps[0].FullName) { throw 'Application remains after uninstall.' }
+    if (Test-Path -LiteralPath $appPath) { throw 'Application remains after uninstall.' }
+    if (Test-Path -LiteralPath $shortcut) {
+        throw 'Desktop shortcut remains after uninstall.'
+    }
 
-    [ordered]@{ identity = $identity.Name; sid = $ExpectedSid; elevated = $false; installerExit = $installed.ExitCode; uninstallerExit = $removed.ExitCode } |
+    [ordered]@{ identity = $identity.Name; sid = $ExpectedSid; elevated = $false; installerExit = $installed.ExitCode; uninstallerExit = $removed.ExitCode; desktopShortcut = 'created-and-removed' } |
         ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $PSScriptRoot 'acceptance.json')
     $exitCode = 0
 } catch {

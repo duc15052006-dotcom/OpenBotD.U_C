@@ -46,6 +46,10 @@ Ad-hoc signed Mac builds require the first-open exception described in
 [Apple's instructions](https://support.apple.com/en-us/102445). They are for internal testing
 and are not Apple-notarized. See [Windows signing](windows-signing.md) for signed NSIS builds.
 
+On Windows the NSIS installer also creates **OpenBot.lnk** on the installing user's desktop and
+removes that shortcut during uninstall. The Users-only acceptance test checks both ends of that
+lifecycle against the actual installer artifact.
+
 The installed desktop app keeps **Check for updates** in both its tray and window menu, even after
 the WebView has navigated from setup to the local OpenBot app. The check asks GitHub only for the
 latest stable release of the repository that built that artifact. A newer release opens only a
