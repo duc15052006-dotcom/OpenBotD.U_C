@@ -8,6 +8,7 @@ import {
   PageShell,
 } from "@/components/layout/page-shell";
 import { StaggerItem } from "@/components/layout/stagger";
+import { ComputerFilesDialog } from "@/components/computers/computer-files-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -43,10 +44,12 @@ export const Route = createFileRoute("/_authed/admin/computers")({
 });
 
 function ComputersPage() {
-  /** Bot id currently running a stop/reset request. */
+  /** Bot id currently running a lifecycle request. */
   const [busy, setBusy] = useState<string | null>(null);
   /** Reset deletes the browser profile, so it requires confirmation. */
   const [confirming, setConfirming] = useState<string | null>(null);
+  /** Computer whose persistent workspace is open in the file manager. */
+  const [filesFor, setFilesFor] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const nameFor = useBotNames();
 
@@ -85,7 +88,10 @@ function ComputersPage() {
           ? stopHostAccess.error.message
           : null;
 
-  const run = (botId: string, action: "stop" | "reset") => {
+  const run = (
+    botId: string,
+    action: "start" | "restart" | "stop" | "reset",
+  ) => {
     setBusy(botId);
     setConfirming(null);
     setState.mutate({ action, botId }, { onSettled: () => setBusy(null) });
@@ -172,15 +178,51 @@ function ComputersPage() {
                           ? "Leaves directly"
                           : `Leaves through ${computer.egress}`}
                     </ItemDescription>
+                    {computer.running ? (
+                      <p className="mt-1 text-muted-foreground text-xs">
+                        {computer.metrics
+                          ? resourceSummary(computer.metrics)
+                          : "CPU / RAM / Disk metrics unavailable for this sample"}
+                      </p>
+                    ) : null}
                   </ItemContent>
                   <ItemActions>
+                    {computer.running ? (
+                      <>
+                        <Button
+                          disabled={busy === computer.botId}
+                          onClick={() => void run(computer.botId, "restart")}
+                          size="sm"
+                          variant="outline"
+                        >
+                          {busy === computer.botId ? "Working…" : "Restart"}
+                        </Button>
+                        <Button
+                          disabled={busy === computer.botId}
+                          onClick={() => void run(computer.botId, "stop")}
+                          size="sm"
+                          variant="outline"
+                        >
+                          Stop
+                        </Button>
+                      </>
+                    ) : (
+                      <Button
+                        disabled={busy === computer.botId}
+                        onClick={() => void run(computer.botId, "start")}
+                        size="sm"
+                        variant="outline"
+                      >
+                        {busy === computer.botId ? "Starting…" : "Start"}
+                      </Button>
+                    )}
                     <Button
-                      disabled={busy === computer.botId || !computer.running}
-                      onClick={() => void run(computer.botId, "stop")}
+                      disabled={!computer.running || busy === computer.botId}
+                      onClick={() => setFilesFor(computer.botId)}
                       size="sm"
                       variant="outline"
                     >
-                      {busy === computer.botId ? "Working…" : "Stop browser"}
+                      Files
                     </Button>
                     <Button
                       disabled={busy === computer.botId}
@@ -198,6 +240,15 @@ function ComputersPage() {
           </PageRows>
         )}
       </PageSection>
+
+      {filesFor ? (
+        <ComputerFilesDialog
+          botId={filesFor}
+          botName={nameFor(filesFor)}
+          onOpenChange={(open) => !open && setFilesFor(null)}
+          open
+        />
+      ) : null}
 
       {/*
        * A DIALOG RATHER THAN AN INLINE CONFIRM. Resetting signs a Bot out of everything it has ever
@@ -244,10 +295,11 @@ function ComputersPage() {
       </Dialog>
 
       <p className="mt-4 text-muted-foreground text-sm">
-        <strong>Stop</strong> closes the browser and keeps its logins: the next
-        thing the Bot does starts it again where it left off.{" "}
-        <strong>Reset</strong> deletes the profile, so the Bot is signed out of
-        everything and starts clean. Both are recorded in{" "}
+        <strong>Start</strong> wakes a stopped computer, <strong>Restart</strong>{" "}
+        cycles it without deleting its saved profile, and <strong>Stop</strong> closes
+        the browser while keeping its logins. <strong>Reset</strong> deletes the
+        profile, signs the Bot out of everything, and starts clean. Lifecycle actions
+        are recorded in{" "}
         <Link className="underline" to="/admin/audit">
           Audit
         </Link>
@@ -450,6 +502,35 @@ function summaryFor(
   if (waiting > 0)
     parts.push(`${waiting} pending ${waiting === 1 ? "request" : "requests"}`);
   return parts.length > 0 ? parts.join(" · ") : "No folders approved.";
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"] as const;
+  let value = bytes;
+  let index = 0;
+  while (value >= 1024 && index < units.length - 1) {
+    value /= 1024;
+    index += 1;
+  }
+  return `${value >= 10 || index === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[index]}`;
+}
+
+function resourceSummary(metrics: {
+  cpuPercent: number;
+  memoryUsedBytes: number;
+  memoryLimitBytes: number | null;
+  diskUsedBytes: number;
+  diskTotalBytes: number;
+}) {
+  const memory = metrics.memoryLimitBytes
+    ? `${formatBytes(metrics.memoryUsedBytes)} / ${formatBytes(metrics.memoryLimitBytes)}`
+    : formatBytes(metrics.memoryUsedBytes);
+  const disk =
+    metrics.diskTotalBytes > 0
+      ? `${formatBytes(metrics.diskUsedBytes)} / ${formatBytes(metrics.diskTotalBytes)}`
+      : "unavailable";
+  return `CPU ${metrics.cpuPercent.toFixed(1)}% · RAM ${memory} · Disk ${disk}`;
 }
 
 function ownerLabel(grant: { ownerName?: string; ownerEmail?: string }) {

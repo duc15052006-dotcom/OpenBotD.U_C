@@ -404,6 +404,16 @@ export function createComputerRoutes(
     }
   });
 
+  /** Start or wake the browser, keeping the saved profile. */
+  routes.post("/:botId/computers/start", (context) =>
+    act(context, (botId, actor) => gateway.startComputer(botId, actor)),
+  );
+
+  /** Restart the browser without deleting its saved profile or logins. */
+  routes.post("/:botId/computers/restart", (context) =>
+    act(context, (botId, actor) => gateway.restartComputer(botId, actor)),
+  );
+
   /** Stop the browser, keep the logins. */
   routes.post("/:botId/computers/stop", (context) =>
     act(context, (botId, actor) => gateway.stopComputer(botId, actor)),

@@ -22,6 +22,7 @@ import {
   TAKE_CONTROL_FIRST,
 } from "./control";
 import { identity } from "./identity";
+import { collectComputerMetrics } from "./metrics";
 import { createProfiles, numberFromEnv, VIEWPORT } from "./profiles";
 import {
   parseExecTimeout,
@@ -208,9 +209,8 @@ function botIdOf(request: Request, fallback?: string | null): string {
  * would only add a syscall to every call. Everything about why confinement is harder than it looks
  * lives in workspace.ts.
  */
-const workspace = createWorkspace(
-  process.env.WORKSPACE_DIR?.trim() || "/workspace",
-);
+const WORKSPACE_ROOT = process.env.WORKSPACE_DIR?.trim() || "/workspace";
+const workspace = createWorkspace(WORKSPACE_ROOT);
 
 /**
  * Who has the wheel, as a state machine in its own module.
@@ -243,7 +243,7 @@ const profiles = createProfiles(
 );
 // Rooted in the same workspace the file tools use, so a command and a written file see one
 // directory rather than two.
-const shell = createShell(process.env.WORKSPACE_DIR?.trim() || "/workspace");
+const shell = createShell(WORKSPACE_ROOT);
 
 /**
  * The id normally arrives as a header on every request. This is the fallback for a caller that has no
@@ -815,6 +815,16 @@ serve<StreamData>({
      */
     if (url.pathname === "/computers" && request.method === "GET") {
       return json({ computers: profiles.summary(await profiles.known()) });
+    }
+
+    /**
+     * Resource usage of this computer container.
+     *
+     * Authenticated like every other computer detail. It does not start a browser; the API server
+     * only asks it for computers the provider already reports as running.
+     */
+    if (url.pathname === "/metrics" && request.method === "GET") {
+      return json({ metrics: await collectComputerMetrics(WORKSPACE_ROOT) });
     }
 
     /**

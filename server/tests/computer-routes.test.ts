@@ -6,6 +6,39 @@ import type { PolicyStore } from "../src/computer/policy-store";
 import { createComputerRoutes } from "../src/computer/routes";
 
 describe("computer routes", () => {
+  test("exposes explicit start and restart lifecycle controls", async () => {
+    const calls: string[] = [];
+    const gateway = {
+      startComputer: async (botId: string) => {
+        calls.push(`start:${botId}`);
+        return { started: true, url: "http://computer.test" };
+      },
+      restartComputer: async (botId: string) => {
+        calls.push(`restart:${botId}`);
+        return { restarted: true, url: "http://computer.test" };
+      },
+    } as unknown as ComputerGateway;
+    const routes = createComputerRoutes(
+      gateway,
+      {} as PolicyStore,
+      asActor(member),
+      async () => true,
+    );
+
+    const started = await routes.request(
+      "http://openbot.test/bot-17/computers/start",
+      { method: "POST" },
+    );
+    const restarted = await routes.request(
+      "http://openbot.test/bot-17/computers/restart",
+      { method: "POST" },
+    );
+
+    expect(started.status).toBe(200);
+    expect(restarted.status).toBe(200);
+    expect(calls).toEqual(["start:bot-17", "restart:bot-17"]);
+  });
+
   test("gets a screenshot through the governed computer gateway", async () => {
     const requestedBotIds: string[] = [];
     const gateway = {

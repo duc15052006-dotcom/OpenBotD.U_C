@@ -44,10 +44,11 @@ import {
   policyInitiator,
   type PolicyDecision,
 } from "./policy";
-import type { ComputerProvider } from "./provider";
+import type { ComputerLocation, ComputerProvider } from "./provider";
 import type {
   ActionResult,
   ClickInput,
+  ComputerResourceMetrics,
   ComputerStatus,
   ControlState,
   HumanInput,
@@ -206,8 +207,17 @@ export interface ComputerGateway {
       running: boolean;
       startedAt: string | null;
       egress?: string | null;
+      metrics?: ComputerResourceMetrics;
     }[];
   }>;
+  startComputer(
+    botId: string,
+    actor: ActionActor,
+  ): Promise<{ started: boolean; url: string }>;
+  restartComputer(
+    botId: string,
+    actor: ActionActor,
+  ): Promise<{ restarted: boolean; url: string }>;
   stopComputer(
     botId: string,
     actor: ActionActor,
@@ -687,15 +697,92 @@ export function createComputerGateway(
     /** Return every computer that the configured provider owns. */
     async computers() {
       const computers = await provider.list();
+
+      const metricsFor = async (
+        computer: ComputerLocation,
+      ): Promise<ComputerResourceMetrics | undefined> => {
+        if (computer.status !== "running" || !computer.url) return undefined;
+
+        // A provider supplies this address, and the request carries the deployment's computer token.
+        // Apply the same address check as every acting call before sending that token anywhere.
+        const verdict = checkComputerAddress(computer.url);
+        if (!verdict.allowed) return undefined;
+
+        try {
+          const body = await transport.call<{ metrics?: ComputerResourceMetrics }>(
+            verdict.url,
+            computer.botId,
+            "/metrics",
+            undefined,
+            undefined,
+            5_000,
+          );
+          return body.metrics;
+        } catch {
+          // Metrics are observability, not lifecycle state. A browser that is running but too busy to
+          // answer a sample still belongs in the fleet and should not turn the whole Admin page red.
+          return undefined;
+        }
+      };
+
+      const metrics = await Promise.all(computers.map(metricsFor));
       return {
         isolation: provider.isolation,
-        computers: computers.map((computer) => ({
+        computers: computers.map((computer, index) => ({
           botId: computer.botId,
           running: computer.status === "running",
           startedAt: computer.startedAt ?? null,
           egress: computer.egress,
+          ...(metrics[index] ? { metrics: metrics[index] } : {}),
         })),
       };
+    },
+
+    /**
+     * Start (or wake) a computer without changing its saved browser profile.
+     *
+     * Per-Bot providers already define locating as "ensure this Bot has a running computer", so the
+     * lifecycle surface uses that same primitive rather than adding a second start path that could
+     * drift from the one every normal action relies on. A shared provider may already be running as
+     * a service; in that mode this is an idempotent reachability/wake request.
+     */
+    async startComputer(botId: string, actor: ActionActor) {
+      const before = await provider.status(botId).catch(() => ({
+        botId,
+        state: "unreachable" as const,
+      }));
+      const url = await locate(botId);
+      const started = before.state !== "ready";
+      // Refs belong to the browser run that produced them. Waking a stopped computer may replace
+      // that run, so never let an old accessibility ref survive into the new process.
+      if (started) await snapshots.clear(botId);
+      await writeControlEvent(auditStore, "computer.started", {
+        botId,
+        actor,
+        reason: started
+          ? "the computer was started or resumed"
+          : "the computer was already running",
+      });
+      return { started, url };
+    },
+
+    /**
+     * Restart a computer while preserving its saved profile.
+     *
+     * Stop first, then use the provider's normal ensure path to bring it back. This deliberately does
+     * not call reset: restart must never sign the Bot out or erase its workspace/browser profile.
+     */
+    async restartComputer(botId: string, actor: ActionActor) {
+      await provider.stop(botId);
+      const url = await locate(botId);
+      // A restarted browser has a new accessibility tree even when its profile is preserved.
+      await snapshots.clear(botId);
+      await writeControlEvent(auditStore, "computer.restarted", {
+        botId,
+        actor,
+        reason: "the computer was stopped and started again without clearing its saved profile",
+      });
+      return { restarted: true, url };
     },
 
     /**
