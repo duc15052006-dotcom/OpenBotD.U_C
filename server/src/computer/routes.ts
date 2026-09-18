@@ -49,8 +49,17 @@ export function createComputerRoutes(
    * endpoint says it cannot answer rather than answering from nothing.
    */
   auditReader?: AuditReader,
+  /**
+   * A stricter boundary for lifecycle mutations. Reading/using a shared Agent is not the same as
+   * being allowed to stop or wipe the computer behind it.
+   *
+   * Optional for compatibility with focused tests/custom deployments; absent falls back to the
+   * existing canUseBot rule.
+   */
+  canManageBot?: BotAccessCheck,
 ) {
   const routes = new Hono<{ Variables: AppVariables }>();
+  const mayManageBot = canManageBot ?? canUseBot;
 
   /**
    * Every route under a Bot id, in one place.
@@ -89,9 +98,28 @@ export function createComputerRoutes(
     await next();
   });
 
+  /*
+   * Computer lifecycle changes are ownership/admin operations, not ordinary "may use this Bot"
+   * operations. In particular reset deletes the saved browser profile. Apply this to the entire
+   * lifecycle subtree so a new verb cannot accidentally inherit the weaker access rule.
+   */
+  routes.use("/:botId/computers/*", async (context, next) => {
+    const botId = context.req.param("botId");
+    if (botId && !(await mayManageBot(context.var.actor, botId))) {
+      return context.json(
+        { error: "You cannot manage this Bot's computer." },
+        403,
+      );
+    }
+    await next();
+  });
+
   routes.get("/:botId/status", async (context) => {
     const botId = context.req.param("botId");
-    return context.json(await gateway.status(botId));
+    return context.json({
+      ...(await gateway.status(botId)),
+      canManage: await mayManageBot(context.var.actor, botId),
+    });
   });
 
   routes.get("/:botId/screenshot", async (context) => {
