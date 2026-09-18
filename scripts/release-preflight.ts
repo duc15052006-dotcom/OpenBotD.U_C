@@ -296,6 +296,9 @@ function checkComputerSandboxBoundary(): void {
   }
 
   const computersPage = read("app/src/routes/_authed/admin/computers.tsx");
+  const quarantineDialog = read(
+    "app/src/components/computers/computer-quarantine-dialog.tsx",
+  );
   const computerRoutes = read("server/src/computer/routes.ts");
   for (const evidence of [
     "KILL ALL COMPUTERS",
@@ -309,6 +312,51 @@ function checkComputerSandboxBoundary(): void {
   }
   if (!computerRoutes.includes('routes.post("/stop-all"')) {
     fail("computer: admin Kill All Computers route is missing");
+  }
+
+  for (const evidence of [
+    'routes.get("/quarantine"',
+    'routes.delete("/quarantine"',
+    'body.confirm !== "DELETE_QUARANTINED_FILE"',
+    "gateway.quarantinedDownloads(botId)",
+    "gateway.deleteQuarantinedDownload",
+  ]) {
+    if (!computerRoutes.includes(evidence)) {
+      fail(`computer: quarantine admin boundary is missing ${evidence}`);
+    }
+  }
+
+  for (const evidence of [
+    "ComputerQuarantineDialog",
+    "showQuarantine(computer.botId, computer.running)",
+    ">Quarantine<",
+  ]) {
+    if (!computersPage.includes(evidence)) {
+      fail(`computer: quarantine manager UI is missing ${evidence}`);
+    }
+  }
+
+  for (const evidence of [
+    "Not scanned",
+    "File bytes never enter the browser UI",
+    "Export remains disabled",
+    "Confirm delete",
+  ]) {
+    if (!quarantineDialog.includes(evidence)) {
+      fail(`computer: quarantine safety UI is missing ${evidence}`);
+    }
+  }
+
+  for (const evidence of [
+    'createHash("sha256")',
+    "listQuarantinedDownloads",
+    "deleteQuarantinedDownload",
+    "await unlink(file).catch",
+    'status: "quarantined"',
+  ]) {
+    if (!downloads.includes(evidence)) {
+      fail(`computer: quarantine identity lifecycle is missing ${evidence}`);
+    }
   }
 
   const workspace = read("agent-computer/src/workspace.ts");
