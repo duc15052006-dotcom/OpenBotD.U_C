@@ -17,6 +17,7 @@ import { createHandoffRunner } from "./agents/handoff-runner";
 import { signHandoffDeliveryRun } from "./agents/handoff-signing";
 import { handoffTool } from "./agents/handoff-tool";
 import { createAgentInstructionsStore } from "./agents/instructions-store";
+import { createAgentKnowledgeStore } from "./agents/knowledge-store";
 import { createAgentModelConfigStore } from "./agents/model-config-store";
 import { createAgentModelConnectionService } from "./agents/model-connection-service";
 import { createAgentProfileStore } from "./agents/profile-store";
@@ -200,6 +201,10 @@ const agentModelStore = createAgentModelConfigStore(
   agentVault,
 );
 const agentInstructionsStore = createAgentInstructionsStore(
+  database,
+  agentProfileStore,
+);
+const agentKnowledgeStore = createAgentKnowledgeStore(
   database,
   agentProfileStore,
 );
@@ -1362,6 +1367,7 @@ const app = createApp(
   agentModelStore,
   agentModelConnections,
   agentInstructionsStore,
+  agentKnowledgeStore,
 );
 
 /**
