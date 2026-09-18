@@ -901,10 +901,7 @@ fn models_probe_url(base_url: &str) -> Result<reqwest::Url, Problem> {
             "Enter a valid http:// or https:// model endpoint before testing it.".into(),
         );
     }
-    if url
-        .host_str()
-        .is_some_and(model_probe_never_allowed_host)
-    {
+    if url.host_str().is_some_and(model_probe_never_allowed_host) {
         return Err(
             "That model endpoint is reserved for cloud instance credentials and cannot be tested."
                 .into(),
