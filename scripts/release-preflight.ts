@@ -302,6 +302,68 @@ function checkComputerSandboxBoundary(): void {
   }
 }
 
+function checkInteractiveComputerControls(): void {
+  const screen = read("app/src/components/computers/computer-screen-dialog.tsx");
+  const computers = read("app/src/routes/_authed/admin/computers.tsx");
+  const desktop = read("desktop/src-tauri/src/main.rs");
+  const profiles = read("agent-computer/src/profiles.ts");
+  const quarantine = read("agent-computer/src/download-quarantine.ts");
+
+  for (const evidence of [
+    '"Take control"',
+    '"Return control"',
+    '"Stop viewing"',
+    "releaseControl(botId)",
+    "sendHumanInput(botId, \"click\"",
+    "sendHumanInput(botId, \"type\"",
+    "supplySecret(botId, secretText)",
+  ]) {
+    if (!screen.includes(evidence)) {
+      fail(`computer: human screen/takeover control is missing ${evidence}`);
+    }
+  }
+
+  for (const evidence of [
+    "ComputerScreenDialog",
+    "showScreen(computer.botId, computer.running)",
+    '"KILL ALL COMPUTERS"',
+    "resourceSummary(computer.metrics)",
+  ]) {
+    if (!computers.includes(evidence)) {
+      fail(`computer: Computer Manager is missing ${evidence}`);
+    }
+  }
+
+  for (const evidence of [
+    '"Keep running in tray"',
+    '"Exit and stop all Agents"',
+    '"STOP ALL AGENTS"',
+    "app.exit(0)",
+  ]) {
+    if (!desktop.includes(evidence)) {
+      fail(`desktop: close/stop runtime choice is missing ${evidence}`);
+    }
+  }
+
+  for (const evidence of [
+    'target.on("download"',
+    "quarantineDownload(QUARANTINE_ROOT, botId, download)",
+  ]) {
+    if (!profiles.includes(evidence)) {
+      fail(`computer: browser download quarantine wiring is missing ${evidence}`);
+    }
+  }
+
+  for (const evidence of [
+    'status: "quarantined"',
+    "Do not execute or export without explicit user approval",
+  ]) {
+    if (!quarantine.includes(evidence)) {
+      fail(`computer: download quarantine metadata is missing ${evidence}`);
+    }
+  }
+}
+
 function checkReleaseWiring(): void {
   const releaseProposalSource = read(".github/workflows/release.yml");
   for (const evidence of [
@@ -894,6 +956,7 @@ function checkVersionSources(): void {
 
 checkDesktopBoundary();
 checkComputerSandboxBoundary();
+checkInteractiveComputerControls();
 checkReleaseWiring();
 checkDesktopUpdatePath();
 checkDesktopCredentialBoundary();
