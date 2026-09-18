@@ -82,11 +82,69 @@ pub const IMAGE_VARIABLES: [(&str, &str); 5] = [
 ///
 /// Digests, not tags. A tag can be moved to point at a different image after the version that was
 /// tested; a digest is the image that was tested.
+fn expected_manifest_version(root: &Path, manifest: &Images) -> Result<(), String> {
+    let installed = installed(root)
+        .ok_or_else(|| format!("{IMAGES} exists but this deployment has no recorded version."))?;
+    ensure_manifest_version(manifest, &installed.version)
+}
+
+fn ensure_manifest_version(manifest: &Images, expected: &str) -> Result<(), String> {
+    if manifest.version != expected {
+        return Err(format!(
+            "{IMAGES} says it belongs to {}, but this deployment is {expected}.",
+            manifest.version
+        ));
+    }
+    Ok(())
+}
+
+fn expected_image_repository(published: &str) -> Result<String, String> {
+    let repository = crate::update::release_repository()?;
+    let owner = repository
+        .split_once('/')
+        .map(|(owner, _)| owner)
+        .ok_or_else(|| "This build has an invalid release repository.".to_string())?
+        .to_ascii_lowercase();
+    let image = if published == "openbot" {
+        "openbot".to_string()
+    } else {
+        format!("openbot-{published}")
+    };
+    Ok(format!("ghcr.io/{owner}/{image}"))
+}
+
+fn validated_reference(manifest: &Images, published: &str) -> Result<String, String> {
+    let image = manifest
+        .images
+        .get(published)
+        .ok_or_else(|| format!("OpenBot {} does not include {published}.", manifest.version))?;
+    let expected = expected_image_repository(published)?;
+    let prefix = format!("{expected}@sha256:");
+    let digest = image.reference.strip_prefix(&prefix).ok_or_else(|| {
+        format!(
+            "{IMAGES} for {} points {published} outside the expected repository or without a sha256 digest.",
+            manifest.version
+        )
+    })?;
+    let canonical = digest.len() == 64
+        && digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+    if !canonical {
+        return Err(format!(
+            "{IMAGES} for {} gives {published} a non-canonical sha256 digest.",
+            manifest.version
+        ));
+    }
+    Ok(image.reference.clone())
+}
+
 pub fn image_variables(root: &Path) -> Result<Vec<(String, String)>, String> {
     let text = std::fs::read_to_string(images_path(root))
         .map_err(|error| format!("could not read {}: {error}", images_path(root).display()))?;
     let manifest: Images = serde_json::from_str(&text)
         .map_err(|error| format!("{IMAGES} is not readable: {error}"))?;
+    expected_manifest_version(root, &manifest)?;
     pin(&manifest)
 }
 
@@ -106,11 +164,8 @@ pub fn reference(root: &Path, published: &str) -> Result<String, String> {
         .map_err(|error| format!("could not read {}: {error}", images_path(root).display()))?;
     let manifest: Images = serde_json::from_str(&text)
         .map_err(|error| format!("{IMAGES} is not readable: {error}"))?;
-    manifest
-        .images
-        .get(published)
-        .map(|image| image.reference.clone())
-        .ok_or_else(|| format!("OpenBot {} does not include {published}.", manifest.version))
+    expected_manifest_version(root, &manifest)?;
+    validated_reference(&manifest, published)
 }
 
 /// Every image the stack runs, or a failure that names the one that is missing.
@@ -121,13 +176,7 @@ pub fn reference(root: &Path, published: &str) -> Result<String, String> {
 pub fn pin(manifest: &Images) -> Result<Vec<(String, String)>, String> {
     let mut pinned = Vec::new();
     for (published, variable) in IMAGE_VARIABLES {
-        let image = manifest.images.get(published).ok_or_else(|| {
-            format!(
-                "{IMAGES} for {} names no {published} image.",
-                manifest.version
-            )
-        })?;
-        pinned.push((variable.to_string(), image.reference.clone()));
+        pinned.push((variable.to_string(), validated_reference(manifest, published)?));
     }
     Ok(pinned)
 }
@@ -303,6 +352,7 @@ fn fetch_images(root: &Path, version: &str) -> Result<(), String> {
         .map_err(|error| format!("could not fetch the image list for {version}: {error}"))?;
     let manifest: Images = serde_json::from_slice(&body)
         .map_err(|error| format!("the image list for {version} is not readable: {error}"))?;
+    ensure_manifest_version(&manifest, version)?;
     pin(&manifest)?;
     std::fs::write(images_path(root), &body)
         .map_err(|error| format!("could not write {IMAGES}: {error}"))
@@ -334,6 +384,8 @@ mod tests {
     use super::*;
 
     fn manifest(names: &[&str]) -> Images {
+        let repository = crate::update::release_repository().unwrap();
+        let owner = repository.split_once('/').unwrap().0.to_ascii_lowercase();
         Images {
             version: "v0.0.7".into(),
             images: names
@@ -342,7 +394,10 @@ mod tests {
                     (
                         (*name).to_string(),
                         Image {
-                            reference: format!("ghcr.io/copilotkit/openbot-{name}@sha256:abc"),
+                            reference: format!(
+                                "ghcr.io/{owner}/openbot-{name}@sha256:{}",
+                                "a".repeat(64)
+                            ),
                         },
                     )
                 })
@@ -378,6 +433,32 @@ mod tests {
                 "a tag is not a version: {reference}"
             );
         }
+    }
+
+    #[test]
+    fn a_manifest_from_another_release_is_refused() {
+        let mut wrong = manifest(
+            &IMAGE_VARIABLES
+                .iter()
+                .map(|(name, _)| *name)
+                .collect::<Vec<_>>(),
+        );
+        wrong.version = "v0.0.6".into();
+        assert!(ensure_manifest_version(&wrong, "v0.0.7").is_err());
+    }
+
+    #[test]
+    fn mutable_or_cross_repository_image_references_are_refused() {
+        let names: Vec<&str> = IMAGE_VARIABLES.iter().map(|(name, _)| *name).collect();
+        let mut mutable = manifest(&names);
+        mutable.images.get_mut("server").unwrap().reference =
+            "ghcr.io/other/openbot-server:latest".into();
+        assert!(pin(&mutable).is_err());
+
+        let mut short_digest = manifest(&names);
+        short_digest.images.get_mut("server").unwrap().reference =
+            expected_image_repository("server").unwrap() + "@sha256:abc";
+        assert!(pin(&short_digest).is_err());
     }
 
     #[test]
