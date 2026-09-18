@@ -11,6 +11,14 @@ import {
 } from "./supervisor";
 
 /** The address and lifecycle details for one Bot's computer. */
+export type ComputerHostCapacity = {
+  memoryBytes: number | null;
+  logicalCpus: number | null;
+  maxActiveComputers: number | null;
+  defaultComputerMemoryBytes: number | null;
+  defaultComputerNanoCpus: number | null;
+};
+
 export type ComputerLocation = {
   botId: string;
   status: "running" | "stopped";
@@ -81,6 +89,8 @@ export interface ComputerProvider {
   reset(botId: string): Promise<{ cleared: boolean }>;
   /** List the computers that this provider owns. */
   list(): Promise<ComputerLocation[]>;
+  /** Host/VM capacity, when the provider owns a scheduler that can report it. */
+  capacity?(): Promise<ComputerHostCapacity | undefined>;
   /** Prepare provider resources before the first computer request. */
   warm?(): Promise<void>;
   /**
