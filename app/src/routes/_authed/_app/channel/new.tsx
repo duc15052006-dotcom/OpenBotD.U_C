@@ -234,7 +234,7 @@ function RouteComponent() {
             // roster itself is the durable membership; this row records who the first message
             // actually addressed.
             await routeMessage(draft.text, targetId).catch(() => undefined);
-            await startGroup(selectedIds, draft.text);
+            await startGroup(selectedIds, draft.text, targetId);
           } catch (caught) {
             setSent(null);
             setError(
