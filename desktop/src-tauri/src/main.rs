@@ -2646,9 +2646,9 @@ async fn ask_the_bot_with_settings(
 /**
 What a previous run already wrote, so the wizard can arrive filled in.
 
-Returned to the window because that is where the fields are, and it is the same machine and the
-same person: reading their own file back to them is not a disclosure. The key is not logged here or
-anywhere, and only the settings the wizard asks about are read.
+Only non-secret settings cross to the window. Legacy plaintext credentials are inspected on the
+native side only long enough to produce saved/not-saved hints; the bytes themselves never become
+passive WebView state. Explicit Start/Test actions resolve saved credentials natively.
 */
 #[tauri::command]
 fn already_configured<R: tauri::Runtime>(
@@ -2676,12 +2676,8 @@ fn already_configured_for_root(root: String) -> AlreadyConfigured {
             "INTELLIGENCE_API_URL",
             "INTELLIGENCE_GATEWAY_WS_URL",
             /*
-             * The model credentials too, so the wizard never asks twice for one of these either.
-             *
-             * A key already in the file is one somebody has already produced, and making them find
-             * it again means opening a dotfile in an editor. Read back for the same reason the
-             * Intelligence key is: it is their own file, on their own machine, and this is the
-             * screen that asks for it.
+             * Legacy model credentials are included in this native read only so saved indicators
+             * can be computed below. They are removed from `values` before the command returns.
              */
             "OPENAI_API_KEY",
             "ANTHROPIC_API_KEY",
@@ -4035,7 +4031,7 @@ mod tests {
     }
 
     #[test]
-    fn already_configured_returns_file_values_and_saved_indicators() {
+    fn already_configured_returns_public_values_and_secret_indicators() {
         let root = temp_root("openbot-already-configured");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(
