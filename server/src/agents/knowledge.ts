@@ -1,8 +1,5 @@
 import { randomUUID } from "node:crypto";
-import {
-  classifyAttachment,
-  mediaTypeOf,
-} from "../../../shared/attachments";
+import { classifyAttachment, mediaTypeOf } from "../../../shared/attachments";
 import { sniffMimeType } from "../channels/attachment-mime";
 
 export const AGENT_KNOWLEDGE_OVERRIDE_KEY = "knowledge" as const;
@@ -53,14 +50,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function validDocument(value: unknown): AgentKnowledgeDocument | null {
   if (!isRecord(value)) return null;
-  const {
-    id,
-    name,
-    mimeType,
-    sizeBytes,
-    content,
-    createdAt,
-  } = value;
+  const { id, name, mimeType, sizeBytes, content, createdAt } = value;
   if (
     typeof id !== "string" ||
     !id ||
@@ -186,7 +176,10 @@ export function parseAgentKnowledgeUpload(
     };
   }
   if (!validBase64(bytesBase64)) {
-    return { ok: false, error: "Knowledge file contents are not valid base64." };
+    return {
+      ok: false,
+      error: "Knowledge file contents are not valid base64.",
+    };
   }
 
   const bytes = Buffer.from(bytesBase64, "base64");
@@ -201,8 +194,7 @@ export function parseAgentKnowledgeUpload(
   if (classifyAttachment(mimeType) !== "text") {
     return {
       ok: false,
-      error:
-        "Knowledge files must be UTF-8 text, Markdown, CSV, or JSON.",
+      error: "Knowledge files must be UTF-8 text, Markdown, CSV, or JSON.",
     };
   }
 
@@ -210,7 +202,10 @@ export function parseAgentKnowledgeUpload(
   try {
     content = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
-    return { ok: false, error: "Knowledge files must contain valid UTF-8 text." };
+    return {
+      ok: false,
+      error: "Knowledge files must contain valid UTF-8 text.",
+    };
   }
   if (!content.trim()) {
     return { ok: false, error: "Knowledge files cannot be empty." };
@@ -232,7 +227,9 @@ export function makeAgentKnowledgeDocument(
   upload: AgentKnowledgeUpload,
   now: Date = new Date(),
 ): AgentKnowledgeDocument {
-  const content = new TextDecoder("utf-8", { fatal: true }).decode(upload.bytes);
+  const content = new TextDecoder("utf-8", { fatal: true }).decode(
+    upload.bytes,
+  );
   return {
     id: randomUUID(),
     name: upload.name,

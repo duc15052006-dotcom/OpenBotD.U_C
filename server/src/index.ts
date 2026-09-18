@@ -436,10 +436,7 @@ const groupPeersFor = async ({
     .innerJoin(
       channelMemberships,
       and(
-        eq(
-          channelMemberships.channelId,
-          intelligenceChannelMappings.channelId,
-        ),
+        eq(channelMemberships.channelId, intelligenceChannelMappings.channelId),
         eq(channelMemberships.userId, actorId),
       ),
     )
@@ -1062,9 +1059,7 @@ const copilotRuntime = mountCopilotRuntime(
 
     const [grantedPeers, channelPeers] = couldHandOn
       ? await Promise.all([
-          pluginStore
-            .botsReachableFrom(botId)
-            .catch(() => [] as string[]),
+          pluginStore.botsReachableFrom(botId).catch(() => [] as string[]),
           groupPeersFor({
             actorId,
             threadId: input.threadId,
@@ -1089,8 +1084,7 @@ const copilotRuntime = mountCopilotRuntime(
           // A durable grant OR a peer deliberately put in this group means the tool is worth
           // offering. The desk re-checks the exact target at call time; this only decides whether
           // the model sees the tool at all.
-          hasSomebodyToAsk:
-            grantedPeers.length > 0 || channelPeers.length > 0,
+          hasSomebodyToAsk: grantedPeers.length > 0 || channelPeers.length > 0,
           maxDepth: config.handoff.maxDepth,
           maxPerRun: config.handoff.maxPerRun,
         })

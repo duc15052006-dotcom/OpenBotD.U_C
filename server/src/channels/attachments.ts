@@ -756,10 +756,7 @@ export function createChannelAttachmentRoutes(
       .from(attachments)
       .innerJoin(
         channels,
-        and(
-          eq(channels.id, attachments.channelId),
-          isNull(channels.deletedAt),
-        ),
+        and(eq(channels.id, attachments.channelId), isNull(channels.deletedAt)),
       )
       .innerJoin(
         channelMemberships,
