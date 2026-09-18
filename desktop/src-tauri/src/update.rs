@@ -155,7 +155,10 @@ mod tests {
         let info = from_release(
             "0.0.12",
             "owner/repo",
-            release("v0.0.13", "https://github.com/owner/repo/releases/tag/v0.0.13"),
+            release(
+                "v0.0.13",
+                "https://github.com/owner/repo/releases/tag/v0.0.13",
+            ),
         )
         .unwrap();
         assert!(info.update_available);
@@ -168,7 +171,10 @@ mod tests {
             let info = from_release(
                 "0.0.12",
                 "owner/repo",
-                release(tag, &format!("https://github.com/owner/repo/releases/tag/{tag}")),
+                release(
+                    tag,
+                    &format!("https://github.com/owner/repo/releases/tag/{tag}"),
+                ),
             )
             .unwrap();
             assert!(!info.update_available);
