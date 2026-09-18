@@ -17,10 +17,7 @@ import {
   supplySecret,
   takeControl,
 } from "@/lib/computers/control";
-import {
-  readScreenshot,
-  type Screenshot,
-} from "@/lib/computers/screen";
+import { readScreenshot, type Screenshot } from "@/lib/computers/screen";
 
 /**
  * A human view into one Bot's browser.
@@ -142,7 +139,9 @@ export function ComputerScreenDialog({
       if (next) setControl(next);
     } catch (error) {
       setProblem(
-        error instanceof Error ? error.message : "That value could not be entered.",
+        error instanceof Error
+          ? error.message
+          : "That value could not be entered.",
       );
     } finally {
       setSendingSecret(false);
