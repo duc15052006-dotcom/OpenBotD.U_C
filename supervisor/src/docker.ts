@@ -145,6 +145,31 @@ export class DockerUnavailableError extends Error {
   }
 }
 
+export type HostCapacity = {
+  memoryBytes: number | null;
+  logicalCpus: number | null;
+};
+
+/** Physical/VM resources the container engine can actually schedule onto. */
+export async function hostCapacity(): Promise<HostCapacity> {
+  try {
+    const info = (await docker.info()) as {
+      MemTotal?: number;
+      NCPU?: number;
+    };
+    return {
+      memoryBytes:
+        typeof info.MemTotal === "number" && info.MemTotal > 0
+          ? info.MemTotal
+          : null,
+      logicalCpus:
+        typeof info.NCPU === "number" && info.NCPU > 0 ? info.NCPU : null,
+    };
+  } catch (error) {
+    throw new DockerUnavailableError(String(error));
+  }
+}
+
 export async function reachable(): Promise<boolean> {
   try {
     await docker.ping();
