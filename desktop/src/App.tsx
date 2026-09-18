@@ -701,6 +701,7 @@ export function App() {
           held={alreadyHeld}
           root={root}
           chosen={model}
+          requireConnectionTest
           onChoose={(choice) => {
             recordSetupEvent(modelChoiceEvent(choice));
             setModel(choice);
