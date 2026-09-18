@@ -21,7 +21,9 @@ const actor: AgentActor = { id: `admin-${suffix}`, role: "admin" };
 // profile fake keeps this file about the real database transaction rather than profile fixtures.
 const profiles = {
   get: async (_actor: AgentActor, requestedId: string) =>
-    requestedId === agentId ? { id: agentId, systemOwned: true } : null,
+    requestedId === agentId
+      ? { id: agentId, systemOwned: true, deletedAt: null }
+      : null,
 } as unknown as AgentProfileStore;
 
 const store = createAgentModelConfigStore(database, profiles, {
