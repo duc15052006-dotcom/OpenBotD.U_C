@@ -53,10 +53,21 @@ export function KnowledgePanel({ agentId }: { agentId: string }) {
         <Input
           accept=".txt,.md,.csv,.json,text/plain,text/markdown,text/csv,application/json"
           aria-label="Upload knowledge file"
-          disabled={upload.isPending || remove.isPending || full}
+          disabled={
+            !knowledge.data.canManage ||
+            upload.isPending ||
+            remove.isPending ||
+            full
+          }
           onChange={(event) => {
             const file = event.target.files?.[0];
-            if (file) upload.mutate({ agentId, file });
+            if (file) {
+              upload.mutate({
+                agentId,
+                file,
+                maxBytes: knowledge.data.limits.fileBytes,
+              });
+            }
             event.currentTarget.value = "";
           }}
           type="file"
@@ -86,7 +97,11 @@ export function KnowledgePanel({ agentId }: { agentId: string }) {
               </ItemContent>
               <ItemActions>
                 <Button
-                  disabled={upload.isPending || remove.isPending}
+                  disabled={
+                    !knowledge.data.canManage ||
+                    upload.isPending ||
+                    remove.isPending
+                  }
                   onClick={() =>
                     remove.mutate({
                       agentId,
@@ -104,6 +119,12 @@ export function KnowledgePanel({ agentId }: { agentId: string }) {
         </div>
       )}
 
+      {!knowledge.data.canManage ? (
+        <p className="text-xs text-muted-foreground">
+          You can see which reference files this coworker uses, but you cannot
+          change them.
+        </p>
+      ) : null}
       {error ? (
         <p className="text-xs text-destructive" role="alert">
           {error.message}
