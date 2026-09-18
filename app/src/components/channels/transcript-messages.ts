@@ -36,15 +36,38 @@ export function seedMessage(text: string, id: string): Message {
  * Deliberately not persisted. A reload finds nothing here, which is correct, by then the message
  * is in the thread and arrives through the normal replay.
  */
-const firstMessages = new Map<string, string>();
+export type FirstMessageSeed = {
+  text: string;
+  /** The group member explicitly chosen for this first turn, or null for the channel default. */
+  targetAgentId: string | null;
+};
 
-export function stashFirstMessage(channelId: string, text: string): void {
-  firstMessages.set(channelId, text);
+const firstMessages = new Map<string, FirstMessageSeed>();
+
+export function stashFirstMessage(
+  channelId: string,
+  text: string,
+  targetAgentId: string | null = null,
+): void {
+  firstMessages.set(channelId, { text, targetAgentId });
 }
 
-/** Read the pending first message and forget it. Null for a channel opened any other way. */
-export function takeFirstMessage(channelId: string): string | null {
-  const text = firstMessages.get(channelId) ?? null;
+/**
+ * Read the pending first-message envelope and forget it.
+ *
+ * The target is carried separately from the visible text so a group's first @mention survives the
+ * create → navigate boundary without re-parsing a chip that has already been flattened to text.
+ */
+export function takeFirstMessageSeed(channelId: string): FirstMessageSeed | null {
+  const seed = firstMessages.get(channelId) ?? null;
   firstMessages.delete(channelId);
-  return text;
+  return seed;
+}
+
+/**
+ * Legacy text-only reader kept for callers/tests that only care about the visible message.
+ * Destructive, like the original API.
+ */
+export function takeFirstMessage(channelId: string): string | null {
+  return takeFirstMessageSeed(channelId)?.text ?? null;
 }
