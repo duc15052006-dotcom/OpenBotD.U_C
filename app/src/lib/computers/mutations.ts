@@ -3,7 +3,7 @@ import { client } from "@/lib/client";
 import { clearActivity } from "./activity";
 import { type ActionPolicy, computerKeys } from "./queries";
 
-/** Lifecycle controls. Reset is the only action that deletes the saved browser profile. */
+/** Lifecycle controls. Reset is the only action that deletes the browser profile and workspace. */
 export type ComputerAction = "start" | "restart" | "stop" | "reset";
 
 function invalidateComputers(queryClient: QueryClient) {
@@ -35,7 +35,7 @@ export function setComputerStateMutationOptions(queryClient: QueryClient) {
         },
       );
     },
-    /** Only reset deletes the profile those commands ran on, so only reset forgets local activity. */
+    /** Only reset deletes the persistent Computer state, so only reset forgets local activity. */
     onSuccess: (_result, variables) => {
       if (variables.action === "reset") clearActivity(variables.botId);
       return invalidateComputers(queryClient);
