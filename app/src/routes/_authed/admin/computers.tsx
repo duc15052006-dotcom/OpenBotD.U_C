@@ -175,6 +175,13 @@ function ComputersPage() {
                           ? "Leaves directly"
                           : `Leaves through ${computer.egress}`}
                     </ItemDescription>
+                    {computer.running ? (
+                      <p className="mt-1 text-muted-foreground text-xs">
+                        {computer.metrics
+                          ? resourceSummary(computer.metrics)
+                          : "CPU / RAM / Disk metrics unavailable for this sample"}
+                      </p>
+                    ) : null}
                   </ItemContent>
                   <ItemActions>
                     {computer.running ? (
@@ -475,6 +482,35 @@ function summaryFor(
   if (waiting > 0)
     parts.push(`${waiting} pending ${waiting === 1 ? "request" : "requests"}`);
   return parts.length > 0 ? parts.join(" · ") : "No folders approved.";
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"] as const;
+  let value = bytes;
+  let index = 0;
+  while (value >= 1024 && index < units.length - 1) {
+    value /= 1024;
+    index += 1;
+  }
+  return `${value >= 10 || index === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[index]}`;
+}
+
+function resourceSummary(metrics: {
+  cpuPercent: number;
+  memoryUsedBytes: number;
+  memoryLimitBytes: number | null;
+  diskUsedBytes: number;
+  diskTotalBytes: number;
+}) {
+  const memory = metrics.memoryLimitBytes
+    ? `${formatBytes(metrics.memoryUsedBytes)} / ${formatBytes(metrics.memoryLimitBytes)}`
+    : formatBytes(metrics.memoryUsedBytes);
+  const disk =
+    metrics.diskTotalBytes > 0
+      ? `${formatBytes(metrics.diskUsedBytes)} / ${formatBytes(metrics.diskTotalBytes)}`
+      : "unavailable";
+  return `CPU ${metrics.cpuPercent.toFixed(1)}% · RAM ${memory} · Disk ${disk}`;
 }
 
 function ownerLabel(grant: { ownerName?: string; ownerEmail?: string }) {
