@@ -44,10 +44,11 @@ import {
   policyInitiator,
   type PolicyDecision,
 } from "./policy";
-import type { ComputerProvider } from "./provider";
+import type { ComputerLocation, ComputerProvider } from "./provider";
 import type {
   ActionResult,
   ClickInput,
+  ComputerResourceMetrics,
   ComputerStatus,
   ControlState,
   HumanInput,
@@ -206,6 +207,7 @@ export interface ComputerGateway {
       running: boolean;
       startedAt: string | null;
       egress?: string | null;
+      metrics?: ComputerResourceMetrics;
     }[];
   }>;
   startComputer(
@@ -695,13 +697,43 @@ export function createComputerGateway(
     /** Return every computer that the configured provider owns. */
     async computers() {
       const computers = await provider.list();
+
+      const metricsFor = async (
+        computer: ComputerLocation,
+      ): Promise<ComputerResourceMetrics | undefined> => {
+        if (computer.status !== "running" || !computer.url) return undefined;
+
+        // A provider supplies this address, and the request carries the deployment's computer token.
+        // Apply the same address check as every acting call before sending that token anywhere.
+        const verdict = checkComputerAddress(computer.url);
+        if (!verdict.allowed) return undefined;
+
+        try {
+          const body = await transport.call<{ metrics?: ComputerResourceMetrics }>(
+            verdict.url,
+            computer.botId,
+            "/metrics",
+            undefined,
+            undefined,
+            5_000,
+          );
+          return body.metrics;
+        } catch {
+          // Metrics are observability, not lifecycle state. A browser that is running but too busy to
+          // answer a sample still belongs in the fleet and should not turn the whole Admin page red.
+          return undefined;
+        }
+      };
+
+      const metrics = await Promise.all(computers.map(metricsFor));
       return {
         isolation: provider.isolation,
-        computers: computers.map((computer) => ({
+        computers: computers.map((computer, index) => ({
           botId: computer.botId,
           running: computer.status === "running",
           startedAt: computer.startedAt ?? null,
           egress: computer.egress,
+          ...(metrics[index] ? { metrics: metrics[index] } : {}),
         })),
       };
     },
