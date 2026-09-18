@@ -195,6 +195,14 @@ app.get("/computers", async (context) => {
   }
 });
 
+app.get("/capacity", (context) =>
+  context.json({
+    maxActiveComputers: maxActiveComputers ?? null,
+    memoryBytesPerComputer: memoryBytes ?? null,
+    nanoCpusPerComputer: nanoCpus ?? null,
+  }),
+);
+
 serve({ port, fetch: app.fetch, idleTimeout: 120 });
 
 console.info(
