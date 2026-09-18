@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -7,9 +7,9 @@ import {
   AGENT_INSTRUCTIONS_LIMIT,
   agentInstructionsQueryOptions,
 } from "@/lib/agents/queries";
-import { queryClient } from "@/query-client";
 
 export function InstructionsPanel({ agentId }: { agentId: string }) {
+  const queryClient = useQueryClient();
   const stored = useQuery(agentInstructionsQueryOptions(agentId));
   const save = useMutation(saveAgentInstructionsMutationOptions(queryClient));
   const [draft, setDraft] = useState<string | null>(null);
