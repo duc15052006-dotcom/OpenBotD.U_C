@@ -386,6 +386,8 @@ function checkReleaseWiring(): void {
     '.sourceSha "$build"',
     '.sourceSha "$evidence"',
     '.publisher == "Tawkit, Inc."',
+    'app="windows-release/openbot-desktop.exe"',
+    'matches="$(jq -r --arg name "$name"',
     "sha256sum",
   ]) {
     if (!identityRun.includes(evidence)) {
