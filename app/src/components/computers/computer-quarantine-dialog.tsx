@@ -163,7 +163,11 @@ export function ComputerQuarantineDialog({
             Export remains disabled until malware scanning and native approval
             are wired.
           </span>
-          <Button onClick={() => onOpenChange(false)} size="sm" variant="outline">
+          <Button
+            onClick={() => onOpenChange(false)}
+            size="sm"
+            variant="outline"
+          >
             Close
           </Button>
         </DialogFooter>
