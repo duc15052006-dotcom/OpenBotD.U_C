@@ -237,6 +237,20 @@ export function createDockerSupervisorProvider(
       }
     },
 
+    async start(botId: string): Promise<{ wasRunning: boolean }> {
+      const result = (await call(
+        `/computers/${encodeURIComponent(botId)}/start`,
+      )) as { wasRunning?: boolean } | null;
+      return { wasRunning: result?.wasRunning === true };
+    },
+
+    async restart(botId: string): Promise<{ wasRunning: boolean }> {
+      const result = (await call(
+        `/computers/${encodeURIComponent(botId)}/restart`,
+      )) as { wasRunning?: boolean } | null;
+      return { wasRunning: result?.wasRunning === true };
+    },
+
     async stop(botId: string): Promise<{ wasRunning: boolean }> {
       const result = (await call(
         `/computers/${encodeURIComponent(botId)}/stop`,
