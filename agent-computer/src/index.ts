@@ -22,6 +22,7 @@ import {
   TAKE_CONTROL_FIRST,
 } from "./control";
 import { identity } from "./identity";
+import { computerResourceMetrics } from "./metrics";
 import { createProfiles, numberFromEnv, VIEWPORT } from "./profiles";
 import {
   parseExecTimeout,
@@ -208,9 +209,8 @@ function botIdOf(request: Request, fallback?: string | null): string {
  * would only add a syscall to every call. Everything about why confinement is harder than it looks
  * lives in workspace.ts.
  */
-const workspace = createWorkspace(
-  process.env.WORKSPACE_DIR?.trim() || "/workspace",
-);
+const WORKSPACE_DIR = process.env.WORKSPACE_DIR?.trim() || "/workspace";
+const workspace = createWorkspace(WORKSPACE_DIR);
 
 /**
  * Who has the wheel, as a state machine in its own module.
@@ -815,6 +815,14 @@ serve<StreamData>({
      */
     if (url.pathname === "/computers" && request.method === "GET") {
       return json({ computers: profiles.summary(await profiles.known()) });
+    }
+
+    /**
+     * Resource telemetry does not open a browser. The server only asks this while the provider says
+     * the computer is ready, so drawing a dashboard cannot wake a sleeping Sandbox.
+     */
+    if (url.pathname === "/metrics" && request.method === "GET") {
+      return json(await computerResourceMetrics(WORKSPACE_DIR));
     }
 
     /**
