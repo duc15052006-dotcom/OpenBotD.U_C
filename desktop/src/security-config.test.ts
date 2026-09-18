@@ -9,6 +9,8 @@ type TauriConfig = {
       csp?: Csp | string | null;
       devCsp?: Csp | string | null;
       dangerousDisableAssetCspModification?: boolean;
+      dangerousRemoteUrlIpcAccess?: unknown;
+      dangerousRemoteDomainIpcAccess?: unknown;
     };
   };
 };
@@ -80,6 +82,12 @@ describe("desktop CSP", () => {
     expect(
       config().app?.security?.dangerousDisableAssetCspModification,
     ).not.toBe(true);
+  });
+
+  test("remote pages never receive legacy IPC access either", () => {
+    const security = config().app?.security;
+    expect(security?.dangerousRemoteUrlIpcAccess).toBeUndefined();
+    expect(security?.dangerousRemoteDomainIpcAccess).toBeUndefined();
   });
 });
 
