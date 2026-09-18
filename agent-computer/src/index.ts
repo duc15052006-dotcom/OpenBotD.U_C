@@ -36,6 +36,7 @@ import { createViewerSlot, type ViewerSlot } from "./viewer";
 import { startVirtualDisplay } from "./virtual-display";
 import {
   createWorkspace,
+  DEFAULT_WORKSPACE_LIMITS,
   WorkspaceFileError,
   WorkspacePathError,
 } from "./workspace";
@@ -210,7 +211,15 @@ function botIdOf(request: Request, fallback?: string | null): string {
  * lives in workspace.ts.
  */
 const WORKSPACE_ROOT = process.env.WORKSPACE_DIR?.trim() || "/workspace";
-const workspace = createWorkspace(WORKSPACE_ROOT);
+const WORKSPACE_MAX_BYTES = numberFromEnv(
+  "COMPUTER_WORKSPACE_MAX_BYTES",
+  4 * 1024 * 1024 * 1024,
+  { min: 1 },
+);
+const workspace = createWorkspace(WORKSPACE_ROOT, {
+  ...DEFAULT_WORKSPACE_LIMITS,
+  totalBytes: WORKSPACE_MAX_BYTES,
+});
 
 /**
  * Who has the wheel, as a state machine in its own module.
@@ -826,7 +835,11 @@ serve<StreamData>({
     if (url.pathname === "/metrics" && request.method === "GET") {
       return json({
         metrics: {
-          ...(await collectComputerMetrics(WORKSPACE_ROOT)),
+          ...(await collectComputerMetrics(
+            WORKSPACE_ROOT,
+            100,
+            WORKSPACE_MAX_BYTES,
+          )),
           browserRunning: profiles.isLive(botId),
         },
       });
