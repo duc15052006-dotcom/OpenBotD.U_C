@@ -4052,13 +4052,17 @@ mod tests {
 
         let configured = already_configured_for_root(root.to_string_lossy().into_owned());
 
-        assert_eq!(
-            configured.values.get("INTELLIGENCE_API_KEY"),
-            Some(&"file-cpk".to_string())
+        assert!(
+            !configured.values.contains_key("INTELLIGENCE_API_KEY"),
+            "passive hydration must not return a legacy project key to the WebView"
+        );
+        assert!(
+            !configured.values.contains_key("OPENAI_API_KEY"),
+            "passive hydration must not return a legacy model key to the WebView"
         );
         assert_eq!(
-            configured.values.get("OPENAI_API_KEY"),
-            Some(&"file-openai".to_string())
+            configured.values.get("OPENAI_BASE_URL"),
+            Some(&"https://models.example/v1".to_string())
         );
         assert_eq!(configured.saved.intelligence_api_key, Some(true));
         assert_eq!(configured.saved.model_api_keys.openai, Some(true));
