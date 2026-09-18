@@ -413,6 +413,57 @@ const routineStore = createRoutineStore(database);
 useRoutineTools(routineStore);
 
 /**
+ * Other Bots this person deliberately put in the same live channel as this Bot.
+ *
+ * Group membership is a conversation-scoped permission, not a durable grant: it lets the coordinator
+ * hand one message to a peer while this run is in this thread and nowhere else. The actor membership
+ * join prevents a thread id from becoming a way to borrow somebody else's group.
+ */
+const groupPeersFor = async ({
+  actorId,
+  threadId,
+  botId,
+}: {
+  actorId: string;
+  threadId?: string;
+  botId: string;
+}): Promise<string[]> => {
+  if (!threadId) return [];
+
+  const rows = await database
+    .select({ agentId: channelAgents.agentId })
+    .from(intelligenceChannelMappings)
+    .innerJoin(
+      channelMemberships,
+      and(
+        eq(
+          channelMemberships.channelId,
+          intelligenceChannelMappings.channelId,
+        ),
+        eq(channelMemberships.userId, actorId),
+      ),
+    )
+    .innerJoin(
+      channels,
+      and(
+        eq(channels.id, intelligenceChannelMappings.channelId),
+        isNull(channels.deletedAt),
+      ),
+    )
+    .innerJoin(
+      channelAgents,
+      eq(channelAgents.channelId, intelligenceChannelMappings.channelId),
+    )
+    .where(eq(intelligenceChannelMappings.threadId, threadId));
+
+  const ids = rows.map((row) => row.agentId);
+  // The run must itself belong to this group. Without this guard a stale/mismatched run assertion
+  // carrying a valid thread could borrow that channel's peer list.
+  if (!ids.includes(botId)) return [];
+  return ids.filter((agentId) => agentId !== botId);
+};
+
+/**
  * Where a Bot handing work to another gets decided.
  *
  * The queue is the one #216 shipped, shared with the idle-computer culler and with routines: durable
@@ -423,16 +474,24 @@ useRoutineTools(routineStore);
 const handoffDesk = createHandoffDesk({
   queue: createWorkQueue(database),
   profiles: agentProfileStore,
-  // Read per hop and never held, so revoking a grant applies to the next hop rather than after a
-  // restart.
-  mayAddress: async (fromBotId, toBotId) =>
-    (
-      await pluginStore
-        .botsReachableFrom(fromBotId)
-        // A grant that cannot be read is not a grant. Failing closed here costs a hop; failing open
-        // would let a Bot address one nobody gave it because the database blinked.
-        .catch(() => [] as string[])
-    ).includes(toBotId),
+  // Durable grants and same-group peers are the two ways one Bot may address another.
+  // Both are read per hop so a revoked grant or a changed channel applies immediately.
+  mayAddress: async (fromBotId, toBotId, context) => {
+    const granted = await pluginStore
+      .botsReachableFrom(fromBotId)
+      // A grant that cannot be read is not a grant. Failing closed here costs a hop; failing open
+      // would let a Bot address one nobody gave it because the database blinked.
+      .catch(() => [] as string[]);
+    if (granted.includes(toBotId)) return true;
+
+    return (
+      await groupPeersFor({
+        actorId: context.actorId,
+        threadId: context.threadId,
+        botId: fromBotId,
+      }).catch(() => [])
+    ).includes(toBotId);
+  },
   /*
    * Deferred rather than passed directly, because `actorFor` is defined further down with the rest
    * of the run-building collaborators. It is only ever called during a hop, long after this module
