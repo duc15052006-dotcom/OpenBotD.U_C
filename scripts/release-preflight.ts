@@ -399,6 +399,18 @@ function checkReleaseWiring(): void {
       fail(`release: existing version-tag identity gate is missing ${evidence}`);
     }
   }
+  for (const evidence of [
+    'releases/tags/$VERSION',
+    "draft or prerelease record",
+    "unexpected existing assets",
+    '"container-images.json"',
+    '"build-version.json"',
+    '"signatures.json"',
+  ]) {
+    if (!publishRun.includes(evidence)) {
+      fail(`release: existing GitHub Release state gate is missing ${evidence}`);
+    }
+  }
 
   const identity = stepNamed(
     releaseJob,
