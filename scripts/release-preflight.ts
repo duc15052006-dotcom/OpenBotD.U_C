@@ -157,10 +157,10 @@ function checkComputerSandboxBoundary(): void {
   const stack = read("desktop/src-tauri/src/stack.rs");
 
   for (const evidence of [
-    "COMPUTER_MEMORY_BYTES: ${COMPUTER_MEMORY_BYTES:-2147483648}",
-    "COMPUTER_NANO_CPUS: ${COMPUTER_NANO_CPUS:-2000000000}",
-    "COMPUTER_MAX_ACTIVE: ${COMPUTER_MAX_ACTIVE:-3}",
-    "COMPUTER_WORKSPACE_MAX_BYTES: ${COMPUTER_WORKSPACE_MAX_BYTES:-4294967296}",
+    `COMPUTER_MEMORY_BYTES: \${COMPUTER_MEMORY_BYTES:-2147483648}`,
+    `COMPUTER_NANO_CPUS: \${COMPUTER_NANO_CPUS:-2000000000}`,
+    `COMPUTER_MAX_ACTIVE: \${COMPUTER_MAX_ACTIVE:-3}`,
+    `COMPUTER_WORKSPACE_MAX_BYTES: \${COMPUTER_WORKSPACE_MAX_BYTES:-4294967296}`,
   ]) {
     if (!compose.includes(evidence)) {
       fail(`computer: Windows-first resource ceiling is missing ${evidence}`);
@@ -173,9 +173,9 @@ function checkComputerSandboxBoundary(): void {
     "Memory: options.memoryBytes",
     "NanoCpus: options.nanoCpus",
     "PidsLimit: options.pidsLimit ?? 512",
-    "${names.profileVolume}:/profiles",
-    "${names.workspaceVolume}:/workspace",
-    "${names.quarantineVolume}:/quarantine",
+    `\${names.profileVolume}:/profiles`,
+    `\${names.workspaceVolume}:/workspace`,
+    `\${names.quarantineVolume}:/quarantine`,
   ]) {
     if (!supervisor.includes(evidence)) {
       fail(`computer: per-Agent confinement is missing ${evidence}`);
@@ -193,9 +193,9 @@ function checkComputerSandboxBoundary(): void {
   }
 
   for (const evidence of [
-    "profileVolume: `${NAMESPACE}-profile-${botId}`",
-    "workspaceVolume: `${NAMESPACE}-workspace-${botId}`",
-    "quarantineVolume: `${NAMESPACE}-quarantine-${botId}`",
+    `profileVolume: \`\${NAMESPACE}-profile-\${botId}\``,
+    `workspaceVolume: \`\${NAMESPACE}-workspace-\${botId}\``,
+    `quarantineVolume: \`\${NAMESPACE}-quarantine-\${botId}\``,
   ]) {
     if (!names.includes(evidence)) {
       fail(`computer: per-Agent storage naming is missing ${evidence}`);

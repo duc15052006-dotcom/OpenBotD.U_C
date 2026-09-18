@@ -12,7 +12,7 @@ import { isPlainBotId } from "./bot-id";
  */
 export function safeDownloadName(input: string): string {
   const leaf = basename(input.replaceAll("\\", "/"))
-    .replace(/[<>:"/\\|?*\u0000-\u001f\u007f]/g, "_")
+    .replace(/[<>:"/\\|?*\p{Cc}]/gu, "_")
     .trim()
     .slice(0, 160);
   return !leaf || leaf === "." || leaf === ".." ? "download" : leaf;
