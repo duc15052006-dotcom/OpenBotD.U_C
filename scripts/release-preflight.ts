@@ -538,10 +538,16 @@ function checkProviderConnectionTest(): void {
     '"Test connection"',
     '"test_model_connection"',
     "connectionFingerprint",
+    "requireConnectionTest",
   ]) {
     if (!picker.includes(evidence)) {
       fail(`desktop: provider setup no longer exposes ${evidence}`);
     }
+  }
+
+  const app = read("desktop/src/App.tsx");
+  if (!app.includes("requireConnectionTest")) {
+    fail("desktop: first-run model setup no longer requires a successful connection proof");
   }
 
   for (const evidence of [
