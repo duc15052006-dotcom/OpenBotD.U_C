@@ -77,6 +77,10 @@ function fakeStore(
       calls.push(["get", receivedActor, id]);
       return channel({ id });
     },
+    async list(receivedActor, query) {
+      calls.push(["list", receivedActor, query]);
+      return { channels: [], nextCursor: null };
+    },
     async setPinned(receivedActor, id, pinned) {
       calls.push(["setPinned", receivedActor, id, pinned]);
     },
@@ -85,6 +89,19 @@ function fakeStore(
     },
     async softDelete(receivedActor, id) {
       calls.push(["softDelete", receivedActor, id]);
+    },
+    async recordActivity(receivedActor, id, activity) {
+      calls.push(["recordActivity", receivedActor, id, activity]);
+    },
+    async signalBusy(threadId, busy) {
+      calls.push(["signalBusy", threadId, busy]);
+    },
+    async signalChannelBusy(receivedActor, id, busy) {
+      calls.push(["signalChannelBusy", receivedActor, id, busy]);
+    },
+    async listDelegations(receivedActor, id) {
+      calls.push(["listDelegations", receivedActor, id]);
+      return [];
     },
   };
 
@@ -215,6 +232,53 @@ describe("channel list limit", () => {
 });
 
 describe("channel routes", () => {
+  test("returns delegation status only through the authenticated channel store", async () => {
+    const store = fakeStore({
+      async listDelegations(receivedActor, id) {
+        store.calls.push(["listDelegations", receivedActor, id]);
+        return [
+          {
+            key: "hop:one",
+            fromBotId: "agent-1",
+            toBotId: "agent-2",
+            task: "Check the figures",
+            state: "working",
+            attempts: 1,
+            lastError: null,
+            createdAt: new Date("2026-09-18T02:00:00.000Z"),
+            updatedAt: new Date("2026-09-18T02:01:00.000Z"),
+          },
+        ];
+      },
+    });
+
+    const response = await appFor(store).request(
+      "http://openbot.test/channel-1/delegations",
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      delegations: [
+        {
+          key: "hop:one",
+          fromBotId: "agent-1",
+          toBotId: "agent-2",
+          task: "Check the figures",
+          state: "working",
+          attempts: 1,
+          lastError: null,
+          createdAt: "2026-09-18T02:00:00.000Z",
+          updatedAt: "2026-09-18T02:01:00.000Z",
+        },
+      ],
+    });
+    expect(store.calls).toContainEqual([
+      "listDelegations",
+      actor,
+      "channel-1",
+    ]);
+  });
+
   test("attaches authentication middleware to every route before calling the store", async () => {
     const store = fakeStore();
     const denied: MiddlewareHandler<{ Variables: AppVariables }> = (context) =>
