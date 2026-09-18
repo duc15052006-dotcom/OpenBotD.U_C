@@ -1,7 +1,7 @@
 /**
  * What a Bot id is allowed to be, and what it becomes.
  *
- * This is a security boundary. Every id that arrives here is turned into a container name, two volume
+ * This is a security boundary. Every id that arrives here is turned into a container name, three volume
  * names and a label filter. The supervisor only accepts plain Bot identifiers, so callers cannot
  * name an existing container, database volume, API server resource, or host tool through this API.
  *
@@ -49,6 +49,7 @@ export type ComputerNames = {
   container: string;
   profileVolume: string;
   workspaceVolume: string;
+  quarantineVolume: string;
 };
 
 export type NameResult =
@@ -89,6 +90,7 @@ export function namesFor(botId: unknown): NameResult {
       container: `${NAMESPACE}-computer-${botId}`,
       profileVolume: `${NAMESPACE}-profile-${botId}`,
       workspaceVolume: `${NAMESPACE}-workspace-${botId}`,
+      quarantineVolume: `${NAMESPACE}-quarantine-${botId}`,
     },
   };
 }
