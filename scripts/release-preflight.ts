@@ -432,6 +432,33 @@ function checkReleaseWiring(): void {
       "release: container publishing is still hard-coded to the upstream GHCR namespace",
     );
   }
+
+  for (const evidence of [
+    "const candidates = pulls.filter((candidate) =>",
+    "candidates.length !== 1",
+    'core.setOutput("trusted", "true")',
+    "GitHub's commit -> associated PR relation survives merge, squash and rebase",
+  ]) {
+    if (!releaseSource.includes(evidence)) {
+      fail(`release: merge-method-independent classifier is missing ${evidence}`);
+    }
+  }
+  if (releaseSource.includes("candidate.merge_commit_sha === context.sha")) {
+    fail(
+      "release: classifier regressed to merge_commit_sha and can miss squash/rebase merges",
+    );
+  }
+
+  const releasePrSource = read(".github/workflows/release.yml");
+  for (const evidence of [
+    'git rev-parse --verify "refs/tags/v$current"',
+    'git merge-base --is-ancestor "refs/tags/v$current" HEAD',
+    "is not an ancestor of HEAD",
+  ]) {
+    if (!releasePrSource.includes(evidence)) {
+      fail(`release: current-version ancestry gate is missing ${evidence}`);
+    }
+  }
   const releaseDocs = read("docs/releasing.md");
   if (releaseDocs.includes("ghcr.io/copilotkit/")) {
     fail(
