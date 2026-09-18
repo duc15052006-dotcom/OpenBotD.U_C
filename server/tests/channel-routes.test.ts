@@ -162,7 +162,7 @@ describe("channel input parser", () => {
     expect(parseChannelInput({ agentIds })).toEqual({ ok: false, error });
   });
 
-  test("trims, sorts, and whitelists channel input", () => {
+  test("trims, preserves coordinator order, and whitelists channel input", () => {
     expect(
       parseChannelInput({
         agentIds: [" agent-2 ", "agent-1"],
@@ -171,7 +171,7 @@ describe("channel input parser", () => {
         threadId: "forged-thread",
         active: false,
       }),
-    ).toEqual({ ok: true, value: { agentIds: ["agent-1", "agent-2"] } });
+    ).toEqual({ ok: true, value: { agentIds: ["agent-2", "agent-1"] } });
   });
 });
 
