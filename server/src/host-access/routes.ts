@@ -37,7 +37,6 @@ function dangerousExportName(name: string): boolean {
   );
 }
 
-
 async function audit(
   auditStore: AuditStore | undefined,
   input: {
@@ -224,11 +223,7 @@ export function createHostAccessRoutes(options: {
     } | null;
     const botId = typeof body?.botId === "string" ? body.botId.trim() : "";
     const id = typeof body?.id === "string" ? body.id.trim() : "";
-    if (
-      !botId ||
-      !id ||
-      body?.confirm !== "EXPORT_QUARANTINED_FILE"
-    ) {
+    if (!botId || !id || body?.confirm !== "EXPORT_QUARANTINED_FILE") {
       return context.json(
         {
           error:
@@ -244,7 +239,10 @@ export function createHostAccessRoutes(options: {
     }
     const gateway = options.computerGateway;
     if (!gateway) {
-      return context.json({ error: "Quarantine export is not configured." }, 503);
+      return context.json(
+        { error: "Quarantine export is not configured." },
+        503,
+      );
     }
     if (!broker.statusFor(actor.id).connected) {
       return context.json(
@@ -295,8 +293,7 @@ export function createHostAccessRoutes(options: {
         id,
       );
       await audit(auditStore, {
-        actorUserId:
-          actor.email === "dev@openbot.local" ? undefined : actor.id,
+        actorUserId: actor.email === "dev@openbot.local" ? undefined : actor.id,
         targetId: id,
         change: "quarantine_exported",
         botId,
