@@ -351,6 +351,27 @@ export function createSandboxComputerProvider(
       }
     },
 
+    async start(botId: string): Promise<{ wasRunning: boolean }> {
+      const before = await read(botId);
+      const wasRunning = Boolean(before && !isSuspended(before) && isReady(before));
+      await this.locate(botId);
+      return { wasRunning };
+    },
+
+    async restart(botId: string): Promise<{ wasRunning: boolean }> {
+      const before = await read(botId);
+      const wasRunning = Boolean(before && !isSuspended(before) && isReady(before));
+      if (before && !isSuspended(before)) {
+        await call(`/${sandboxNameFor(botId)}`, {
+          method: "PATCH",
+          contentType: "application/merge-patch+json",
+          body: JSON.stringify({ spec: { operatingMode: "Suspended" } }),
+        });
+      }
+      await this.locate(botId);
+      return { wasRunning };
+    },
+
     async stop(botId: string): Promise<{ wasRunning: boolean }> {
       const sandbox = await read(botId);
       if (!sandbox || isSuspended(sandbox)) return { wasRunning: false };
