@@ -26,6 +26,7 @@ import {
   type ChannelStore,
   createChannelRoutes,
   createChannelStore,
+  MAX_CHANNEL_AGENTS,
   parseChannelInput,
 } from "../src/channels/routes";
 import { createThreadIdentity } from "../src/channels/thread-identity";
@@ -145,7 +146,18 @@ describe("channel input parser", () => {
     expect(parseChannelInput({ agentIds })).toEqual({ ok: false, error });
   });
 
-  test("trims, sorts, and whitelists channel input", () => {
+  test("rejects a group larger than the server cap", () => {
+    const agentIds = Array.from(
+      { length: MAX_CHANNEL_AGENTS + 1 },
+      (_, index) => `agent-${index}`,
+    );
+    expect(parseChannelInput({ agentIds })).toEqual({
+      ok: false,
+      error: `A channel can contain at most ${MAX_CHANNEL_AGENTS} agents.`,
+    });
+  });
+
+    test("trims, sorts, and whitelists channel input", () => {
     expect(
       parseChannelInput({
         agentIds: [" agent-2 ", "agent-1"],
