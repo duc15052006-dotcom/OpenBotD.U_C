@@ -129,7 +129,7 @@ fn validated_reference(manifest: &Images, published: &str) -> Result<String, Str
     let canonical = digest.len() == 64
         && digest
             .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase());
     if !canonical {
         return Err(format!(
             "{IMAGES} for {} gives {published} a non-canonical sha256 digest.",
