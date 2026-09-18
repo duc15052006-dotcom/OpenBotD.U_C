@@ -1,7 +1,7 @@
 //! Owner approval is collected by native dialogs, never by an app/tool-provided answer.
 use openbot_desktop_lib::host_access::{
     ApprovedFolder, ChooseFolderPrompt, CommandPrompt, HostAccessError, HostAccessResult,
-    HostApprovalUi, WritePrompt,
+    HostApprovalUi, QuarantineExportPrompt, WritePrompt,
 };
 use tauri::Manager;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
@@ -86,6 +86,50 @@ impl<R: tauri::Runtime> HostApprovalUi for NativeApproval<R> {
             request.actor_id, root.display()
         ))?;
         Ok(ApprovedFolder { root })
+    }
+
+    fn choose_quarantine_export(
+        &self,
+        request: &QuarantineExportPrompt,
+    ) -> HostAccessResult<std::path::PathBuf> {
+        let window = self
+            .0
+            .get_webview_window("main")
+            .ok_or_else(|| refused("The local OpenBot window is closed."))?;
+        window.show().map_err(|error| refused(error.to_string()))?;
+        window
+            .set_focus()
+            .map_err(|error| refused(error.to_string()))?;
+
+        let warning = if request.dangerous {
+            "\n\nWARNING: this filename looks executable or script-like. OpenBot will save it only; it will not run or open it."
+        } else {
+            "\n\nOpenBot will save this file only; it will not open or run it."
+        };
+        self.confirm(
+            "Export quarantined download?",
+            format!(
+                "Bot: {}\nFile: {}\nSize: {} bytes\nSHA-256: {}{}\n\nThe file passed malware scanning and was explicitly approved in OpenBot. Choose the destination yourself. Exporting does not make the file trusted.",
+                request.bot_id,
+                request.suggested_name,
+                request.size_bytes,
+                request.sha256,
+                warning
+            ),
+        )?;
+
+        let picked = self
+            .0
+            .dialog()
+            .file()
+            .set_title("Save approved quarantined download")
+            .set_file_name(&request.suggested_name)
+            .set_parent(&window)
+            .blocking_save_file()
+            .ok_or_else(|| refused("No export destination was selected."))?;
+        picked
+            .into_path()
+            .map_err(|error| refused(error.to_string()))
     }
 
     fn confirm_write(&self, request: &WritePrompt) -> HostAccessResult<()> {
