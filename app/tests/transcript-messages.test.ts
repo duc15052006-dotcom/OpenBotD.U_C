@@ -4,6 +4,7 @@ import {
   seedMessage,
   stashFirstMessage,
   takeFirstMessage,
+  takeFirstMessageSeed,
   transcriptMessages,
 } from "../src/components/channels/transcript-messages";
 
@@ -60,7 +61,15 @@ describe("the first-message stash", () => {
     expect(takeFirstMessage("channel_a")).toBe("hello");
   });
 
-  test("gives it up only once", () => {
+  test("carries the chosen first responder for a group channel", () => {
+    stashFirstMessage("channel_group", "hello team", "risk-analyst");
+    expect(takeFirstMessageSeed("channel_group")).toEqual({
+      text: "hello team",
+      targetAgentId: "risk-analyst",
+    });
+  });
+
+    test("gives it up only once", () => {
     // Take-once prevents remounts from resending the first message.
     stashFirstMessage("channel_b", "hello");
     takeFirstMessage("channel_b");
