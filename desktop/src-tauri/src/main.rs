@@ -2206,6 +2206,31 @@ fn selected_root(app: tauri::AppHandle) -> Option<String> {
         .map(|root| root.to_string_lossy().into_owned())
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopBuildIdentity {
+    version: &'static str,
+    source_revision: Option<&'static str>,
+    release_repository: &'static str,
+}
+
+fn valid_source_revision(value: Option<&'static str>) -> Option<&'static str> {
+    value.filter(|sha| sha.len() == 40 && sha.bytes().all(|byte| byte.is_ascii_hexdigit()))
+}
+
+/// Public support identity for this executable: never deployment configuration or credentials.
+///
+/// Hosted/release builds stamp the exact source SHA and repository into the binary. Local builds
+/// still report their package version and simply omit a source revision.
+#[tauri::command]
+fn desktop_build_identity() -> Result<DesktopBuildIdentity, String> {
+    Ok(DesktopBuildIdentity {
+        version: env!("CARGO_PKG_VERSION"),
+        source_revision: valid_source_revision(option_env!("OPENBOT_SOURCE_SHA")),
+        release_repository: update::release_repository()?,
+    })
+}
+
 /**
 Put the wizard's last question to the Bot, and hand back what it said.
 
@@ -3024,6 +3049,7 @@ fn main() {
             last_failure,
             default_root,
             selected_root,
+            desktop_build_identity,
             harnesses,
             providers,
             already_configured,
