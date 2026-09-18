@@ -1,5 +1,6 @@
 import type { Context, MiddlewareHandler } from "hono";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import type { AppVariables } from "../auth/guards";
 import {
   MAX_AGENT_KNOWLEDGE_FILE_BYTES,
@@ -17,6 +18,24 @@ export function createAgentKnowledgeRoutes(
   requireUser: MiddlewareHandler<{ Variables: AppVariables }>,
 ) {
   const routes = new Hono<{ Variables: AppVariables }>();
+
+  /*
+   * A 64 KiB file grows to about 86 KiB as base64 before JSON framing. Refuse an oversized body
+   * before JSON parsing can buffer it. The parser below still owns the exact decoded-byte limit.
+   */
+  routes.use(
+    "/:agentId/knowledge",
+    bodyLimit({
+      maxSize: 96 * 1024,
+      onError: (context) =>
+        context.json(
+          {
+            error: `Knowledge files are limited to ${MAX_AGENT_KNOWLEDGE_FILE_BYTES} bytes.`,
+          },
+          413,
+        ),
+    }),
+  );
 
   const mapError = (
     context: Context<{ Variables: AppVariables }>,
@@ -63,9 +82,6 @@ export function createAgentKnowledgeRoutes(
       await context.req.json().catch(() => null),
     );
     if (!parsed.ok) return context.json({ error: parsed.error }, 400);
-    if (parsed.value.bytes.length > MAX_AGENT_KNOWLEDGE_FILE_BYTES) {
-      return context.json({ error: "Knowledge file is too large." }, 400);
-    }
 
     try {
       return context.json({
