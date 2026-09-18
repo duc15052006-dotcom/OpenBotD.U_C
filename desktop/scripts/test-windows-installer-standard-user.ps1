@@ -124,8 +124,8 @@ exit $exitCode
     Set-Content -LiteralPath $wrapperPath -Value $wrapper -Encoding UTF8
     $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $credential = New-Object Management.Automation.PSCredential("$env:COMPUTERNAME\$userName", $securePassword)
-    $args = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$wrapperPath`" -ExpectedSid $($userSid.Value) -Installer `"$copiedInstaller`" -InstallDir `"$installRoot`""
-    $process = Start-Process -FilePath $powershell -Credential $credential -LoadUserProfile -WorkingDirectory $workRoot -WindowStyle Hidden -PassThru -ArgumentList $args
+    $argumentLine = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$wrapperPath`" -ExpectedSid $($userSid.Value) -Installer `"$copiedInstaller`" -InstallDir `"$installRoot`""
+    $process = Start-Process -FilePath $powershell -Credential $credential -LoadUserProfile -WorkingDirectory $workRoot -WindowStyle Hidden -PassThru -ArgumentList $argumentLine
 
     $password = $null
     $securePassword.Dispose()
