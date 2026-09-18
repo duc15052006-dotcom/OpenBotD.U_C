@@ -187,8 +187,49 @@ exit $exitCode
         }
     }
     if ($userCreated) {
-        try { Get-CimInstance Win32_UserProfile -Filter "SID='$($userSid.Value)'" | Remove-CimInstance } catch { $cleanupErrors += $_.Exception.Message }
-        try { Remove-LocalUser -SID $userSid } catch { $cleanupErrors += $_.Exception.Message }
+        # A credentialed PowerShell can have exited while Windows is still unloading that user's
+        # profile hive. Removing Win32_UserProfile in that window fails with ERROR_SHARING_VIOLATION
+        # even though install/launch/uninstall already succeeded. Retry the unload/removal boundary
+        # rather than weakening the acceptance result or ignoring a profile that really stayed live.
+        $profileRemoved = $false
+        for ($attempt = 0; $attempt -lt 30 -and -not $profileRemoved; $attempt++) {
+            try {
+                $profile = Get-CimInstance Win32_UserProfile -Filter "SID='$($userSid.Value)'" -ErrorAction Stop
+                if ($null -eq $profile) {
+                    $profileRemoved = $true
+                    break
+                }
+                if ($profile.Loaded) {
+                    if ($attempt -lt 29) { Start-Sleep -Milliseconds 500 }
+                    continue
+                }
+                $profile | Remove-CimInstance -ErrorAction Stop
+                $profileRemoved = $true
+            } catch {
+                if ($attempt -eq 29) {
+                    $cleanupErrors += $_.Exception.Message
+                } else {
+                    Start-Sleep -Milliseconds 500
+                }
+            }
+        }
+        if (-not $profileRemoved) {
+            $cleanupErrors += 'The temporary standard-user profile stayed loaded after the acceptance process exited.'
+        }
+
+        $userRemoved = $false
+        for ($attempt = 0; $attempt -lt 10 -and -not $userRemoved; $attempt++) {
+            try {
+                Remove-LocalUser -SID $userSid -ErrorAction Stop
+                $userRemoved = $true
+            } catch {
+                if ($attempt -eq 9) {
+                    $cleanupErrors += $_.Exception.Message
+                } else {
+                    Start-Sleep -Milliseconds 500
+                }
+            }
+        }
     }
     if ($directoryCreated) {
         for ($attempt = 0; $attempt -lt 30 -and (Test-Path -LiteralPath $workRoot); $attempt++) {
