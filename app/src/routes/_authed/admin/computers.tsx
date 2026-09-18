@@ -56,6 +56,12 @@ function ComputersPage() {
   const [filesFor, setFilesFor] = useState<string | null>(null);
   /** Computer whose browser is being watched or driven by the administrator. */
   const [screenFor, setScreenFor] = useState<string | null>(null);
+  /** A start that needs one last resource-pressure confirmation. */
+  const [confirmingStart, setConfirmingStart] = useState<{
+    botId: string;
+    after: "start" | "screen";
+    warning: string;
+  } | null>(null);
   const queryClient = useQueryClient();
   const nameFor = useBotNames();
 
@@ -76,6 +82,7 @@ function ComputersPage() {
 
   const computers = fleet.data?.computers ?? null;
   const isolation = fleet.data?.isolation ?? null;
+  const capacity = fleet.data?.capacity;
   /*
    * One line for either failure. A list that could not be read and an action that was refused are
    * both "this did not work", and the page has one place to say so.
@@ -118,6 +125,19 @@ function ComputersPage() {
     }
   };
 
+  const startOrWarn = (botId: string, after: "start" | "screen") => {
+    const warning = computerStartWarning(fleet.data);
+    if (warning) {
+      setConfirmingStart({ botId, after, warning });
+      return;
+    }
+    if (after === "screen") {
+      void showScreen(botId, false);
+    } else {
+      void run(botId, "start");
+    }
+  };
+
   return (
     <PageShell
       description="Each Bot's browser and the profile it keeps. A profile is what makes a Bot still signed in tomorrow, and resetting one signs it out of everything."
@@ -145,6 +165,20 @@ function ComputersPage() {
         <p className="mt-4 rounded-md border border-border bg-muted/40 px-3 py-2 text-muted-foreground text-sm">
           Each Bot has a computer of its own: its own container, its own files
           and its own browser profile.
+        </p>
+      ) : null}
+
+      {capacity ? (
+        <p className="mt-4 rounded-md border border-border bg-muted/40 px-3 py-2 text-muted-foreground text-sm">
+          Scheduler capacity:{" "}
+          <strong>{capacity.logicalCpus ?? "?"} logical CPUs</strong> ·{" "}
+          <strong>
+            {capacity.memoryBytes ? formatBytes(capacity.memoryBytes) : "RAM unknown"}
+          </strong>
+          {capacity.maxActiveComputers
+            ? ` · up to ${capacity.maxActiveComputers} active Computers`
+            : ""}
+          .
         </p>
       ) : null}
 
@@ -255,7 +289,7 @@ function ComputersPage() {
                     ) : (
                       <Button
                         disabled={busy === computer.botId}
-                        onClick={() => void run(computer.botId, "start")}
+                        onClick={() => startOrWarn(computer.botId, "start")}
                         size="sm"
                         variant="outline"
                       >
@@ -265,7 +299,9 @@ function ComputersPage() {
                     <Button
                       disabled={busy === computer.botId}
                       onClick={() =>
-                        void showScreen(computer.botId, computer.running)
+                        computer.running
+                          ? void showScreen(computer.botId, true)
+                          : startOrWarn(computer.botId, "screen")
                       }
                       size="sm"
                       variant="outline"
@@ -314,6 +350,50 @@ function ComputersPage() {
           open
         />
       ) : null}
+
+      <Dialog
+        onOpenChange={(open) => {
+          if (!open) setConfirmingStart(null);
+        }}
+        open={confirmingStart !== null}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              Start {confirmingStart ? nameFor(confirmingStart.botId) : ""}'s
+              Computer?
+            </DialogTitle>
+            <DialogDescription>
+              {confirmingStart?.warning} Existing Computers are not stopped
+              automatically.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              onClick={() => setConfirmingStart(null)}
+              size="sm"
+              variant="ghost"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (!confirmingStart) return;
+                const request = confirmingStart;
+                setConfirmingStart(null);
+                if (request.after === "screen") {
+                  void showScreen(request.botId, false);
+                } else {
+                  void run(request.botId, "start");
+                }
+              }}
+              size="sm"
+            >
+              Start anyway
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/*
        * A DIALOG RATHER THAN AN INLINE CONFIRM. Resetting signs a Bot out of everything it has ever
@@ -628,4 +708,59 @@ function pendingLabel(request: HostAccessPendingOperation) {
     default:
       return "Folder access awaiting approval";
   }
+}
+
+
+function computerStartWarning(
+  fleet:
+    | {
+        computers: Array<{
+          running: boolean;
+          metrics?: {
+            memoryLimitBytes: number | null;
+          };
+        }>;
+        capacity?: {
+          memoryBytes: number | null;
+          logicalCpus: number | null;
+          maxActiveComputers: number | null;
+          defaultComputerMemoryBytes: number | null;
+          defaultComputerNanoCpus: number | null;
+        };
+      }
+    | undefined,
+): string | null {
+  const capacity = fleet?.capacity;
+  if (!fleet || !capacity) return null;
+
+  const running = fleet.computers.filter((computer) => computer.running);
+  if (
+    capacity.maxActiveComputers &&
+    running.length + 1 >= capacity.maxActiveComputers
+  ) {
+    return `This will use ${running.length + 1} of ${capacity.maxActiveComputers} active Computer slots.`;
+  }
+
+  const nextMemory = capacity.defaultComputerMemoryBytes ?? 0;
+  if (capacity.memoryBytes && nextMemory > 0) {
+    const reserved = running.reduce(
+      (total, computer) =>
+        total + (computer.metrics?.memoryLimitBytes ?? nextMemory),
+      0,
+    );
+    const projected = reserved + nextMemory;
+    if (projected >= capacity.memoryBytes * 0.8) {
+      return `Computer memory quotas would reach about ${Math.round((projected / capacity.memoryBytes) * 100)}% of the container engine's available RAM.`;
+    }
+  }
+
+  const nextCpu = (capacity.defaultComputerNanoCpus ?? 0) / 1_000_000_000;
+  if (capacity.logicalCpus && nextCpu > 0) {
+    const projectedCpu = (running.length + 1) * nextCpu;
+    if (projectedCpu >= capacity.logicalCpus * 0.8) {
+      return `Computer CPU quotas would reach about ${Math.round((projectedCpu / capacity.logicalCpus) * 100)}% of the container engine's logical CPU capacity.`;
+    }
+  }
+
+  return null;
 }
