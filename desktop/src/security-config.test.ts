@@ -1,0 +1,69 @@
+import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+
+type Csp = Record<string, string | string[]>;
+
+type TauriConfig = {
+  app?: {
+    security?: {
+      csp?: Csp | string | null;
+      devCsp?: Csp | string | null;
+      dangerousDisableAssetCspModification?: boolean;
+    };
+  };
+};
+
+function config(): TauriConfig {
+  return JSON.parse(
+    readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"),
+  ) as TauriConfig;
+}
+
+function text(csp: Csp | string): string {
+  return typeof csp === "string"
+    ? csp
+    : Object.entries(csp)
+        .flatMap(([directive, sources]) => [
+          directive,
+          ...(Array.isArray(sources) ? sources : [sources]),
+        ])
+        .join(" ");
+}
+
+describe("desktop CSP", () => {
+  test("production enables CSP and keeps remote network access out of the setup webview", () => {
+    const security = config().app?.security;
+    expect(security?.csp).toBeTruthy();
+    expect(security?.csp).not.toBeNull();
+
+    const policy = text(security?.csp as Csp | string);
+    expect(policy).toContain("connect-src");
+    expect(policy).toContain("ipc:");
+    expect(policy).toContain("http://ipc.localhost");
+    expect(policy).toContain("object-src");
+    expect(policy).toContain("'none'");
+    expect(policy).not.toContain("*");
+    expect(policy).not.toContain("'unsafe-eval'");
+    expect(policy).not.toMatch(/https?:\/\/(?!ipc\.localhost)/);
+    expect(policy).not.toMatch(/wss?:\/\//);
+  });
+
+  test("development opens only Vite's local HMR endpoints in addition to IPC", () => {
+    const dev = config().app?.security?.devCsp;
+    expect(dev).toBeTruthy();
+
+    const policy = text(dev as Csp | string);
+    expect(policy).toContain("http://localhost:3020");
+    expect(policy).toContain("ws://localhost:3020");
+    expect(policy).not.toContain("*");
+    expect(policy).not.toContain("'unsafe-eval'");
+    expect(policy).not.toMatch(/https:\/\//);
+    expect(policy).not.toMatch(/wss:\/\//);
+  });
+
+  test("Tauri keeps asset CSP rewriting enabled", () => {
+    expect(
+      config().app?.security?.dangerousDisableAssetCspModification,
+    ).not.toBe(true);
+  });
+});
