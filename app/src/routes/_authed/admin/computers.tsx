@@ -181,7 +181,10 @@ function ComputersPage() {
           </p>
         </div>
         <Button
-          disabled={stopAll.isPending || !computers?.some((computer) => computer.running)}
+          disabled={
+            stopAll.isPending ||
+            !computers?.some((computer) => computer.running)
+          }
           onClick={() => stopAll.mutate()}
           size="sm"
           variant="destructive"
@@ -358,13 +361,13 @@ function ComputersPage() {
       </Dialog>
 
       <p className="mt-4 text-muted-foreground text-sm">
-        <strong>Start</strong> wakes a stopped computer,{" "}
-        <strong>Screen</strong> lets you watch it and take control for login or
-        intervention, <strong>Restart</strong> cycles it without deleting saved
-        state, and <strong>Stop</strong> releases runtime resources while
-        keeping its profile and workspace. <strong>Reset</strong> deletes its
-        profile, workspace and quarantine and starts clean. Lifecycle actions
-        are recorded in{" "}
+        <strong>Start</strong> wakes a stopped computer, <strong>Screen</strong>{" "}
+        lets you watch it and take control for login or intervention,{" "}
+        <strong>Restart</strong> cycles it without deleting saved state, and{" "}
+        <strong>Stop</strong> releases runtime resources while keeping its
+        profile and workspace. <strong>Reset</strong> deletes its profile,
+        workspace and quarantine and starts clean. Lifecycle actions are
+        recorded in{" "}
         <Link className="underline" to="/admin/audit">
           Audit
         </Link>
