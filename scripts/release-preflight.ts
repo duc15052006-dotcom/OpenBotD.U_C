@@ -147,6 +147,78 @@ function checkDesktopBoundary(): void {
   }
 }
 
+function checkComputerSandboxBoundary(): void {
+  const compose = read("docker-compose.yml");
+  const supervisor = read("supervisor/src/docker.ts");
+  const supervisorIndex = read("supervisor/src/index.ts");
+  const names = read("supervisor/src/names.ts");
+  const policy = read("server/src/computer/policy-store.ts");
+  const schema = read("server/src/computer/schema.ts");
+  const stack = read("desktop/src-tauri/src/stack.rs");
+
+  for (const evidence of [
+    "COMPUTER_MEMORY_BYTES: ${COMPUTER_MEMORY_BYTES:-2147483648}",
+    "COMPUTER_NANO_CPUS: ${COMPUTER_NANO_CPUS:-2000000000}",
+  ]) {
+    if (!compose.includes(evidence)) {
+      fail(`computer: Windows-first resource ceiling is missing ${evidence}`);
+    }
+  }
+
+  for (const evidence of [
+    'SecurityOpt: ["no-new-privileges:true"]',
+    'CapDrop: ["ALL"]',
+    "Memory: options.memoryBytes",
+    "NanoCpus: options.nanoCpus",
+    "PidsLimit: options.pidsLimit ?? 512",
+    "${names.profileVolume}:/profiles",
+    "${names.workspaceVolume}:/workspace",
+  ]) {
+    if (!supervisor.includes(evidence)) {
+      fail(`computer: per-Agent confinement is missing ${evidence}`);
+    }
+  }
+
+  for (const evidence of [
+    "computerMemoryBytes(process.env.COMPUTER_MEMORY_BYTES)",
+    "computerNanoCpus(process.env.COMPUTER_NANO_CPUS)",
+  ]) {
+    if (!supervisorIndex.includes(evidence)) {
+      fail(`computer: strict resource parsing is missing ${evidence}`);
+    }
+  }
+
+  for (const evidence of [
+    "profileVolume: `${NAMESPACE}-profile-${botId}`",
+    "workspaceVolume: `${NAMESPACE}-workspace-${botId}`",
+  ]) {
+    if (!names.includes(evidence)) {
+      fail(`computer: per-Agent storage naming is missing ${evidence}`);
+    }
+  }
+
+  if (!policy.includes(`deny: ['intent == "run_command"']`)) {
+    fail("computer: raw shell execution is not denied by default");
+  }
+  if (
+    !schema.includes('"computer_run_command"') ||
+    !schema.includes("COMPUTER_ACTING_TOOLS")
+  ) {
+    fail("computer: command execution is not pinned as a governed acting tool");
+  }
+
+  for (const evidence of [
+    "pub fn stop_computers(",
+    'const SUPERVISOR_FILTER: &str = "label=openbot.supervisor=true"',
+    "label=openbot.namespace=",
+    "if !stop_computers(engine, root)?",
+  ]) {
+    if (!stack.includes(evidence)) {
+      fail(`desktop: Quit/Stop no longer proves per-Agent Computer shutdown through ${evidence}`);
+    }
+  }
+}
+
 function checkReleaseWiring(): void {
   const releaseProposalSource = read(".github/workflows/release.yml");
   for (const evidence of [
@@ -738,6 +810,7 @@ function checkVersionSources(): void {
 }
 
 checkDesktopBoundary();
+checkComputerSandboxBoundary();
 checkReleaseWiring();
 checkDesktopUpdatePath();
 checkDesktopCredentialBoundary();
