@@ -289,42 +289,41 @@ export function createSandboxComputerProvider(
     }
   }
 
+  async function startOrResume(botId: string): Promise<string> {
+    const existing = await read(botId);
+    if (!existing) {
+      await call("", {
+        method: "POST",
+        contentType: "application/json",
+        body: JSON.stringify(desired(botId)),
+      });
+    } else if (isSuspended(existing)) {
+      /*
+       * Woken because somebody is explicitly starting it or is about to act through it. A merge
+       * patch leaves the controller-owned parts of the Sandbox alone.
+       */
+      await call(`/${sandboxNameFor(botId)}`, {
+        method: "PATCH",
+        contentType: "application/merge-patch+json",
+        body: JSON.stringify({ spec: { operatingMode: "Running" } }),
+      });
+    }
+
+    const ready = await waitForReady(botId);
+    const fqdn = ready.status?.serviceFQDN;
+    if (!fqdn) {
+      throw new SandboxError(
+        `The computer for ${botId} is ready but reported no address, so it cannot be reached.`,
+      );
+    }
+    return `http://${fqdn}:4100`;
+  }
+
   return {
     name: "sandbox",
     isolation: "per-bot",
 
-    async locate(botId: string): Promise<string> {
-      const existing = await read(botId);
-      if (!existing) {
-        await call("", {
-          method: "POST",
-          contentType: "application/json",
-          body: JSON.stringify(desired(botId)),
-        });
-      } else if (isSuspended(existing)) {
-        /*
-         * Woken, because somebody is asking for it.
-         *
-         * `locate` runs immediately before an action, so reaching a suspended computer here means a
-         * person is waiting. A merge patch rather than a replace: the controller owns most of this
-         * object and writing the whole thing back would fight it.
-         */
-        await call(`/${sandboxNameFor(botId)}`, {
-          method: "PATCH",
-          contentType: "application/merge-patch+json",
-          body: JSON.stringify({ spec: { operatingMode: "Running" } }),
-        });
-      }
-
-      const ready = await waitForReady(botId);
-      const fqdn = ready.status?.serviceFQDN;
-      if (!fqdn) {
-        throw new SandboxError(
-          `The computer for ${botId} is ready but reported no address, so it cannot be reached.`,
-        );
-      }
-      return `http://${fqdn}:4100`;
-    },
+    locate: startOrResume,
 
     async status(botId: string): Promise<ComputerStatus> {
       try {
@@ -354,7 +353,7 @@ export function createSandboxComputerProvider(
     async start(botId: string): Promise<{ wasRunning: boolean }> {
       const before = await read(botId);
       const wasRunning = Boolean(before && !isSuspended(before) && isReady(before));
-      await this.locate(botId);
+      await startOrResume(botId);
       return { wasRunning };
     },
 
@@ -368,7 +367,7 @@ export function createSandboxComputerProvider(
           body: JSON.stringify({ spec: { operatingMode: "Suspended" } }),
         });
       }
-      await this.locate(botId);
+      await startOrResume(botId);
       return { wasRunning };
     },
 
