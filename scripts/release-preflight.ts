@@ -272,6 +272,22 @@ function checkComputerSandboxBoundary(): void {
       fail(`computer: human live-screen control is missing ${evidence}`);
     }
   }
+
+  const computersPage = read("app/src/routes/_authed/admin/computers.tsx");
+  const computerRoutes = read("server/src/computer/routes.ts");
+  for (const evidence of [
+    "KILL ALL COMPUTERS",
+    "ComputerScreenDialog",
+    "Browser sleeping",
+    "Reset",
+  ]) {
+    if (!computersPage.includes(evidence)) {
+      fail(`computer: Computer Manager is missing ${evidence}`);
+    }
+  }
+  if (!computerRoutes.includes('routes.post("/stop-all"')) {
+    fail("computer: admin Kill All Computers route is missing");
+  }
 }
 
 function checkReleaseWiring(): void {
