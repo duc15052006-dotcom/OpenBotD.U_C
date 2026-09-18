@@ -258,8 +258,7 @@ export function createHostAccessRoutes(options: {
       const listed = await gateway.listQuarantine(botId);
       const record = listed.downloads.find((entry) => entry.id === id);
       if (
-        !record ||
-        record.status !== "approved" ||
+        record?.status !== "approved" ||
         record.scan?.status !== "clean" ||
         record.scannedSha256 !== record.sha256
       ) {
@@ -278,7 +277,7 @@ export function createHostAccessRoutes(options: {
         sizeBytes: record.sizeBytes,
         dangerous: dangerousExportName(suggestedName),
       });
-      if (!result || result.exported !== true) {
+      if (result?.exported !== true) {
         throw new HostAccessRefusedError(
           "The native desktop did not confirm a completed export.",
         );
