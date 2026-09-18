@@ -1017,7 +1017,10 @@ export function parseChannelInput(input: unknown): ChannelInputParseResult {
     return { ok: false, error: "Agent IDs must be unique." };
   }
 
-  return { ok: true, value: { agentIds: agentIds.sort() } };
+  // Preserve the person's ordering. The first Bot is the group coordinator; database locks are
+  // still taken in sorted id order inside makeChannel, so preserving presentation order does not
+  // reintroduce the deadlock that sorting there prevents.
+  return { ok: true, value: { agentIds } };
 }
 
 function isChannelInputObject(input: unknown): input is ChannelInputObject {
