@@ -51,6 +51,7 @@ import { EASE_OUT, ENTRANCE_SECONDS } from "@/lib/motion";
 import { readToolName } from "@/lib/plugins/tool-name";
 import { asText, forDisplay, REFUSAL_MARKER } from "@/lib/plugins/tool-result";
 import { cn } from "@/lib/utils";
+import { HANDED_OVER } from "../../../../shared/handoff-markers";
 import {
   attachmentModality,
   type SentAttachment,
@@ -1270,6 +1271,10 @@ const TranscriptToolCall = memo(function TranscriptToolCall({
  * behind a disclosure. The identifier the model was offered never reaches the screen.
  */
 function ServerToolLine({ name, result }: { name: string; result?: string }) {
+  if (name === "message_bot") {
+    return <HandoffToolLine result={result} />;
+  }
+
   const { label, detail } = readToolName(name);
   /*
    * A refusal is not a result, and must not read like one.
@@ -1299,6 +1304,41 @@ function ServerToolLine({ name, result }: { name: string; result?: string }) {
           {forDisplay(body)}
         </Streamdown>
       ) : null}
+    </ToolLine>
+  );
+}
+
+/**
+ * One Bot handing work to another, shown as a first-class delegation rather than a generic tool call.
+ *
+ * The server-side tool has a shared accepted-result prefix. Anything else returned by message_bot is
+ * a refusal sentence, so this can show "waiting" versus "blocked" without guessing from arbitrary
+ * provider text.
+ */
+function HandoffToolLine({ result }: { result?: string }) {
+  if (result === undefined) {
+    return <ToolLine label="Delegating" running />;
+  }
+
+  const answer = asText(result);
+  const accepted = answer.startsWith(HANDED_OVER);
+  if (!accepted) {
+    return (
+      <ToolLine label="Delegation blocked" refused running={false}>
+        <Streamdown components={markdownComponents}>
+          {forDisplay(answer)}
+        </Streamdown>
+      </ToolLine>
+    );
+  }
+
+  const remainder = answer.slice(HANDED_OVER.length).trim();
+  const target = remainder.split(".")[0]?.trim() || "coworker";
+  return (
+    <ToolLine label={`Delegated to ${target}`} running={false}>
+      <span className="text-muted-foreground">
+        Waiting for {target}&apos;s answer in this conversation.
+      </span>
     </ToolLine>
   );
 }
