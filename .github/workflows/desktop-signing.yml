@@ -171,14 +171,35 @@ jobs:
             throw 'The signed installer failed standard-user acceptance.'
           }
 
+      # Upload one flat directory because upload-artifact preserves path hierarchy below the
+      # least common ancestor of multiple input paths. The publish job downloads this artifact and
+      # intentionally expects build-version.json and the installer at its root.
+      - name: Stage verified release artifact
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $stage = 'desktop/release-artifact'
+          Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $stage | Out-Null
+
+          $installers = @(Get-ChildItem 'desktop/src-tauri/target/release/bundle/nsis' -Filter '*-setup.exe' -File)
+          if ($installers.Count -ne 1) {
+            throw "Expected exactly one signed NSIS installer to stage, found $($installers.Count)."
+          }
+
+          Copy-Item -LiteralPath 'desktop/signed-app/openbot-desktop.exe' -Destination $stage
+          Copy-Item -LiteralPath $installers[0].FullName -Destination $stage
+          Copy-Item -LiteralPath 'desktop/build-version.json' -Destination $stage
+
+          $staged = @(Get-ChildItem -LiteralPath $stage -File)
+          if ($staged.Count -ne 3) {
+            throw "Expected exactly three staged release files, found $($staged.Count)."
+          }
       - name: Retain verified binaries
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: openbot-windows-signed
-          path: |
-            desktop/signed-app/openbot-desktop.exe
-            desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
-            desktop/build-version.json
+          path: desktop/release-artifact/
           if-no-files-found: error
           retention-days: 14
       - name: Retain verification evidence
