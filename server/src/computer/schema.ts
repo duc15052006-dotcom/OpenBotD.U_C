@@ -377,6 +377,14 @@ export type ComputerStatus = {
   reason?: string;
 };
 
+/** Hard capacity currently enforced by the Computer provider. */
+export type ComputerCapacity = {
+  running: number;
+  maxActiveComputers: number | null;
+  memoryBytesPerComputer: number | null;
+  nanoCpusPerComputer: number | null;
+};
+
 /** Resource usage reported by a running computer container. */
 export type ComputerResourceMetrics = {
   capturedAt: string;
