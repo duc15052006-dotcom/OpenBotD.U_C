@@ -40,13 +40,20 @@ export function useStartChannel() {
   const navigate = useNavigate();
   const createChannel = useMutation(createChannelMutationOptions(queryClient));
 
-  const startGroup = async (agentIds: readonly string[], text: string) => {
+  const startGroup = async (
+    agentIds: readonly string[],
+    text: string,
+    targetAgentId: string | null = null,
+  ) => {
     if (agentIds.length === 0) {
       throw new Error("Choose at least one coworker.");
     }
+    if (targetAgentId !== null && !agentIds.includes(targetAgentId)) {
+      throw new Error("The first-message coworker must belong to the channel.");
+    }
     const channel = await createChannel.mutateAsync([...agentIds]);
     queryClient.setQueryData(channelKeys.detail(channel.id), channel);
-    stashFirstMessage(channel.id, text);
+    stashFirstMessage(channel.id, text, targetAgentId);
     await navigate({
       params: { channelId: channel.id },
       replace: true,
@@ -54,7 +61,8 @@ export function useStartChannel() {
     });
   };
 
-  const start = (agentId: string, text: string) => startGroup([agentId], text);
+  const start = (agentId: string, text: string) =>
+    startGroup([agentId], text, agentId);
 
   return {
     pending: createChannel.isPending,
