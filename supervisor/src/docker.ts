@@ -232,12 +232,12 @@ async function ensureOwnedVolume(
 async function removeOwnedVolume(
   volumeName: string,
   names: ComputerNames,
-): Promise<void> {
+): Promise<boolean> {
   let inspected: Docker.VolumeInspectInfo;
   try {
     inspected = await docker.getVolume(volumeName).inspect();
   } catch (error) {
-    if (statusOf(error) === 404) return;
+    if (statusOf(error) === 404) return false;
     throw new DockerUnavailableError(String(error));
   }
   if (!volumeOurs(inspected.Labels, names)) {
@@ -249,10 +249,10 @@ async function removeOwnedVolume(
   for (let attempt = 0; attempt < 20; attempt += 1) {
     try {
       await docker.getVolume(volumeName).remove();
-      return;
+      return true;
     } catch (error) {
       const status = statusOf(error);
-      if (status === 404) return;
+      if (status === 404) return true;
       if (status === 409 && attempt < 19) {
         await pause(100);
         continue;
@@ -714,8 +714,9 @@ export async function reset(names: ComputerNames): Promise<boolean> {
   let removedState = existing !== null;
   for (const volume of [names.profileVolume, names.workspaceVolume]) {
     try {
-      await removeOwnedVolume(volume, names);
-      removedState = true;
+      if (await removeOwnedVolume(volume, names)) {
+        removedState = true;
+      }
     } catch (error) {
       // A same-named foreign volume is evidence of a collision, never something Reset may erase.
       if (error instanceof VolumeHeldError) throw error;
