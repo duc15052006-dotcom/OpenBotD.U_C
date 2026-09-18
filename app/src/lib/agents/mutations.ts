@@ -8,6 +8,7 @@ import {
   type AgentModelSettings,
   type AgentProfile,
   type AgentVisibility,
+  type ComputerResourceProfile,
   agentApiPath,
   agentKeys,
 } from "./queries";
@@ -31,6 +32,7 @@ export type AgentInput = {
   title: string;
   roleDescription: string;
   visibility: AgentVisibility;
+  computerResourceProfile?: ComputerResourceProfile;
   /** Where this coworker runs. Empty means the Bot in the box. */
   endpoint?: string;
   /** Write-only auth value; omitted when the user leaves the key field empty. */
