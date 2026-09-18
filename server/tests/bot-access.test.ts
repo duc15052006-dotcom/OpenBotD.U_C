@@ -125,7 +125,11 @@ describe("the computer surface", () => {
     const { hono, reached } = app("someone-else", "admin");
     const response = await hono.request(
       "http://t/api/computers/sales/computers/reset",
-      { method: "POST" },
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ confirm: "RESET", botId: "sales" }),
+      },
     );
 
     expect(response.status).toBe(200);

@@ -201,9 +201,7 @@ test("Test connection checks the exact current API-key choice without saving it"
     "  sk-synthetic-connection-test  ",
   );
 
-  await userEvent.click(
-    view.getByRole("button", { name: "Test connection" }),
-  );
+  await userEvent.click(view.getByRole("button", { name: "Test connection" }));
 
   await waitFor(() =>
     expect(view.getByText(/OpenAI accepted this API key/)).toBeTruthy(),
@@ -228,15 +226,15 @@ test("changing provider fields makes the previous connection result stale", asyn
   await userEvent.click(view.getByRole("tab", { name: "Use an API key" }));
   const field = view.getByLabelText("OpenAI API key");
   await userEvent.type(field, "first-key");
-  await userEvent.click(
-    view.getByRole("button", { name: "Test connection" }),
-  );
+  await userEvent.click(view.getByRole("button", { name: "Test connection" }));
   await view.findByText(/OpenAI accepted this API key/);
 
   await userEvent.type(field, "-changed");
 
   expect(
-    view.getByText(/Connection settings changed\. Test the current connection again/),
+    view.getByText(
+      /Connection settings changed\. Test the current connection again/,
+    ),
   ).toBeTruthy();
 });
 

@@ -17,7 +17,10 @@ type TauriConfig = {
 
 function config(): TauriConfig {
   return JSON.parse(
-    readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"),
+    readFileSync(
+      new URL("../src-tauri/tauri.conf.json", import.meta.url),
+      "utf8",
+    ),
   ) as TauriConfig;
 }
 

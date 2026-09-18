@@ -17,7 +17,9 @@ const root = resolve(import.meta.dir, "..");
 const workflows = resolve(root, ".github/workflows");
 const failures: string[] = [];
 
-for (const name of readdirSync(workflows).filter((file) => /\.ya?ml$/.test(file))) {
+for (const name of readdirSync(workflows).filter((file) =>
+  /\.ya?ml$/.test(file),
+)) {
   const path = resolve(workflows, name);
   let parsed: Workflow;
   try {
@@ -87,7 +89,11 @@ for (const name of readdirSync(workflows).filter((file) => /\.ya?ml$/.test(file)
 
     // External reusable workflows are owner/repo/.github/workflows/file.yml@ref. They are not
     // filesystem references in this repository and are outside this check.
-    if (uses.includes("@") && !uses.startsWith("./") && !uses.startsWith("$/")) {
+    if (
+      uses.includes("@") &&
+      !uses.startsWith("./") &&
+      !uses.startsWith("$/")
+    ) {
       continue;
     }
 

@@ -295,11 +295,11 @@ function ComputersPage() {
       </Dialog>
 
       <p className="mt-4 text-muted-foreground text-sm">
-        <strong>Start</strong> wakes a stopped computer, <strong>Restart</strong>{" "}
-        cycles it without deleting its saved profile, and <strong>Stop</strong> closes
-        the browser while keeping its logins. <strong>Reset</strong> deletes the
-        profile, signs the Bot out of everything, and starts clean. Lifecycle actions
-        are recorded in{" "}
+        <strong>Start</strong> wakes a stopped computer,{" "}
+        <strong>Restart</strong> cycles it without deleting its saved profile,
+        and <strong>Stop</strong> closes the browser while keeping its logins.{" "}
+        <strong>Reset</strong> deletes the profile, signs the Bot out of
+        everything, and starts clean. Lifecycle actions are recorded in{" "}
         <Link className="underline" to="/admin/audit">
           Audit
         </Link>

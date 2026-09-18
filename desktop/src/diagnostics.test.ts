@@ -6,7 +6,8 @@ import {
 
 describe("desktop diagnostics", () => {
   test("collects only the allowlisted read-only setup status", async () => {
-    const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    const calls: Array<{ command: string; args?: Record<string, unknown> }> =
+      [];
     const call = async <T>(
       command: string,
       args?: Record<string, unknown>,
@@ -56,26 +57,26 @@ describe("desktop diagnostics", () => {
   });
 
   test("does not leak failure detail into the support summary", async () => {
-    const diagnostics = await collectDesktopDiagnostics(async <T>(
-      command: string,
-    ): Promise<T> => {
-      const values: Record<string, unknown> = {
-        desktop_build_identity: {
-          version: "0.0.12",
-          sourceRevision: null,
-          releaseRepository: "duc15052006-dotcom/OpenBotD.U_C",
-        },
-        detect_engine: null,
-        selected_root: null,
-        default_root: "C:\\OpenBot",
-        last_failure: {
-          said: "The stack did not start.",
-          detail: "SECRET_API_KEY=must-not-leak",
-        },
-        already_running: false,
-      };
-      return values[command] as T;
-    });
+    const diagnostics = await collectDesktopDiagnostics(
+      async <T>(command: string): Promise<T> => {
+        const values: Record<string, unknown> = {
+          desktop_build_identity: {
+            version: "0.0.12",
+            sourceRevision: null,
+            releaseRepository: "duc15052006-dotcom/OpenBotD.U_C",
+          },
+          detect_engine: null,
+          selected_root: null,
+          default_root: "C:\\OpenBot",
+          last_failure: {
+            said: "The stack did not start.",
+            detail: "SECRET_API_KEY=must-not-leak",
+          },
+          already_running: false,
+        };
+        return values[command] as T;
+      },
+    );
 
     const report = formatDesktopDiagnostics(diagnostics);
     expect(report).toContain("Desktop version: 0.0.12");
@@ -88,12 +89,12 @@ describe("desktop diagnostics", () => {
   });
 
   test("degrades individual probes to unknown instead of failing diagnostics", async () => {
-    const diagnostics = await collectDesktopDiagnostics(async <T>(
-      command: string,
-    ): Promise<T> => {
-      if (command === "default_root") return "C:\\OpenBot" as T;
-      throw new Error("probe failed");
-    });
+    const diagnostics = await collectDesktopDiagnostics(
+      async <T>(command: string): Promise<T> => {
+        if (command === "default_root") return "C:\\OpenBot" as T;
+        throw new Error("probe failed");
+      },
+    );
 
     expect(diagnostics.build).toBeNull();
     expect(diagnostics.engine).toBeNull();
