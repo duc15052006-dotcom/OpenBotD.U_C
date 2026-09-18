@@ -4,7 +4,10 @@ import { computerNanoCpus } from "./computer-nano-cpus";
 
 describe("computerNanoCpus", () => {
   test("treats an unset value as no explicit override", () => {
-    expect(computerNanoCpus(undefined)).toEqual({ ok: true, nanoCpus: undefined });
+    expect(computerNanoCpus(undefined)).toEqual({
+      ok: true,
+      nanoCpus: undefined,
+    });
     expect(computerNanoCpus("   ")).toEqual({ ok: true, nanoCpus: undefined });
   });
 
