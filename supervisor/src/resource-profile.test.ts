@@ -26,6 +26,8 @@ describe("resource profile quotas", () => {
     expect(parseComputerResourceProfile("normal")).toBe("normal");
     expect(parseComputerResourceProfile("heavy")).toBe("heavy");
     expect(parseComputerResourceProfile("unlimited")).toBeNull();
-    expect(parseComputerResourceProfile({ memoryBytes: 99_000_000_000 })).toBeNull();
+    expect(
+      parseComputerResourceProfile({ memoryBytes: 99_000_000_000 }),
+    ).toBeNull();
   });
 });
