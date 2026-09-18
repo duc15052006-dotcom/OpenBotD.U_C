@@ -89,16 +89,13 @@ export async function scanWithClamAv(
   const timeoutMs = options.timeoutMs ?? DEFAULT_SCAN_TIMEOUT_MS;
 
   try {
-    const process = Bun.spawn(
-      [executable, "--no-summary", "--", file],
-      {
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-        timeout: timeoutMs,
-        killSignal: "SIGKILL",
-      },
-    );
+    const process = Bun.spawn([executable, "--no-summary", "--", file], {
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: timeoutMs,
+      killSignal: "SIGKILL",
+    });
 
     const stdoutPromise =
       process.stdout instanceof ReadableStream
@@ -120,9 +117,7 @@ export async function scanWithClamAv(
       status: "scan_failed",
       scanner: "clamav",
       detail: concise(
-        error instanceof Error
-          ? error.message
-          : "ClamAV could not be started.",
+        error instanceof Error ? error.message : "ClamAV could not be started.",
       ),
       scannedAt: new Date().toISOString(),
     };
