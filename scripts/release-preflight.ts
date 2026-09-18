@@ -384,6 +384,18 @@ function checkDesktopUpdatePath(): void {
   }
 
   for (const evidence of [
+    "ensure_manifest_version(&manifest, version)?",
+    "expected_manifest_version(root, &manifest)?",
+    "expected_image_repository",
+    "validated_reference",
+    "@sha256:",
+  ]) {
+    if (!deployment.includes(evidence)) {
+      fail(`desktop: deployment manifest identity gate is missing ${evidence}`);
+    }
+  }
+
+  for (const evidence of [
     '"updates" => check_for_updates',
     '"Check for updates"',
     "update::check_latest_release()",
