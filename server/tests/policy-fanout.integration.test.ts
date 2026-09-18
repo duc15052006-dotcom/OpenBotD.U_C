@@ -67,8 +67,13 @@ describe("a rule added on one server", () => {
 
       await wroteIt.set({ mode: "enforce", deny: [RULE], allow: ["true"] });
 
-      // Held in one process this stayed empty forever, and every click on that server went through.
-      await until(() => otherServer.get().deny.length > 0);
+      // The built-in policy now already has a shell deny, so wait for THIS update rather than merely
+      // waiting for "some deny exists", which would succeed before the notification arrives.
+      await until(
+        () =>
+          otherServer.get().deny.length === 1 &&
+          otherServer.get().deny[0] === RULE,
+      );
       expect(otherServer.get().deny).toEqual([RULE]);
     } finally {
       await listener.stop();
