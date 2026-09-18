@@ -96,6 +96,37 @@ fn compatible_probe_catches_ipv4_metadata_hidden_in_ipv6_forms() {
 }
 
 #[test]
+fn compatible_saved_endpoint_refuses_cloud_metadata_hosts() {
+    for endpoint in [
+        "http://169.254.169.254/v1",
+        "http://169.254.170.2/v1",
+        "http://100.100.100.200/v1",
+        "http://metadata.google.internal/v1",
+        "http://metadata.goog/v1",
+        "http://[fd00:ec2::254]/v1",
+    ] {
+        assert!(
+            model_endpoint_url(endpoint, "model endpoint").is_err(),
+            "{endpoint} unexpectedly became a saved model endpoint"
+        );
+    }
+}
+
+#[test]
+fn compatible_saved_endpoint_still_allows_local_development_hosts() {
+    for endpoint in [
+        "http://127.0.0.1:11434/v1",
+        "http://localhost:11434/v1",
+        "http://ollama:11434/v1",
+    ] {
+        assert!(
+            model_endpoint_url(endpoint, "model endpoint").is_ok(),
+            "{endpoint} should remain available for a local compatible provider"
+        );
+    }
+}
+
+#[test]
 fn compatible_probe_refuses_non_http_schemes_and_missing_hosts() {
     for endpoint in [
         "file:///tmp/model",

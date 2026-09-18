@@ -552,6 +552,7 @@ function checkProviderConnectionTest(): void {
     "models_probe_url",
     "model_endpoint_url",
     "must not contain credentials",
+    "cannot be saved",
     "model_probe_never_allowed_host",
     "metadata.google.internal",
     "169, 254, 169, 254",
