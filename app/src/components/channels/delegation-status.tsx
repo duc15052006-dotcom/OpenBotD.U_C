@@ -51,7 +51,9 @@ export function DelegationStatus({ channelId }: { channelId: string }) {
       <div className="mx-auto flex max-w-3xl flex-col gap-1.5">
         <div className="flex items-center justify-between gap-3 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
           <span>Team dispatch</span>
-          <span>{activeCount > 0 ? `${activeCount} active` : "Up to date"}</span>
+          <span>
+            {activeCount > 0 ? `${activeCount} active` : "Up to date"}
+          </span>
         </div>
         {visible.map((delegation) => (
           <DelegationRow
