@@ -41,11 +41,15 @@ The successful setup screen also keeps **Open OpenBot** beside the coworker acti
 deployment can skip creating another one. The primary first-run handoff uses the fixed local
 `/agents?new=true` route; no arbitrary navigation target crosses the desktop IPC boundary.
 
-After a coworker is created, its General panel now carries the next two first-run actions:
+After a built-in coworker is created, its General panel carries the next first-run actions:
 
-- **Start** wakes/starts that coworker's persistent computer without clearing its browser profile.
+- **Start** wakes/starts that coworker's deployment-owned persistent computer without clearing its browser profile.
 - **Files** first ensures the computer is running, then opens the governed persistent workspace.
 - **Start channel** opens a conversation where the coworker can use its browser, files and granted tools.
+
+A managed coworker runs at the external AG-UI endpoint its owner configured, so OpenBot does not show
+local Computer/Files controls for it. Those controls would imply ownership of a browser/workspace this
+deployment does not actually run.
 
 Per-coworker Model/API settings, Instructions, Skills and Knowledge can then be managed from the app
 without editing source files.
