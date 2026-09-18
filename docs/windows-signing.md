@@ -38,7 +38,11 @@ installer using Windows Authenticode and
 publisher `Tawkit, Inc.`. Any warning or nonzero SignTool exit fails the job.
 `signatures.json` records the source SHA, artifact SHA-256 hashes, signer and
 timestamp certificates; the companion text files retain verbose SignTool output.
-The binaries upload only after both pass. The extracted app is retained from
+
+After those cryptographic checks, the workflow runs the **exact signed NSIS installer** through the
+same fresh Users-only acceptance harness used by Desktop CI. The signed artifact must still install,
+launch OpenBot for the first time, expose the desktop shortcut, uninstall cleanly, and remove that
+shortcut without ever relying on an administrator token. Only then are the binaries retained. The extracted app is retained from
 `desktop/signed-app/`: Tauri restores the unsigned build executable after bundling,
 so verifying `target/release/openbot-desktop.exe` would inspect the wrong copy.
 These checks do not test SmartScreen reputation or exercise the app UI.
