@@ -7,6 +7,7 @@ import {
   ensure,
   listOwned,
   NameHeldError,
+  VolumeHeldError,
   reachable,
   reset,
   stop,
@@ -118,7 +119,7 @@ app.post("/computers/:botId/ensure", async (context) => {
   } catch (error) {
     // A held name is not an outage. 409 says the conflict is with something already there, so an
     // operator reads the message rather than going to look at a daemon that is working.
-    if (error instanceof NameHeldError) {
+    if (error instanceof NameHeldError || error instanceof VolumeHeldError) {
       return context.json({ error: error.message }, 409);
     }
     // Not ready is a 503 like an outage is, because the caller's next move is the same: wait and
@@ -154,6 +155,9 @@ app.post("/computers/:botId/reset", async (context) => {
     const wasThere = await reset(parsed.names);
     return context.json({ reset: wasThere });
   } catch (error) {
+    if (error instanceof VolumeHeldError) {
+      return context.json({ error: error.message }, 409);
+    }
     if (error instanceof DockerUnavailableError) {
       return context.json({ error: error.message }, 503);
     }
