@@ -13,6 +13,11 @@ describe("desktop diagnostics", () => {
     ): Promise<T> => {
       calls.push({ command, args });
       const values: Record<string, unknown> = {
+        desktop_build_identity: {
+          version: "0.0.12",
+          sourceRevision: "0123456789abcdef0123456789abcdef01234567",
+          releaseRepository: "duc15052006-dotcom/OpenBotD.U_C",
+        },
         detect_engine: {
           engine: "docker",
           responding: true,
@@ -28,6 +33,11 @@ describe("desktop diagnostics", () => {
 
     const diagnostics = await collectDesktopDiagnostics(call);
 
+    expect(diagnostics.build).toEqual({
+      version: "0.0.12",
+      sourceRevision: "0123456789abcdef0123456789abcdef01234567",
+      releaseRepository: "duc15052006-dotcom/OpenBotD.U_C",
+    });
     expect(diagnostics.engine).toMatchObject({
       engine: "docker",
       responding: true,
@@ -36,6 +46,7 @@ describe("desktop diagnostics", () => {
     expect(diagnostics.stackRunning).toBe(true);
     expect(diagnostics.lastFailure).toBe("A previous local start failed.");
     expect(calls).toEqual([
+      { command: "desktop_build_identity", args: undefined },
       { command: "detect_engine", args: undefined },
       { command: "selected_root", args: undefined },
       { command: "default_root", args: undefined },
@@ -49,6 +60,11 @@ describe("desktop diagnostics", () => {
       command: string,
     ): Promise<T> => {
       const values: Record<string, unknown> = {
+        desktop_build_identity: {
+          version: "0.0.12",
+          sourceRevision: null,
+          releaseRepository: "duc15052006-dotcom/OpenBotD.U_C",
+        },
         detect_engine: null,
         selected_root: null,
         default_root: "C:\\OpenBot",
@@ -62,6 +78,10 @@ describe("desktop diagnostics", () => {
     });
 
     const report = formatDesktopDiagnostics(diagnostics);
+    expect(report).toContain("Desktop version: 0.0.12");
+    expect(report).toContain(
+      "Release repository: duc15052006-dotcom/OpenBotD.U_C",
+    );
     expect(report).toContain("Last failure: The stack did not start.");
     expect(report).not.toContain("SECRET_API_KEY");
     expect(report).not.toContain("must-not-leak");
@@ -75,6 +95,7 @@ describe("desktop diagnostics", () => {
       throw new Error("probe failed");
     });
 
+    expect(diagnostics.build).toBeNull();
     expect(diagnostics.engine).toBeNull();
     expect(diagnostics.selectedRoot).toBeNull();
     expect(diagnostics.stackRunning).toBeNull();
