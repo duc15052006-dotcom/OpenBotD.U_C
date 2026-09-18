@@ -49,7 +49,7 @@ function fail(message: string): void {
 function hasWorkflowCall(flow: Workflow): boolean {
   return (
     object(flow.on) &&
-    Object.prototype.hasOwnProperty.call(flow.on, "workflow_call")
+    Object.hasOwn(flow.on, "workflow_call")
   );
 }
 
@@ -196,10 +196,10 @@ function checkReleaseWiring(): void {
     );
   }
   for (const evidence of [
-    "registry_owner: ${{ steps.release.outputs.registry_owner }}",
-    "REGISTRY_OWNER: ${{ github.repository_owner }}",
+    `registry_owner: \${{ steps.release.outputs.registry_owner }}`,
+    `REGISTRY_OWNER: \${{ github.repository_owner }}`,
     "registry_owner=$registry_owner",
-    "ghcr.io/${{ needs.metadata.outputs.registry_owner }}/openbot",
+    `ghcr.io/\${{ needs.metadata.outputs.registry_owner }}/openbot`,
   ]) {
     if (!releaseSource.includes(evidence)) {
       fail(`release: repository-owned GHCR publishing is missing ${evidence}`);
@@ -507,13 +507,13 @@ function checkDesktopUpdatePath(): void {
   }
 
   const sourceShaExpression =
-    "${{ github.event.pull_request.head.sha || github.sha }}";
+    `\${{ github.event.pull_request.head.sha || github.sha }}`;
   for (const [name, source] of [
     ["Desktop", desktopWorkflow],
     ["Windows signing", signingWorkflow],
   ] as const) {
     if (
-      !source.includes("OPENBOT_RELEASE_REPOSITORY: ${{ github.repository }}")
+      !source.includes(`OPENBOT_RELEASE_REPOSITORY: \${{ github.repository }}`)
     ) {
       fail(
         `desktop: ${name} build does not bind update checks to the repository that built the artifact`,

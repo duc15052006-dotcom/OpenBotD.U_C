@@ -40,7 +40,7 @@ export function DelegationStatus({ channelId }: { channelId: string }) {
     .slice(0, 3);
 
   return (
-    <div
+    <section
       aria-label="Delegation status"
       className="border-border border-b bg-muted/20 px-3 py-2"
     >
@@ -53,7 +53,7 @@ export function DelegationStatus({ channelId }: { channelId: string }) {
           />
         ))}
       </div>
-    </div>
+    </section>
   );
 }
 

@@ -131,7 +131,7 @@ for (const name of readdirSync(workflows).filter((file) =>
     const callable =
       trigger &&
       typeof trigger === "object" &&
-      Object.prototype.hasOwnProperty.call(trigger, "workflow_call");
+      Object.hasOwn(trigger, "workflow_call");
     if (!callable) {
       failures.push(
         `${name} job ${jobName}: ${uses} is referenced as reusable but has no on.workflow_call trigger`,
@@ -139,7 +139,7 @@ for (const name of readdirSync(workflows).filter((file) =>
       continue;
     }
 
-    const workflowCall = (trigger as Record<string, unknown>)["workflow_call"];
+    const workflowCall = (trigger as Record<string, unknown>).workflow_call;
     const declaredInputs =
       workflowCall && typeof workflowCall === "object"
         ? ((workflowCall as Record<string, unknown>).inputs as

@@ -55,8 +55,7 @@ fn compatible_setup_refuses_credentials_in_host_and_container_endpoint_urls() {
             .into_credential_with(std::path::Path::new("."), |_, _| {
                 panic!("typed compatible endpoint must not read a saved secret")
             })
-            .err()
-            .expect("URL credentials must be refused");
+            .expect_err("URL credentials must be refused");
         assert!(problem.said.contains("must not contain credentials"));
         assert!(problem.detail.is_none());
         assert!(!problem.said.contains("alice"));
