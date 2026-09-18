@@ -85,11 +85,11 @@ async function memoryMetrics(): Promise<{
   ]);
   const current = Number(currentRaw);
   if (currentRaw !== null && Number.isFinite(current) && current >= 0) {
-    const max = maxRaw === "max" ? null : Number(maxRaw);
+    const max = maxRaw === null || maxRaw === "max" ? null : Number(maxRaw);
     return {
       memoryUsedBytes: current,
       memoryLimitBytes:
-        maxRaw !== null && Number.isFinite(max) && max > 0 ? max : null,
+        max !== null && Number.isFinite(max) && max > 0 ? max : null,
     };
   }
 
