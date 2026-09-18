@@ -9,6 +9,7 @@ import {
 } from "@/components/layout/page-shell";
 import { StaggerItem } from "@/components/layout/stagger";
 import { ComputerFilesDialog } from "@/components/computers/computer-files-dialog";
+import { ComputerScreenDialog } from "@/components/computers/computer-screen-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -28,7 +29,10 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { useBotNames } from "@/lib/agents/bot-names";
 import { agentListQueryOptions } from "@/lib/agents/queries";
-import { setComputerStateMutationOptions } from "@/lib/computers/mutations";
+import {
+  setComputerStateMutationOptions,
+  stopAllComputersMutationOptions,
+} from "@/lib/computers/mutations";
 import {
   hostAccessQueryOptions,
   requestHostFolderGrantMutationOptions,
@@ -50,6 +54,8 @@ function ComputersPage() {
   const [confirming, setConfirming] = useState<string | null>(null);
   /** Computer whose persistent workspace is open in the file manager. */
   const [filesFor, setFilesFor] = useState<string | null>(null);
+  /** Computer whose browser is being watched or driven by the administrator. */
+  const [screenFor, setScreenFor] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const nameFor = useBotNames();
 
@@ -57,6 +63,7 @@ function ComputersPage() {
   const hostAccess = useQuery(hostAccessQueryOptions());
   const agents = useQuery(agentListQueryOptions());
   const setState = useMutation(setComputerStateMutationOptions(queryClient));
+  const stopAll = useMutation(stopAllComputersMutationOptions(queryClient));
   const requestGrant = useMutation(
     requestHostFolderGrantMutationOptions(queryClient),
   );
@@ -77,7 +84,9 @@ function ComputersPage() {
     ? "The computers could not be listed."
     : setState.error
       ? setState.error.message
-      : null;
+      : stopAll.error
+        ? stopAll.error.message
+        : null;
   const hostProblem = hostAccess.error
     ? hostAccess.error.message
     : requestGrant.error
@@ -95,6 +104,18 @@ function ComputersPage() {
     setBusy(botId);
     setConfirming(null);
     setState.mutate({ action, botId }, { onSettled: () => setBusy(null) });
+  };
+
+  const showScreen = async (botId: string, running: boolean) => {
+    setBusy(botId);
+    try {
+      if (!running) {
+        await setState.mutateAsync({ action: "start", botId });
+      }
+      setScreenFor(botId);
+    } finally {
+      setBusy(null);
+    }
   };
 
   return (
@@ -151,6 +172,24 @@ function ComputersPage() {
         stopping={stopHostAccess.isPending}
       />
 
+      <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3">
+        <div>
+          <p className="font-medium text-sm">Emergency Computer stop</p>
+          <p className="text-muted-foreground text-xs">
+            Stops every Agent Computer now. Persistent browser profiles,
+            workspaces and quarantine stay saved for later Start.
+          </p>
+        </div>
+        <Button
+          disabled={stopAll.isPending || !computers?.some((computer) => computer.running)}
+          onClick={() => stopAll.mutate()}
+          size="sm"
+          variant="destructive"
+        >
+          {stopAll.isPending ? "Stopping…" : "KILL ALL COMPUTERS"}
+        </Button>
+      </div>
+
       <PageSection title="Computers in this deployment">
         {computers === null && problem ? (
           <PageEmpty>The list could not be loaded.</PageEmpty>
@@ -169,8 +208,12 @@ function ComputersPage() {
                     </ItemTitle>
                     <ItemDescription>
                       {computer.running
-                        ? `Browser running since ${new Date(computer.startedAt ?? "").toLocaleTimeString()}`
-                        : "No browser running. It starts when the Bot next needs it."}
+                        ? computer.metrics?.browserRunning === false
+                          ? "Computer awake · Browser sleeping after idle"
+                          : computer.metrics?.browserRunning === true
+                            ? `Browser running since ${new Date(computer.startedAt ?? "").toLocaleTimeString()}`
+                            : "Computer running · Browser state unavailable"
+                        : "Computer stopped. Its profile and workspace remain saved."}
                       {" · "}
                       {computer.egress === undefined
                         ? "Egress not reported"
@@ -217,6 +260,16 @@ function ComputersPage() {
                       </Button>
                     )}
                     <Button
+                      disabled={busy === computer.botId}
+                      onClick={() =>
+                        void showScreen(computer.botId, computer.running)
+                      }
+                      size="sm"
+                      variant="outline"
+                    >
+                      Screen
+                    </Button>
+                    <Button
                       disabled={!computer.running || busy === computer.botId}
                       onClick={() => setFilesFor(computer.botId)}
                       size="sm"
@@ -250,6 +303,15 @@ function ComputersPage() {
         />
       ) : null}
 
+      {screenFor ? (
+        <ComputerScreenDialog
+          botId={screenFor}
+          botName={nameFor(screenFor)}
+          onOpenChange={(open) => !open && setScreenFor(null)}
+          open
+        />
+      ) : null}
+
       {/*
        * A DIALOG RATHER THAN AN INLINE CONFIRM. Resetting signs a Bot out of everything it has ever
        * logged into and cannot be undone, and the row it was confirmed on was one of several
@@ -268,8 +330,9 @@ function ComputersPage() {
               Reset {confirming ? nameFor(confirming) : ""}'s computer?
             </DialogTitle>
             <DialogDescription>
-              Its profile is deleted, so the Bot is signed out of every service
-              it had logged into and starts clean. This cannot be undone.
+              Its browser profile, logins, workspace files and download
+              quarantine are deleted, so the Bot starts completely clean. This
+              cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -296,10 +359,12 @@ function ComputersPage() {
 
       <p className="mt-4 text-muted-foreground text-sm">
         <strong>Start</strong> wakes a stopped computer,{" "}
-        <strong>Restart</strong> cycles it without deleting its saved profile,
-        and <strong>Stop</strong> closes the browser while keeping its logins.{" "}
-        <strong>Reset</strong> deletes the profile, signs the Bot out of
-        everything, and starts clean. Lifecycle actions are recorded in{" "}
+        <strong>Screen</strong> lets you watch it and take control for login or
+        intervention, <strong>Restart</strong> cycles it without deleting saved
+        state, and <strong>Stop</strong> releases runtime resources while
+        keeping its profile and workspace. <strong>Reset</strong> deletes its
+        profile, workspace and quarantine and starts clean. Lifecycle actions
+        are recorded in{" "}
         <Link className="underline" to="/admin/audit">
           Audit
         </Link>
@@ -522,6 +587,7 @@ function resourceSummary(metrics: {
   memoryLimitBytes: number | null;
   diskUsedBytes: number;
   diskTotalBytes: number;
+  browserRunning?: boolean;
 }) {
   const memory = metrics.memoryLimitBytes
     ? `${formatBytes(metrics.memoryUsedBytes)} / ${formatBytes(metrics.memoryLimitBytes)}`
@@ -530,7 +596,13 @@ function resourceSummary(metrics: {
     metrics.diskTotalBytes > 0
       ? `${formatBytes(metrics.diskUsedBytes)} / ${formatBytes(metrics.diskTotalBytes)}`
       : "unavailable";
-  return `CPU ${metrics.cpuPercent.toFixed(1)}% · RAM ${memory} · Disk ${disk}`;
+  const browser =
+    metrics.browserRunning === true
+      ? "Browser running"
+      : metrics.browserRunning === false
+        ? "Browser sleeping"
+        : "Browser unknown";
+  return `${browser} · CPU ${metrics.cpuPercent.toFixed(1)}% · RAM ${memory} · Disk ${disk}`;
 }
 
 function ownerLabel(grant: { ownerName?: string; ownerEmail?: string }) {
