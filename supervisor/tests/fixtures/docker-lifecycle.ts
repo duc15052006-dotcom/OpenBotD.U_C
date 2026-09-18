@@ -345,8 +345,7 @@ describe("a computer built from an older image", () => {
     // The same volumes, not replacements: a Bot keeps its logins and its files across an upgrade.
     const kept = await Promise.all(
       [names.profileVolume, names.workspaceVolume, names.quarantineVolume].map(
-        (volume) =>
-        withDocker().docker.getVolume(volume).inspect(),
+        (volume) => withDocker().docker.getVolume(volume).inspect(),
       ),
     );
     expect(kept.map(createdAt)).toEqual(volumes.map(createdAt));
