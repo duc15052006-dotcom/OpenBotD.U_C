@@ -1073,10 +1073,7 @@ serve<StreamData>({
       }
     }
 
-    if (
-      url.pathname === "/quarantine/released" &&
-      request.method === "POST"
-    ) {
+    if (url.pathname === "/quarantine/released" && request.method === "POST") {
       const body = (await request.json().catch(() => null)) as {
         id?: unknown;
       } | null;
