@@ -57,6 +57,8 @@ import type {
   ListFilesInput,
   ListFilesResult,
   NavigateResult,
+  QuarantineDeleteResult,
+  QuarantineListResult,
   ReadFileInput,
   ReadFileResult,
   ReadResult,
@@ -181,6 +183,13 @@ export interface ComputerGateway {
     actor: ActionActor,
     input: WriteFileInput,
   ): Promise<WriteFileResult>;
+  /** Admin-facing metadata only. This is deliberately not a Bot tool. */
+  quarantinedDownloads(botId: string): Promise<QuarantineListResult>;
+  /** Admin-facing deletion by opaque OpenBot id, never by path. */
+  deleteQuarantinedDownload(
+    botId: string,
+    id: string,
+  ): Promise<QuarantineDeleteResult>;
   control(botId: string): Promise<ControlState>;
   requestHelp(
     botId: string,
@@ -1137,6 +1146,14 @@ export function createComputerGateway(
         { filePath: input.path },
         () => post<WriteFileResult>(botId, "/files/write", input),
       );
+    },
+
+    quarantinedDownloads(botId: string) {
+      return get<QuarantineListResult>(botId, "/quarantine");
+    },
+
+    deleteQuarantinedDownload(botId: string, id: string) {
+      return post<QuarantineDeleteResult>(botId, "/quarantine/delete", { id });
     },
   };
 }
