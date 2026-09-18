@@ -344,14 +344,15 @@ function checkDesktopUpdatePath(): void {
   }
 
   const diagnostics = read("desktop/src/diagnostics.ts");
-  const native = read("desktop/src-tauri/src/main.rs");
   for (const evidence of [
     "desktop_build_identity",
     "sourceRevision",
     "releaseRepository",
   ]) {
     if (!diagnostics.includes(evidence)) {
-      fail(`desktop: diagnostics no longer report build identity field ${evidence}`);
+      fail(
+        `desktop: diagnostics no longer report build identity field ${evidence}`,
+      );
     }
   }
   for (const evidence of [
