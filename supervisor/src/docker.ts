@@ -391,6 +391,8 @@ export type EnsureOptions = {
    */
   runtime?: string;
   memoryBytes?: number;
+  /** Docker CPU quota in NanoCPUs; 1_000_000_000 is one logical CPU. */
+  nanoCpus?: number;
   /**
    * How long a started computer is given to answer before the attempt is called a failure.
    *
@@ -452,6 +454,7 @@ function hostConfig(names: ComputerNames, options: EnsureOptions) {
     CapDrop: ["ALL"],
     // A runaway Bot is a resource problem for itself, not for every other Bot on the host.
     ...(options.memoryBytes ? { Memory: options.memoryBytes } : {}),
+    ...(options.nanoCpus ? { NanoCpus: options.nanoCpus } : {}),
     PidsLimit: options.pidsLimit ?? 512,
     // Chromium's sandbox wants shared memory and will crash on the 64MB default.
     ShmSize: 1_073_741_824,
