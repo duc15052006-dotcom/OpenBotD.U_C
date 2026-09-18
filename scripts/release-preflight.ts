@@ -440,7 +440,9 @@ function checkReleaseWiring(): void {
     "GitHub's commit -> associated PR relation survives merge, squash and rebase",
   ]) {
     if (!releaseSource.includes(evidence)) {
-      fail(`release: merge-method-independent classifier is missing ${evidence}`);
+      fail(
+        `release: merge-method-independent classifier is missing ${evidence}`,
+      );
     }
   }
   if (releaseSource.includes("candidate.merge_commit_sha === context.sha")) {
