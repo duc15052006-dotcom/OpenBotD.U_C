@@ -85,7 +85,7 @@ function RouteComponent() {
   const isSettingsOpen = settings === true;
   const prefersReducedMotion = useReducedMotion();
   const isWatching = watch === true;
-  /** Channel routing currently supports one coworker. */
+  /** The first linked Bot coordinates this Intelligence thread; peers join through durable handoffs. */
   const agentId = channel.data?.agentIds[0];
   /** Only polled while the screen is closed; the screen panel polls control itself. */
   const needsYou = useNeedsYou(agentId, !isWatching);
@@ -237,7 +237,11 @@ function RouteComponent() {
               ) : null}
             </Button>
             <Button
-              aria-label="Channel coworker"
+              aria-label={
+                channel.data && channel.data.agentIds.length > 1
+                  ? "Group coordinator settings"
+                  : "Channel coworker"
+              }
               aria-pressed={isSettingsOpen}
               className={isSettingsOpen ? "bg-foreground/5" : undefined}
               disabled={agentId === undefined}
@@ -261,8 +265,9 @@ function RouteComponent() {
 }
 
 /**
- * A channel holds exactly one coworker. More than one is not supported yet, and rendering a shared
- * transcript for several agents before the runtime can route between them would look like it works.
+ * One Intelligence thread still has one runtime Bot. In a group channel the first linked Bot is the
+ * coordinator; explicit @mentions are handed to peers through the durable handoff queue and relayed
+ * back into this same transcript.
  */
 function ChannelBody({
   channel,
@@ -283,12 +288,11 @@ function ChannelBody({
     );
   }
 
-  const runtimeAgentId =
-    channel.agentIds.length === 1 ? channel.agentIds[0] : undefined;
+  const runtimeAgentId = channel.agentIds[0];
   if (!runtimeAgentId) {
     return (
       <p className="p-8 text-sm text-muted-foreground">
-        This channel has more than one coworker, which is not supported yet.
+        This channel has no active coworkers.
       </p>
     );
   }
