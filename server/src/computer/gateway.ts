@@ -809,16 +809,17 @@ export function createComputerGateway(
     },
 
     /**
-     * Wipe a computer's profile.
+     * Wipe a computer's persistent state.
      *
-     * The most destructive button we have. Every login the Bot had is gone and no undo exists, so the
-     * row is written whatever happens next.
+     * The most destructive button we have. Browser profile, logins, workspace and quarantine are
+     * gone and no undo exists, so the row is written whatever happens next.
      */
     async resetComputer(botId: string, actor: ActionActor) {
       const result = await provider.reset(botId);
       /*
        * The row goes in HERE, before the two deletes below, because this line is the point of no
-       * return: the profile is already gone and nothing after it can put the logins back.
+       * return: the persistent Computer state is already gone and nothing after it can put the
+       * logins or workspace back.
        *
        * Both clears are Postgres deletes, and a connection reset, a failover or a statement timeout
        * in either used to throw before the row was written -- leaving a computer wiped with nothing
