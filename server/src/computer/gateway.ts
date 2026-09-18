@@ -852,25 +852,19 @@ export function createComputerGateway(
         attempted: botIds.length,
         stopped: outcomes
           .filter(
-            (
-              outcome,
-            ): outcome is { botId: string; wasRunning: true } =>
+            (outcome): outcome is { botId: string; wasRunning: true } =>
               "wasRunning" in outcome && outcome.wasRunning,
           )
           .map((outcome) => outcome.botId),
         alreadyStopped: outcomes
           .filter(
-            (
-              outcome,
-            ): outcome is { botId: string; wasRunning: false } =>
+            (outcome): outcome is { botId: string; wasRunning: false } =>
               "wasRunning" in outcome && !outcome.wasRunning,
           )
           .map((outcome) => outcome.botId),
         failed: outcomes
           .filter(
-            (
-              outcome,
-            ): outcome is { botId: string; error: string } =>
+            (outcome): outcome is { botId: string; error: string } =>
               "error" in outcome,
           )
           .map(({ botId, error }) => ({ botId, error })),
