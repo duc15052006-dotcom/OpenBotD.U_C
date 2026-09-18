@@ -43,9 +43,7 @@ export function setComputerStateMutationOptions(queryClient: QueryClient) {
   });
 }
 
-export function stopAllComputersMutationOptions(
-  queryClient: QueryClient,
-) {
+export function stopAllComputersMutationOptions(queryClient: QueryClient) {
   return mutationOptions({
     mutationFn: async () => {
       await client("/api/computers/stop-all", {
