@@ -2,12 +2,23 @@ import { queryOptions } from "@tanstack/react-query";
 import { client } from "@/lib/client";
 
 /** One Bot's computer, as Admin sees it. */
+export type ComputerResourceMetrics = {
+  capturedAt: string;
+  cpuPercent: number;
+  memoryUsedBytes: number;
+  memoryLimitBytes: number | null;
+  diskUsedBytes: number;
+  diskTotalBytes: number;
+};
+
 export type ComputerProfile = {
   botId: string;
   running: boolean;
   startedAt: string | null;
   /** Absent when the provider does not report egress at all, which is not the same as none. */
   egress?: string | null;
+  /** Present only when a running computer answered the lightweight metrics probe. */
+  metrics?: ComputerResourceMetrics;
 };
 
 /** Whether each Bot has a browser profile of its own, or they share one. */
