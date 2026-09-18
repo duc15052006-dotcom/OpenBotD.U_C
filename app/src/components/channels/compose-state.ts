@@ -1,3 +1,5 @@
+import { MAX_CHANNEL_AGENTS } from "../../../../shared/channel-groups";
+
 /**
  * The rules a compose screen follows before there is a channel to hold them.
  *
@@ -13,7 +15,7 @@ export type Recipient = {
  * A small group is enough to coordinate several specialist Bots without turning the mention menu
  * into a deployment-wide roster. The server still validates every id against the caller's roster.
  */
-export const MAX_RECIPIENTS = 8;
+export const MAX_RECIPIENTS = MAX_CHANNEL_AGENTS;
 
 /** Add a coworker unless this group is already at its explicit participant cap. */
 export function addRecipient(
