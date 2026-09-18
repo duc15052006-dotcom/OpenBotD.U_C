@@ -13,6 +13,7 @@ import { AgentProfile } from "@/components/agents/agent-profile";
 import { hasUnseenActivity } from "@/components/app-sidebar/app-sidebar";
 import { ChannelAvatar } from "@/components/channels/avatar";
 import { ChannelChat } from "@/components/channels/channel-chat";
+import { DelegationStatus } from "@/components/channels/delegation-status";
 import { ActivityLog } from "@/components/computer/activity-log";
 import { ComputerView } from "@/components/computer/computer-view";
 import { useNeedsYou } from "@/components/computer/needs-you";
@@ -249,6 +250,7 @@ function RouteComponent() {
           </div>
         </div>
       </div>
+      <DelegationStatus channelId={channelId} />
       <ChannelBody
         channel={channel.data}
         isPending={channel.isPending}
