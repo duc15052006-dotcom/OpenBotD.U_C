@@ -400,9 +400,9 @@ function ComputersPage() {
         <strong>Quarantine</strong> scans and explicitly exports untrusted
         downloads, <strong>Restart</strong> cycles it without deleting saved
         state, and <strong>Stop</strong> releases runtime resources while
-        keeping its profile and workspace. <strong>Reset</strong> deletes its profile,
-        workspace and quarantine and starts clean. Lifecycle actions are
-        recorded in{" "}
+        keeping its profile and workspace. <strong>Reset</strong> deletes its
+        profile, workspace and quarantine and starts clean. Lifecycle actions
+        are recorded in{" "}
         <Link className="underline" to="/admin/audit">
           Audit
         </Link>
