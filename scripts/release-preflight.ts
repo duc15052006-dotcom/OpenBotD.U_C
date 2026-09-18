@@ -386,6 +386,22 @@ function checkDesktopUpdatePath(): void {
   }
 }
 
+function checkPassiveDesktopSecretRedaction(): void {
+  const native = read("desktop/src-tauri/src/main.rs");
+
+  for (const evidence of [
+    'values.remove("INTELLIGENCE_API_KEY")',
+    'values.remove("OPENAI_API_KEY")',
+    'values.remove("ANTHROPIC_API_KEY")',
+    'values.remove("CLAUDE_CODE_OAUTH_TOKEN")',
+    "passive hydration must not return a legacy project key to the WebView",
+  ]) {
+    if (!native.includes(evidence)) {
+      fail(`desktop: passive credential hydration lost redaction evidence ${evidence}`);
+    }
+  }
+}
+
 function checkProviderConnectionTest(): void {
   const picker = read("desktop/src/ProviderPicker.tsx");
   const native = read("desktop/src-tauri/src/main.rs");
@@ -490,6 +506,7 @@ function checkVersionSources(): void {
 checkDesktopBoundary();
 checkReleaseWiring();
 checkDesktopUpdatePath();
+checkPassiveDesktopSecretRedaction();
 checkProviderConnectionTest();
 checkFirstCoworkerHandoff();
 checkVersionSources();
