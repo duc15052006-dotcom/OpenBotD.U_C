@@ -15,6 +15,7 @@ import { useState } from "react";
 import type { ZodType } from "zod";
 import { AbstractAvatar } from "@/components/agents/abstract-avatar";
 import { CallbackTokenPanel } from "@/components/agents/callback-token-panel";
+import { ComputerPanel } from "@/components/agents/computer-panel";
 import { HandoffPanel } from "@/components/agents/handoff-panel";
 import { InstructionsPanel } from "@/components/agents/instructions-panel";
 import { KnowledgePanel } from "@/components/agents/knowledge-panel";
@@ -118,6 +119,7 @@ const SECTIONS = [
   { id: "instructions", name: "Instructions", icon: IconPencil },
   { id: "skills", name: "Skills", icon: IconPuzzle },
   { id: "knowledge", name: "Knowledge", icon: IconBook },
+  { id: "computer", name: "Computer", icon: IconCpu },
   { id: "access", name: "Access", icon: IconPuzzle },
   { id: "connection", name: "Connection", icon: IconPlugConnected },
   { id: "handoff", name: "Handoff", icon: IconArrowsExchange },
@@ -239,6 +241,8 @@ function AgentDialogBody({ agentId }: { agentId: string }) {
               <SkillsPanel agentId={agentId} />
             ) : section === "knowledge" ? (
               <KnowledgePanel agentId={agentId} />
+            ) : section === "computer" ? (
+              <ComputerPanel agentId={agentId} />
             ) : section === "access" ? (
               <AccessSection agentId={agentId} />
             ) : section === "connection" ? (
