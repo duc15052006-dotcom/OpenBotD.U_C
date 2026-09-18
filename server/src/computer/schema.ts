@@ -395,6 +395,10 @@ export type QuarantineRecord = {
   sourceUrl: string;
   savedAt: string;
   sizeBytes: number;
+  /** SHA-256 identity of the quarantined bytes. No filesystem path is exposed. */
+  sha256: string;
+  /** The exact SHA-256 ClamAV scanned; approval/export must still match it. */
+  scannedSha256?: string;
   scan?: QuarantineScan;
   approvedAt?: string;
   releasedAt?: string;
