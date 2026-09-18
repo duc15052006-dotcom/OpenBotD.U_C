@@ -390,6 +390,28 @@ export function createComputerRoutes(
     }
   });
 
+  /**
+   * Emergency stop for every Computer in this deployment.
+   *
+   * Admin-only and intentionally non-destructive: it stops runtime activity but keeps profiles,
+   * workspaces and quarantined files so a later Start can resume them.
+   */
+  routes.post("/stop-all", requireUser, async (context) => {
+    const denied = requireAdmin(context);
+    if (denied) return denied;
+
+    const record = context.var.actor;
+    const actor: ActionActor = {
+      id: record.id,
+      ...(record.email === DEV_ACTOR_EMAIL ? {} : { userId: record.id }),
+    };
+    try {
+      return context.json(await gateway.stopAllComputers(actor));
+    } catch (error) {
+      return context.json(errorBody(error), statusFor(error));
+    }
+  });
+
   routes.get("/:botId/computers", async (context) => {
     // The session guard and the question of whether this person may act as the Bot in the path are
     // both applied by the middleware above. Neither is the question here: the answer is the whole
