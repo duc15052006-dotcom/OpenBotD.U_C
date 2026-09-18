@@ -136,12 +136,15 @@ mod tests {
         let root = scratch("release-live");
         let version = resolve_version(&root).expect("resolve the public release");
         assert!(deployment::installed(&root).is_none());
-        deployment::fetch(&root, &version).expect("download the tagged deployment and manifest");
-        assert_eq!(deployment::installed(&root).unwrap().version, version);
+        deployment::fetch(&root, &version).expect("download the release deployment and manifest");
+        let installed = deployment::installed(&root).unwrap();
+        assert_eq!(installed.version, version);
         let images: deployment::Images =
             serde_json::from_slice(&std::fs::read(deployment::images_path(&root)).unwrap())
                 .unwrap();
         assert_eq!(images.version, version);
+        assert_eq!(installed.commit, images.commit);
+        assert_eq!(images.commit.len(), 40);
         let package: serde_json::Value =
             serde_json::from_slice(&std::fs::read(root.join("package.json")).unwrap()).unwrap();
         assert_eq!(package["version"], version.trim_start_matches('v'));
@@ -153,7 +156,7 @@ mod tests {
             version
         );
         assert!(!deployment::needs_fetch(&root, &version));
-        println!("Downloaded and pinned {version}; tagged source, image manifest, and offline reuse verified.");
+        println!("Downloaded and pinned {version}; commit-bound source, image manifest, and offline reuse verified.");
         std::fs::remove_dir_all(root).unwrap();
     }
 }
