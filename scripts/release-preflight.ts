@@ -96,7 +96,11 @@ function checkDesktopBoundary(): void {
     }
   }
   const http = csp.match(/http:\/\/[^\s;]+/g) ?? [];
-  if (http.some((source) => source !== "http://ipc.localhost")) {
+  const allowedTauriHttpOrigins = new Set([
+    "http://ipc.localhost",
+    "http://asset.localhost",
+  ]);
+  if (http.some((source) => !allowedTauriHttpOrigins.has(source))) {
     fail("desktop: production CSP opens a remote HTTP origin");
   }
   if (security.dangerousDisableAssetCspModification === true) {
