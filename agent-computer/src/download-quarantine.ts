@@ -188,10 +188,11 @@ async function findStored(
   const matches = entries.filter(
     (entry) => entry.startsWith(`${id}-`) && entry.endsWith(METADATA_SUFFIX),
   );
-  if (matches.length !== 1) {
+  const metadata = matches[0];
+  if (matches.length !== 1 || !metadata) {
     throw new QuarantineStateError("That quarantined download was not found.");
   }
-  return readStoredMetadata(join(directory, matches[0]!), botId);
+  return readStoredMetadata(join(directory, metadata), botId);
 }
 
 export async function listQuarantinedDownloads(
