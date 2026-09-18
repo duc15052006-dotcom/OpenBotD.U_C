@@ -12,7 +12,7 @@ import {
   stop,
 } from "./docker";
 import { registerEntry } from "./identity";
-import { namesFor } from "./names";
+import { type ComputerNames, namesFor } from "./names";
 import { computerMemoryBytes } from "./computer-memory-bytes";
 import { listenPort } from "./listen-port";
 
@@ -92,43 +92,84 @@ function resolve(raw: string) {
   return namesFor(raw);
 }
 
+async function ensureComputer(names: ComputerNames) {
+  // Registered before the computer is handed out, so it can prove which Bot it is from its first
+  // request.
+  const identity = await registerEntry(names);
+  const state = await ensure(names, {
+    image,
+    environment: environmentFor(names.botId),
+    ...(network ? { network } : {}),
+    ...(runtime ? { runtime } : {}),
+    ...(memoryBytes ? { memoryBytes } : {}),
+    ...(spireSocketVolume ? { spireSocketVolume } : {}),
+  });
+  return {
+    ...state,
+    ...(identity.registered
+      ? { spiffeId: identity.spiffeId }
+      : { identity: identity.reason }),
+  };
+}
+
+async function wasRunning(botId: string): Promise<boolean> {
+  const existing = (await listOwned()).find((computer) => computer.botId === botId);
+  return existing?.status.toLowerCase() === "running";
+}
+
+function supervisorFailure(error: unknown): { status: 409 | 503; error: string } | null {
+  if (error instanceof NameHeldError) {
+    return { status: 409, error: error.message };
+  }
+  if (
+    error instanceof DockerUnavailableError ||
+    error instanceof ComputerNotAnsweringError
+  ) {
+    return { status: 503, error: error.message };
+  }
+  return null;
+}
+
 app.post("/computers/:botId/ensure", async (context) => {
   const parsed = resolve(context.req.param("botId"));
   if (!parsed.ok) return context.json({ error: parsed.reason }, 400);
 
   try {
-    // Registered before the computer is handed out, so it can prove which Bot it is from its first
-    // request.
-    const identity = await registerEntry(parsed.names);
-
-    const state = await ensure(parsed.names, {
-      image,
-      environment: environmentFor(parsed.names.botId),
-      ...(network ? { network } : {}),
-      ...(runtime ? { runtime } : {}),
-      ...(memoryBytes ? { memoryBytes } : {}),
-      ...(spireSocketVolume ? { spireSocketVolume } : {}),
-    });
-    return context.json({
-      ...state,
-      ...(identity.registered
-        ? { spiffeId: identity.spiffeId }
-        : { identity: identity.reason }),
-    });
+    return context.json(await ensureComputer(parsed.names));
   } catch (error) {
-    // A held name is not an outage. 409 says the conflict is with something already there, so an
-    // operator reads the message rather than going to look at a daemon that is working.
-    if (error instanceof NameHeldError) {
-      return context.json({ error: error.message }, 409);
-    }
-    // Not ready is a 503 like an outage is, because the caller's next move is the same: wait and
-    // ask again. The message is what differs, and it is the part an operator acts on.
-    if (
-      error instanceof DockerUnavailableError ||
-      error instanceof ComputerNotAnsweringError
-    ) {
-      return context.json({ error: error.message }, 503);
-    }
+    const failure = supervisorFailure(error);
+    if (failure) return context.json({ error: failure.error }, failure.status);
+    throw error;
+  }
+});
+
+app.post("/computers/:botId/start", async (context) => {
+  const parsed = resolve(context.req.param("botId"));
+  if (!parsed.ok) return context.json({ error: parsed.reason }, 400);
+
+  try {
+    const alreadyRunning = await wasRunning(parsed.names.botId);
+    const state = await ensureComputer(parsed.names);
+    return context.json({ ...state, wasRunning: alreadyRunning });
+  } catch (error) {
+    const failure = supervisorFailure(error);
+    if (failure) return context.json({ error: failure.error }, failure.status);
+    throw error;
+  }
+});
+
+app.post("/computers/:botId/restart", async (context) => {
+  const parsed = resolve(context.req.param("botId"));
+  if (!parsed.ok) return context.json({ error: parsed.reason }, 400);
+
+  try {
+    const alreadyRunning = await wasRunning(parsed.names.botId);
+    await stop(parsed.names);
+    const state = await ensureComputer(parsed.names);
+    return context.json({ ...state, wasRunning: alreadyRunning });
+  } catch (error) {
+    const failure = supervisorFailure(error);
+    if (failure) return context.json({ error: failure.error }, failure.status);
     throw error;
   }
 });
