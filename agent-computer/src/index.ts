@@ -824,7 +824,12 @@ serve<StreamData>({
      * only asks it for computers the provider already reports as running.
      */
     if (url.pathname === "/metrics" && request.method === "GET") {
-      return json({ metrics: await collectComputerMetrics(WORKSPACE_ROOT) });
+      return json({
+        metrics: {
+          ...(await collectComputerMetrics(WORKSPACE_ROOT)),
+          browserRunning: profiles.isLive(botId),
+        },
+      });
     }
 
     /**
