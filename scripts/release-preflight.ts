@@ -384,8 +384,12 @@ function checkDesktopUpdatePath(): void {
   }
 
   for (const evidence of [
+    "pub commit: String",
     "ensure_manifest_version(&manifest, version)?",
-    "expected_manifest_version(root, &manifest)?",
+    "ensure_manifest_commit(&manifest)?",
+    "expected_manifest_identity(root, &manifest)?",
+    "record(root, version, &manifest.commit)",
+    "archive/{commit}.tar.gz",
     "expected_image_repository",
     "validated_reference",
     "@sha256:",
@@ -393,6 +397,12 @@ function checkDesktopUpdatePath(): void {
     if (!deployment.includes(evidence)) {
       fail(`desktop: deployment manifest identity gate is missing ${evidence}`);
     }
+  }
+  if (deployment.includes("archive/refs/tags/")) {
+    fail("desktop: deployment source download still trusts a mutable release tag");
+  }
+  if (!releaseSource.includes("commit: $commit")) {
+    fail("release: container image manifest no longer records the exact source commit");
   }
 
   for (const evidence of [
