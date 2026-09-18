@@ -333,7 +333,9 @@ function checkComputerSandboxBoundary(): void {
     "defaultComputerNanoCpus",
   ]) {
     if (!computerQueries.includes(evidence)) {
-      fail(`computer: Computer Manager capacity contract is missing ${evidence}`);
+      fail(
+        `computer: Computer Manager capacity contract is missing ${evidence}`,
+      );
     }
   }
   if (!computersPage.includes("computerStartWarning")) {
