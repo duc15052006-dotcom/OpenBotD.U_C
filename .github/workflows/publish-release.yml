@@ -511,7 +511,31 @@ jobs:
               -f "ref=refs/tags/$VERSION" -f "sha=$GITHUB_SHA" >/dev/null
           fi
 
-          if gh release view "$VERSION" >/dev/null 2>&1; then
+          if existing_release="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$VERSION" 2>/dev/null)"; then
+            if [ "$(jq -r '.draft' <<< "$existing_release")" != "false" ] || [ "$(jq -r '.prerelease' <<< "$existing_release")" != "false" ]; then
+              echo "::error::$VERSION already has a draft or prerelease record. Refusing to silently change release visibility."
+              exit 1
+            fi
+
+            mapfile -t release_installers < <(find windows-release -maxdepth 1 -type f -name '*-setup.exe')
+            if [ "${#release_installers[@]}" -ne 1 ]; then
+              echo "::error::Expected exactly one signed Windows installer before checking existing release assets."
+              exit 1
+            fi
+            installer_name="$(basename "${release_installers[0]}")"
+            unexpected_assets="$(jq -r --arg installer "$installer_name" '
+              [.assets[].name | select(
+                . != "container-images.json" and
+                . != $installer and
+                . != "build-version.json" and
+                . != "signatures.json"
+              )] | join(",")
+            ' <<< "$existing_release")"
+            if [ -n "$unexpected_assets" ]; then
+              echo "::error::$VERSION contains unexpected existing assets: $unexpected_assets"
+              exit 1
+            fi
+
             gh release edit "$VERSION" --title "$VERSION" --notes-file notes.md
             gh release upload "$VERSION" container-images.json windows-release/*-setup.exe windows-release/build-version.json windows-signatures/signatures.json --clobber
           else
