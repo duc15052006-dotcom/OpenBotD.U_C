@@ -711,7 +711,7 @@ function pendingLabel(request: HostAccessPendingOperation) {
 }
 
 
-function computerStartWarning(
+export function computerStartWarning(
   fleet:
     | {
         computers: Array<{
