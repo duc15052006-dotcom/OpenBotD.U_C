@@ -29,6 +29,22 @@ export type ComputerStatus = {
   canManage: boolean;
 };
 
+export type ComputerResourceMetrics = {
+  cpuPercent: number | null;
+  memoryUsedBytes: number | null;
+  memoryLimitBytes: number | null;
+  workspaceUsedBytes: number | null;
+  workspaceTotalBytes: number | null;
+  measuredAt: string;
+};
+
+export type ComputerResourceReport = {
+  botId: string;
+  state: ComputerState;
+  reason?: string;
+  metrics?: ComputerResourceMetrics;
+};
+
 /**
  * Whether the boundary acts on its verdict.
  *
@@ -48,6 +64,7 @@ export const computerKeys = {
   all: ["computers"] as const,
   fleet: () => ["computers", "fleet"] as const,
   status: (botId: string) => ["computers", "status", botId] as const,
+  metrics: (botId: string) => ["computers", "metrics", botId] as const,
   policy: () => ["computers", "policy"] as const,
 };
 
@@ -80,6 +97,19 @@ export function computerStatusQueryOptions(botId: string) {
       const response = await client(
         `/api/computers/${encodeURIComponent(botId)}/status`,
         { fallback: "The computer status could not be read." },
+      );
+      return response.json();
+    },
+  });
+}
+
+export function computerMetricsQueryOptions(botId: string) {
+  return queryOptions({
+    queryKey: computerKeys.metrics(botId),
+    queryFn: async (): Promise<ComputerResourceReport> => {
+      const response = await client(
+        `/api/computers/${encodeURIComponent(botId)}/metrics`,
+        { fallback: "Computer resource usage could not be read." },
       );
       return response.json();
     },
