@@ -399,6 +399,7 @@ jobs:
         env:
           VERSION: ${{ needs.metadata.outputs.version }}
           COMMIT: ${{ github.sha }}
+          PUBLISHER: ${{ vars.CODE_SIGNING_PUBLISHER }}
         run: |
           set -euo pipefail
           release="${VERSION#v}"
@@ -409,10 +410,12 @@ jobs:
           test "$(jq -r .releaseVersion "$build")" = "$release"
           test "$(jq -r .channel "$build")" = "release"
           test "$(jq -r .sourceSha "$build")" = "$COMMIT"
+          test -n "$PUBLISHER"
           test "$(jq -r .expectedVersion "$evidence")" = "$release"
           test "$(jq -r .sourceSha "$evidence")" = "$COMMIT"
+          test "$(jq -r .expectedPublisher "$evidence")" = "$PUBLISHER"
           test "$(jq -r '.files | length' "$evidence")" = "2"
-          test "$(jq -r '[.files[] | select(.status == "Valid" and .publisher == "Tawkit, Inc." and (.timestampSubject | length > 0))] | length' "$evidence")" = "2"
+          test "$(jq -r --arg publisher "$PUBLISHER" '[.files[] | select(.status == "Valid" and .publisher == $publisher and (.timestampSubject | length > 0))] | length' "$evidence")" = "2"
 
           mapfile -t installers < <(find windows-release -maxdepth 1 -type f -name '*-setup.exe')
           if [ "${#installers[@]}" -ne 1 ]; then
