@@ -73,6 +73,10 @@ jobs:
               echo "::error::package.json says $current but v$current was never tagged."
               exit 1
             }
+            git merge-base --is-ancestor "refs/tags/v$current" HEAD || {
+              echo "::error::v$current exists but is not an ancestor of HEAD. Refusing to bump from an unrelated release line."
+              exit 1
+            }
           fi
 
           # CHANGELOG.md is written by hand, for the person deciding whether to upgrade. This

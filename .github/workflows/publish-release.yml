@@ -34,26 +34,33 @@ jobs:
               await github.rest.repos.listPullRequestsAssociatedWithCommit({
                 owner, repo, commit_sha: context.sha,
               });
-            const pull = pulls.find((candidate) =>
+            // GitHub's commit -> associated PR relation survives merge, squash and rebase.
+            // Do not compare merge_commit_sha: for squash/rebase it is not a stable classifier for
+            // the commit that landed on main, which can silently turn a real release merge into a
+            // normal push. The push itself already proves context.sha is now on main; association
+            // proves GitHub ties that exact commit to the reviewed PR.
+            const candidates = pulls.filter((candidate) =>
               candidate.base.ref === "main" &&
               candidate.merged_at !== null &&
-              candidate.merge_commit_sha === context.sha
+              /^release\/publish\/v\d+\.\d+\.\d+$/.test(candidate.head.ref) &&
+              candidate.head.repo?.full_name === `${owner}/${repo}` &&
+              candidate.labels.some((label) => label.name === "release")
             );
-            if (!pull) {
-              // Not a merge commit of a reviewed PR. That is most pushes; it is not an error.
+            if (candidates.length !== 1) {
+              // Zero is an ordinary non-release push. More than one is ambiguous and therefore also
+              // fails closed rather than guessing which version should be published.
               core.setOutput("head_ref", "");
               core.setOutput("trusted", "false");
+              if (candidates.length > 1) {
+                core.warning(
+                  `Commit ${context.sha} is associated with multiple trusted release PRs; refusing to publish.`
+                );
+              }
               return;
             }
-            // A release branch name is not enough on its own: a fork can open a PR from a branch
-            // with any name it likes. The branch must be in this repository and the PR must carry
-            // the label, which only somebody with write access can add.
-            const trusted =
-              /^release\/publish\/v\d+\.\d+\.\d+$/.test(pull.head.ref) &&
-              pull.head.repo?.full_name === `${owner}/${repo}` &&
-              pull.labels.some((label) => label.name === "release");
+            const pull = candidates[0];
             core.setOutput("head_ref", pull.head.ref);
-            core.setOutput("trusted", String(trusted));
+            core.setOutput("trusted", "true");
       - id: release
         name: Decide
         env:
