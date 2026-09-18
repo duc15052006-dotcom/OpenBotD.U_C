@@ -11,6 +11,8 @@ mod desktop_telemetry;
 mod test_support;
 #[cfg(test)]
 mod model_connection_tests;
+#[cfg(test)]
+mod show_route_tests;
 
 use openbot_desktop_lib::{
     acquire, deployment, deployment_release, engine, env as openbot_env, harness, host_access,
