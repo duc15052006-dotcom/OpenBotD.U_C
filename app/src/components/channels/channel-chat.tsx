@@ -18,6 +18,7 @@ import {
 } from "@/components/channels/transcript-messages";
 import { agentListQueryOptions } from "@/lib/agents/queries";
 import { attachmentUrl } from "@/lib/channels/attachments";
+import { resolveChannelResponder } from "@/lib/channels/responders";
 import { routeMessage } from "@/lib/channels/route";
 import {
   recordChannelActivityMutationOptions,
@@ -933,10 +934,14 @@ export function ChannelChat({
             // Group channels route an explicit @mention to that coworker. Without a mention the
             // current responder remains active, so a natural follow-up continues with the Bot that
             // just answered instead of jumping back to the first member.
-            const targetId =
-              draft.agentId && channel.agentIds.includes(draft.agentId)
-                ? draft.agentId
-                : runtimeAgentId;
+            const targetId = resolveChannelResponder(
+              channel.agentIds,
+              draft.agentId,
+              runtimeAgentId,
+            );
+            if (!targetId) {
+              throw new Error("This channel has no active coworkers.");
+            }
 
             // Skills remain single-Bot affordances. Group channels hide the slash menu below, so
             // these are only populated in a direct channel where the runtime Bot cannot change.
