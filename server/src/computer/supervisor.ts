@@ -13,7 +13,11 @@
  * honest about being one shared computer.
  */
 
-import type { ComputerLocation, ComputerProvider } from "./provider";
+import type {
+  ComputerHostCapacity,
+  ComputerLocation,
+  ComputerProvider,
+} from "./provider";
 import type { ComputerStatus } from "./schema";
 
 type SupervisorComputerLocation = {
@@ -96,6 +100,11 @@ export function createDockerSupervisorProvider(
       stopped?: boolean;
       reset?: boolean;
       computers?: SupervisorComputerLocation[];
+      memoryBytes?: number | null;
+      logicalCpus?: number | null;
+      maxActiveComputers?: number | null;
+      defaultComputerMemoryBytes?: number | null;
+      defaultComputerNanoCpus?: number | null;
     } | null;
     if (!response.ok) {
       throw new SupervisorError(
@@ -249,6 +258,13 @@ export function createDockerSupervisorProvider(
         `/computers/${encodeURIComponent(botId)}/reset`,
       )) as { reset?: boolean } | null;
       return { cleared: result?.reset === true };
+    },
+
+    async capacity(): Promise<ComputerHostCapacity | undefined> {
+      const result = (await call("/capacity", "GET")) as
+        | ComputerHostCapacity
+        | undefined;
+      return result;
     },
 
     list,
