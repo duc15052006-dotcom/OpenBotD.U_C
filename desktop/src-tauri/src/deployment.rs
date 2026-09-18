@@ -30,16 +30,28 @@ const IMAGES: &str = "container-images.json";
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Installed {
     pub version: String,
+    pub commit: String,
 }
 
-/// The tarball GitHub publishes for a tag.
+fn is_commit_sha(value: &str) -> bool {
+    value.len() == 40
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
+/// The source archive for the immutable commit recorded in the release manifest.
 ///
-/// A release asset rather than a branch, and https rather than git, so nothing needs a git client
-/// or credentials to get a deployment.
-pub fn tarball_url(version: &str) -> Result<String, String> {
+/// A commit SHA rather than the release tag is load-bearing here: tags can be moved after an
+/// installer ships, while the commit written into the signed release manifest is the exact source
+/// whose images and desktop release were produced together.
+pub fn tarball_url(commit: &str) -> Result<String, String> {
+    if !is_commit_sha(commit) {
+        return Err("The release manifest does not contain a valid source commit.".into());
+    }
     let repository = crate::update::release_repository()?;
     Ok(format!(
-        "https://github.com/{repository}/archive/refs/tags/{version}.tar.gz"
+        "https://github.com/{repository}/archive/{commit}.tar.gz"
     ))
 }
 
@@ -63,6 +75,7 @@ pub struct Image {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Images {
     pub version: String,
+    pub commit: String,
     pub images: BTreeMap<String, Image>,
 }
 
@@ -78,11 +91,19 @@ pub const IMAGE_VARIABLES: [(&str, &str); 5] = [
     ("agent-langgraph", "LANGGRAPH_IMAGE"),
 ];
 
-/// A stored manifest must describe the exact deployment version stamped beside it.
-fn expected_manifest_version(root: &Path, manifest: &Images) -> Result<(), String> {
+/// A stored manifest must describe the exact release and source commit stamped beside it.
+fn expected_manifest_identity(root: &Path, manifest: &Images) -> Result<(), String> {
     let installed = installed(root)
-        .ok_or_else(|| format!("{IMAGES} exists but this deployment has no recorded version."))?;
-    ensure_manifest_version(manifest, &installed.version)
+        .ok_or_else(|| format!("{IMAGES} exists but this deployment has no recorded identity."))?;
+    ensure_manifest_version(manifest, &installed.version)?;
+    ensure_manifest_commit(manifest)?;
+    if manifest.commit != installed.commit {
+        return Err(format!(
+            "{IMAGES} points at source commit {}, but this deployment was installed from {}.",
+            manifest.commit, installed.commit
+        ));
+    }
+    Ok(())
 }
 
 fn ensure_manifest_version(manifest: &Images, expected: &str) -> Result<(), String> {
@@ -90,6 +111,15 @@ fn ensure_manifest_version(manifest: &Images, expected: &str) -> Result<(), Stri
         return Err(format!(
             "{IMAGES} says it belongs to {}, but this deployment is {expected}.",
             manifest.version
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_manifest_commit(manifest: &Images) -> Result<(), String> {
+    if !is_commit_sha(&manifest.commit) {
+        return Err(format!(
+            "{IMAGES} does not contain a canonical source commit SHA."
         ));
     }
     Ok(())
@@ -145,7 +175,7 @@ pub fn image_variables(root: &Path) -> Result<Vec<(String, String)>, String> {
         .map_err(|error| format!("could not read {}: {error}", images_path(root).display()))?;
     let manifest: Images = serde_json::from_str(&text)
         .map_err(|error| format!("{IMAGES} is not readable: {error}"))?;
-    expected_manifest_version(root, &manifest)?;
+    expected_manifest_identity(root, &manifest)?;
     pin(&manifest)
 }
 
@@ -165,7 +195,7 @@ pub fn reference(root: &Path, published: &str) -> Result<String, String> {
         .map_err(|error| format!("could not read {}: {error}", images_path(root).display()))?;
     let manifest: Images = serde_json::from_str(&text)
         .map_err(|error| format!("{IMAGES} is not readable: {error}"))?;
-    expected_manifest_version(root, &manifest)?;
+    expected_manifest_identity(root, &manifest)?;
     validated_reference(&manifest, published)
 }
 
@@ -190,13 +220,21 @@ pub fn stamp_path(root: &Path) -> PathBuf {
 pub fn installed(root: &Path) -> Option<Installed> {
     std::fs::read_to_string(stamp_path(root))
         .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
+        .and_then(|text| serde_json::from_str::<Installed>(&text).ok())
+        .filter(|installed| is_commit_sha(&installed.commit))
 }
 
-pub fn record(root: &Path, version: &str) -> std::io::Result<()> {
+pub fn record(root: &Path, version: &str, commit: &str) -> std::io::Result<()> {
+    if !is_commit_sha(commit) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "release commit is not a canonical SHA",
+        ));
+    }
     std::fs::create_dir_all(root)?;
     let stamp = Installed {
         version: version.to_string(),
+        commit: commit.to_string(),
     };
     std::fs::write(
         stamp_path(root),
@@ -214,13 +252,19 @@ pub fn record(root: &Path, version: &str) -> std::io::Result<()> {
 /// stamp that matches and no manifest, and re-fetching is a better answer than an error about a
 /// file the person has never heard of.
 pub fn needs_fetch(root: &Path, wanted: &str) -> bool {
-    if !images_path(root).exists() {
+    let Some(found) = installed(root) else {
+        return true;
+    };
+    if found.version != wanted {
         return true;
     }
-    match installed(root) {
-        Some(found) => found.version != wanted,
-        None => true,
-    }
+    let Ok(text) = std::fs::read_to_string(images_path(root)) else {
+        return true;
+    };
+    let Ok(manifest) = serde_json::from_str::<Images>(&text) else {
+        return true;
+    };
+    expected_manifest_identity(root, &manifest).is_err()
 }
 
 /// Everything the three host processes and Compose need from the tree.
@@ -243,12 +287,13 @@ pub const ALSO_COPIED: [&str; 7] = [
     "bunfig.toml",
 ];
 
-/// Fetch the tagged tarball and lay the deployment out under `root`.
+/// Fetch the release manifest first, then lay down source from its immutable commit.
 ///
 /// The stamp is written last. Anything that fails before that leaves a directory without one, which
 /// `needs_fetch` treats as absent, so an interrupted download is retried rather than half-run.
 pub fn fetch(root: &Path, version: &str) -> Result<(), String> {
-    let tarball = tarball_url(version)?;
+    let (manifest_body, manifest) = fetch_manifest(version)?;
+    let tarball = tarball_url(&manifest.commit)?;
     let body = get(&tarball).map_err(|error| {
         format!("could not fetch {version}: {error}. Is that a released version?")
     })?;
@@ -258,9 +303,11 @@ pub fn fetch(root: &Path, version: &str) -> Result<(), String> {
 
     unpack(root, &body)?;
 
-    fetch_images(root, version)?;
+    std::fs::write(images_path(root), &manifest_body)
+        .map_err(|error| format!("could not write {IMAGES}: {error}"))?;
 
-    record(root, version).map_err(|error| format!("could not record the version: {error}"))
+    record(root, version, &manifest.commit)
+        .map_err(|error| format!("could not record the release identity: {error}"))
 }
 
 /// Where an archive entry may be written under `root`, or `None` when it is not
@@ -343,20 +390,20 @@ pub fn unpack(root: &Path, body: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-/// Fetch the image manifest and check it before anything depends on it.
+/// Fetch the image manifest and verify its release/source identity before source is downloaded.
 ///
-/// Parsed here rather than at start-up so a release missing an image fails while the person is
-/// still looking at a screen that says what is being fetched, not later inside Compose's output.
-fn fetch_images(root: &Path, version: &str) -> Result<(), String> {
+/// Parsed before the source archive so a release with a missing/malformed identity fails before an
+/// untrusted or mutable ref can choose which application code lands on disk.
+fn fetch_manifest(version: &str) -> Result<(Vec<u8>, Images), String> {
     let images = images_url(version)?;
     let body = get(&images)
         .map_err(|error| format!("could not fetch the image list for {version}: {error}"))?;
     let manifest: Images = serde_json::from_slice(&body)
         .map_err(|error| format!("the image list for {version} is not readable: {error}"))?;
     ensure_manifest_version(&manifest, version)?;
+    ensure_manifest_commit(&manifest)?;
     pin(&manifest)?;
-    std::fs::write(images_path(root), &body)
-        .map_err(|error| format!("could not write {IMAGES}: {error}"))
+    Ok((body, manifest))
 }
 
 /// Fetch a URL into memory.
