@@ -30,6 +30,20 @@ function text(csp: Csp | string): string {
         .join(" ");
 }
 
+type Capability = {
+  windows?: string[];
+  permissions?: string[];
+};
+
+function capability(): Capability {
+  return JSON.parse(
+    readFileSync(
+      new URL("../src-tauri/capabilities/default.json", import.meta.url),
+      "utf8",
+    ),
+  ) as Capability;
+}
+
 describe("desktop CSP", () => {
   test("production enables CSP and keeps remote network access out of the setup webview", () => {
     const security = config().app?.security;
@@ -65,5 +79,18 @@ describe("desktop CSP", () => {
     expect(
       config().app?.security?.dangerousDisableAssetCspModification,
     ).not.toBe(true);
+  });
+});
+
+describe("desktop Tauri capability surface", () => {
+  test("the webview receives only the event capability it actually uses", () => {
+    const allowed = capability();
+    expect(allowed.windows).toEqual(["main"]);
+    expect(allowed.permissions).toEqual(["core:event:default"]);
+    expect(
+      allowed.permissions?.some((permission) =>
+        /shell|opener|dialog|fs|process|http/i.test(permission),
+      ),
+    ).toBe(false);
   });
 });
