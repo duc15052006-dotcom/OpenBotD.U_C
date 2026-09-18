@@ -218,13 +218,10 @@ async function readStoredMetadata(
         : filename.slice(id.length + 1),
     sourceUrl: typeof raw.sourceUrl === "string" ? raw.sourceUrl : "",
     savedAt:
-      typeof raw.savedAt === "string"
-        ? raw.savedAt
-        : new Date().toISOString(),
+      typeof raw.savedAt === "string" ? raw.savedAt : new Date().toISOString(),
     sizeBytes: recordedSize,
     sha256: recordedSha,
-    ...(typeof raw.scannedSha256 === "string" &&
-    SHA256.test(raw.scannedSha256)
+    ...(typeof raw.scannedSha256 === "string" && SHA256.test(raw.scannedSha256)
       ? { scannedSha256: raw.scannedSha256 }
       : {}),
     ...(raw.scan && typeof raw.scan === "object"
