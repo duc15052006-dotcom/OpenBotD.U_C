@@ -1,6 +1,7 @@
 import {
   IconAdjustments,
   IconArrowsExchange,
+  IconBook,
   IconClock,
   IconCpu,
   IconPencil,
@@ -16,6 +17,7 @@ import { AbstractAvatar } from "@/components/agents/abstract-avatar";
 import { CallbackTokenPanel } from "@/components/agents/callback-token-panel";
 import { HandoffPanel } from "@/components/agents/handoff-panel";
 import { InstructionsPanel } from "@/components/agents/instructions-panel";
+import { KnowledgePanel } from "@/components/agents/knowledge-panel";
 import { ModelSettingsPanel } from "@/components/agents/model-settings-panel";
 import { SkillsPanel } from "@/components/agents/skills-panel";
 import { RoutinesList } from "@/components/routines/routines-list";
@@ -115,6 +117,7 @@ const SECTIONS = [
   { id: "model", name: "Model & API", icon: IconCpu },
   { id: "instructions", name: "Instructions", icon: IconPencil },
   { id: "skills", name: "Skills", icon: IconPuzzle },
+  { id: "knowledge", name: "Knowledge", icon: IconBook },
   { id: "access", name: "Access", icon: IconPuzzle },
   { id: "connection", name: "Connection", icon: IconPlugConnected },
   { id: "handoff", name: "Handoff", icon: IconArrowsExchange },
@@ -234,6 +237,8 @@ function AgentDialogBody({ agentId }: { agentId: string }) {
               <InstructionsPanel agentId={agentId} />
             ) : section === "skills" ? (
               <SkillsPanel agentId={agentId} />
+            ) : section === "knowledge" ? (
+              <KnowledgePanel agentId={agentId} />
             ) : section === "access" ? (
               <AccessSection agentId={agentId} />
             ) : section === "connection" ? (
