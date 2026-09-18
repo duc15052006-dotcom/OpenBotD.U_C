@@ -23,6 +23,12 @@ import {
 } from "./control";
 import { identity } from "./identity";
 import { collectComputerMetrics } from "./metrics";
+import {
+  approveQuarantinedDownload,
+  listQuarantinedDownloads,
+  QuarantineStateError,
+  scanQuarantinedDownload,
+} from "./download-quarantine";
 import { createProfiles, numberFromEnv, VIEWPORT } from "./profiles";
 import {
   parseExecTimeout,
@@ -211,6 +217,7 @@ function botIdOf(request: Request, fallback?: string | null): string {
  * lives in workspace.ts.
  */
 const WORKSPACE_ROOT = process.env.WORKSPACE_DIR?.trim() || "/workspace";
+const QUARANTINE_ROOT = process.env.QUARANTINE_DIR?.trim() || "/quarantine";
 const WORKSPACE_MAX_BYTES = numberFromEnv(
   "COMPUTER_WORKSPACE_MAX_BYTES",
   4 * 1024 * 1024 * 1024,
@@ -937,6 +944,86 @@ serve<StreamData>({
               error instanceof Error ? error.message : "Screenshot failed.",
           },
           502,
+        );
+      }
+    }
+
+    /**
+     * Untrusted browser downloads for this Bot only.
+     *
+     * Listing and scanning never move a file out of quarantine. Approval is a separate, explicit
+     * transition and still does not copy, open or execute the file; the native export path will be
+     * responsible for choosing a host destination and marking the final release.
+     */
+    if (url.pathname === "/quarantine" && request.method === "GET") {
+      try {
+        return json({
+          downloads: await listQuarantinedDownloads(QUARANTINE_ROOT, botId),
+        });
+      } catch (error) {
+        return json(
+          { error: describe(error, "The quarantine could not be listed.") },
+          error instanceof QuarantineStateError ? 409 : 500,
+        );
+      }
+    }
+
+    if (url.pathname === "/quarantine/scan" && request.method === "POST") {
+      const body = (await request.json().catch(() => null)) as {
+        id?: unknown;
+      } | null;
+      if (typeof body?.id !== "string" || !body.id) {
+        return json({ error: "A quarantine download id is required." }, 400);
+      }
+      try {
+        return json(
+          await scanQuarantinedDownload(QUARANTINE_ROOT, botId, body.id),
+        );
+      } catch (error) {
+        return json(
+          {
+            error: describe(
+              error,
+              "The quarantined file could not be scanned.",
+            ),
+          },
+          error instanceof QuarantineStateError ? 409 : 500,
+        );
+      }
+    }
+
+    if (url.pathname === "/quarantine/approve" && request.method === "POST") {
+      const body = (await request.json().catch(() => null)) as {
+        id?: unknown;
+        botId?: unknown;
+        confirm?: unknown;
+      } | null;
+      if (
+        typeof body?.id !== "string" ||
+        body.confirm !== "APPROVE" ||
+        body.botId !== botId
+      ) {
+        return json(
+          {
+            error:
+              "Approval requires APPROVE confirmation, the exact Bot id, and the quarantine download id.",
+          },
+          400,
+        );
+      }
+      try {
+        return json(
+          await approveQuarantinedDownload(QUARANTINE_ROOT, botId, body.id),
+        );
+      } catch (error) {
+        return json(
+          {
+            error: describe(
+              error,
+              "The quarantined file could not be approved.",
+            ),
+          },
+          error instanceof QuarantineStateError ? 409 : 500,
         );
       }
     }
