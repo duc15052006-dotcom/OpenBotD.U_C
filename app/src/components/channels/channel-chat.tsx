@@ -220,6 +220,28 @@ function describeAttachments(attachments: readonly Attachment[]): string {
 }
 
 /**
+ * System instruction used when a group-channel message explicitly @mentions a peer Bot.
+ *
+ * The Intelligence thread itself still has one runtime agent, so that Bot is the coordinator. The
+ * addressed peer runs through the durable handoff queue and its answer is relayed back into this
+ * thread. Keeping the routing instruction separate from the person's words preserves the transcript.
+ */
+export function groupMentionInstruction(input: {
+  coordinatorId: string;
+  targetId: string;
+  targetName: string;
+}): string {
+  return [
+    "GROUP CHANNEL ROUTING:",
+    `The person explicitly addressed ${input.targetName} (Bot id: ${input.targetId}), not you (${input.coordinatorId}).`,
+    `Use the message_bot tool exactly once with target "${input.targetId}".`,
+    "Put the person's request into the handoff task faithfully. Preserve constraints and requested output format.",
+    "Do not solve the task yourself and do not choose a different Bot.",
+    `After the handoff is accepted, only tell the person that ${input.targetName} is working on it. The final answer will be relayed back into this conversation.`,
+  ].join("\n");
+}
+
+/**
  * One channel's conversation with one coworker.
  *
  * The local agent id is channel-scoped so two channels with the same coworker keep separate
@@ -848,14 +870,27 @@ export function ChannelChat({
             // typed. Resolved against the same list the menu was built from, so a chip left over from
             // a skill that has since been revoked resolves to nothing rather than to a stale
             // instruction — the menu is refetched, and this reads from it.
-            const skillInstructions = draft.commandIds
-              .map(
+            const mentioned =
+              draft.agentId && draft.agentId !== runtimeAgentId
+                ? agentProfiles?.find((profile) => profile.id === draft.agentId)
+                : undefined;
+            const routingInstruction = mentioned
+              ? groupMentionInstruction({
+                  coordinatorId: runtimeAgentId,
+                  targetId: mentioned.id,
+                  targetName: mentioned.name,
+                })
+              : null;
+
+            const skillInstructions = [
+              routingInstruction,
+              ...draft.commandIds.map(
                 (id) =>
                   skillCommands.find((command) => command.id === id)?.prompt,
-              )
-              .filter((instruction): instruction is string =>
-                Boolean(instruction),
-              );
+              ),
+            ].filter((instruction): instruction is string =>
+              Boolean(instruction),
+            );
 
             await say(draft.text, skillInstructions, draft.attachments);
           }}
