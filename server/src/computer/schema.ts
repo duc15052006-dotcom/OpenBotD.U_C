@@ -407,3 +407,7 @@ export type QuarantineRecord = {
 export type QuarantineListResult = {
   downloads: QuarantineRecord[];
 };
+
+export type QuarantineDeleteResult = {
+  deleted: boolean;
+};
