@@ -833,6 +833,87 @@ fn model_probe_client() -> Result<reqwest::Client, Problem> {
         })
 }
 
+fn forbidden_probe_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(ip) => {
+            let octets = ip.octets();
+            ip.is_unspecified()
+                || ip.is_link_local()
+                || ip.is_multicast()
+                || ip.is_broadcast()
+                // Carrier-grade NAT space contains provider metadata endpoints in some clouds.
+                || (octets[0] == 100 && (64..=127).contains(&octets[1]))
+        }
+        std::net::IpAddr::V6(ip) => {
+            ip.is_unspecified()
+                || ip.is_unicast_link_local()
+                || ip.is_multicast()
+                // Cloud metadata services may use unique-local IPv6 addresses. A setup probe does
+                // not need to reach them; local model endpoints remain available over loopback and
+                // ordinary private IPv4.
+                || (ip.segments()[0] & 0xfe00) == 0xfc00
+        }
+    }
+}
+
+fn protected_endpoint_client(url: &reqwest::Url) -> Result<reqwest::Client, Problem> {
+    use std::net::ToSocketAddrs;
+
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("Do not put credentials in the model endpoint URL.".into());
+    }
+    let host = url
+        .host_str()
+        .ok_or_else(|| Problem::plain("The model endpoint has no host."))?;
+    if host.eq_ignore_ascii_case("metadata.google.internal") {
+        return Err("That address is reserved for machine metadata, not a model endpoint.".into());
+    }
+    let port = url
+        .port_or_known_default()
+        .ok_or_else(|| Problem::plain("The model endpoint has no usable port."))?;
+
+    let addresses: Vec<std::net::SocketAddr> = if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        vec![std::net::SocketAddr::new(ip, port)]
+    } else {
+        (host, port)
+            .to_socket_addrs()
+            .map_err(|error| {
+                Problem::with(
+                    "OpenBot could not resolve the model endpoint.",
+                    error.to_string(),
+                )
+            })?
+            .collect()
+    };
+    if addresses.is_empty() {
+        return Err("The model endpoint did not resolve to an address.".into());
+    }
+    if addresses
+        .iter()
+        .any(|address| forbidden_probe_ip(address.ip()))
+    {
+        return Err(
+            "That model endpoint resolves to a machine-metadata or special-use address that OpenBot will not probe."
+                .into(),
+        );
+    }
+
+    // Resolve once, validate every result, then pin this client to the validated addresses. That
+    // closes the DNS-rebinding window between the safety check and the credential-bearing request
+    // while preserving the original hostname for TLS SNI/certificate verification.
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(10))
+        .resolve_to_addrs(host, &addresses)
+        .build()
+        .map_err(|error| {
+            Problem::with(
+                "OpenBot could not prepare the protected endpoint test.",
+                error.to_string(),
+            )
+        })
+}
+
 fn models_probe_url(base_url: &str) -> Result<reqwest::Url, Problem> {
     let mut url = reqwest::Url::parse(base_url.trim()).map_err(|_| {
         Problem::plain("Enter a valid http:// or https:// model endpoint before testing it.")
@@ -928,8 +1009,8 @@ async fn test_model_connection(
             model,
             ..
         } => {
-            let client = model_probe_client()?;
             let url = models_probe_url(&base_url)?;
+            let client = protected_endpoint_client(&url)?;
             let mut request = client.get(url);
             if !api_key.trim().is_empty() {
                 request = request.bearer_auth(api_key);
