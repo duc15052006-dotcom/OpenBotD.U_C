@@ -202,6 +202,13 @@ export interface ComputerGateway {
   humanInput(botId: string, input: HumanInput): Promise<HumanInputResult>;
   computers(): Promise<{
     isolation: "per-bot" | "shared";
+    capacity?: {
+      memoryBytes: number | null;
+      logicalCpus: number | null;
+      maxActiveComputers: number | null;
+      defaultComputerMemoryBytes: number | null;
+      defaultComputerNanoCpus: number | null;
+    };
     computers: {
       botId: string;
       running: boolean;
@@ -733,9 +740,13 @@ export function createComputerGateway(
         }
       };
 
-      const metrics = await Promise.all(computers.map(metricsFor));
+      const [metrics, capacity] = await Promise.all([
+        Promise.all(computers.map(metricsFor)),
+        provider.capacity?.().catch(() => undefined),
+      ]);
       return {
         isolation: provider.isolation,
+        ...(capacity ? { capacity } : {}),
         computers: computers.map((computer, index) => ({
           botId: computer.botId,
           running: computer.status === "running",
