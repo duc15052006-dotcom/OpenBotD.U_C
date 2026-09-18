@@ -6,6 +6,7 @@ import {
   exists,
   inArray,
   isNull,
+  like,
   lt,
   or,
   sql,
@@ -21,12 +22,14 @@ import { type AuditStore, recordAuditEvent } from "../audit";
 import type { AppVariables } from "../auth/guards";
 import type { Database } from "../db/client";
 import { parsePageLimit } from "../paging";
+import { DEFAULT_MAX_ATTEMPTS } from "../work/queue";
 import {
   agentProfiles,
   channelAgents,
   channelMemberships,
   channels,
   intelligenceChannelMappings,
+  workItems,
 } from "../db/schema";
 import {
   CHANNEL_ACTIVITY_TOPIC,
