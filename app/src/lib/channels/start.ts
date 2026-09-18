@@ -40,8 +40,11 @@ export function useStartChannel() {
   const navigate = useNavigate();
   const createChannel = useMutation(createChannelMutationOptions(queryClient));
 
-  const start = async (agentId: string, text: string) => {
-    const channel = await createChannel.mutateAsync([agentId]);
+  const startGroup = async (agentIds: readonly string[], text: string) => {
+    if (agentIds.length === 0) {
+      throw new Error("Choose at least one coworker.");
+    }
+    const channel = await createChannel.mutateAsync([...agentIds]);
     queryClient.setQueryData(channelKeys.detail(channel.id), channel);
     stashFirstMessage(channel.id, text);
     await navigate({
@@ -51,9 +54,12 @@ export function useStartChannel() {
     });
   };
 
+  const start = (agentId: string, text: string) => startGroup([agentId], text);
+
   return {
     pending: createChannel.isPending,
     start,
+    startGroup,
     /** `start`, for a coworker the person chose: the choice is recorded first. */
     startChosen: (agentId: string, text: string) =>
       startWithChosen({ agentId, text, record: routeMessage, start }),
