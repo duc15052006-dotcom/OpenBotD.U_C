@@ -13,6 +13,7 @@ describe("per-Bot computer storage names", () => {
     expect(alpha.names.container).not.toBe(beta.names.container);
     expect(alpha.names.profileVolume).not.toBe(beta.names.profileVolume);
     expect(alpha.names.workspaceVolume).not.toBe(beta.names.workspaceVolume);
+    expect(alpha.names.quarantineVolume).not.toBe(beta.names.quarantineVolume);
   });
 
   test("Bot ids cannot smuggle host paths into derived names", () => {
