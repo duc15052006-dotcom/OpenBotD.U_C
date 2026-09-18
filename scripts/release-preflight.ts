@@ -320,9 +320,9 @@ function checkInteractiveComputerControls(): void {
   const quarantine = read("agent-computer/src/download-quarantine.ts");
 
   for (const evidence of [
-    '"Take control"',
-    '"Return control"',
-    '"Stop viewing"',
+    "Take control",
+    "Return control",
+    "Stop viewing",
     "releaseControl(botId)",
     'sendHumanInput(botId, "click"',
     'sendHumanInput(botId, "type"',
