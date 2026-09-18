@@ -160,6 +160,7 @@ function checkComputerSandboxBoundary(): void {
     "COMPUTER_MEMORY_BYTES: ${COMPUTER_MEMORY_BYTES:-2147483648}",
     "COMPUTER_NANO_CPUS: ${COMPUTER_NANO_CPUS:-2000000000}",
     "COMPUTER_MAX_ACTIVE: ${COMPUTER_MAX_ACTIVE:-3}",
+    "COMPUTER_WORKSPACE_MAX_BYTES: ${COMPUTER_WORKSPACE_MAX_BYTES:-4294967296}",
   ]) {
     if (!compose.includes(evidence)) {
       fail(`computer: Windows-first resource ceiling is missing ${evidence}`);
@@ -287,6 +288,17 @@ function checkComputerSandboxBoundary(): void {
   }
   if (!computerRoutes.includes('routes.post("/stop-all"')) {
     fail("computer: admin Kill All Computers route is missing");
+  }
+
+  const workspace = read("agent-computer/src/workspace.ts");
+  for (const evidence of [
+    "totalBytes: 4 * 1024 * 1024 * 1024",
+    "workspaceUsageBytes",
+    "withWriteLock",
+  ]) {
+    if (!workspace.includes(evidence)) {
+      fail(`computer: workspace disk quota is missing ${evidence}`);
+    }
   }
 }
 
