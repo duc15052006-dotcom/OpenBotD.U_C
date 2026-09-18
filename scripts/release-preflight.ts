@@ -280,6 +280,44 @@ function checkReleaseWiring(): void {
   }
 }
 
+function checkDesktopUpdatePath(): void {
+  const native = read("desktop/src-tauri/src/main.rs");
+  const updater = read("desktop/src-tauri/src/update.rs");
+  const desktopWorkflow = read(".github/workflows/desktop.yml");
+  const signingWorkflow = read(".github/workflows/desktop-signing.yml");
+
+  for (const evidence of [
+    '"updates" => check_for_updates',
+    '"Check for updates"',
+    "update::check_latest_release()",
+  ]) {
+    if (!native.includes(evidence)) {
+      fail(`desktop: native update menu is missing ${evidence}`);
+    }
+  }
+
+  for (const evidence of [
+    "https://api.github.com/repos/{repository}/releases/latest",
+    'parsed.host_str() != Some("github.com")',
+    "latest_numeric > current_numeric",
+  ]) {
+    if (!updater.includes(evidence)) {
+      fail(`desktop: update checker is missing ${evidence}`);
+    }
+  }
+
+  for (const [name, source] of [
+    ["Desktop", desktopWorkflow],
+    ["Windows signing", signingWorkflow],
+  ] as const) {
+    if (!source.includes("OPENBOT_RELEASE_REPOSITORY: ${{ github.repository }}")) {
+      fail(
+        `desktop: ${name} build does not bind update checks to the repository that built the artifact`,
+      );
+    }
+  }
+}
+
 function checkVersionSources(): void {
   const pkg = json("package.json");
   const version = pkg.version;
@@ -303,6 +341,7 @@ function checkVersionSources(): void {
 
 checkDesktopBoundary();
 checkReleaseWiring();
+checkDesktopUpdatePath();
 checkVersionSources();
 
 if (failures.length > 0) {
