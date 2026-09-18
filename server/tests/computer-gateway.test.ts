@@ -287,7 +287,7 @@ describe("the computer gateway", () => {
     const result = await gateway.restartComputer("bot-1", ACTOR);
 
     expect(result.restarted).toBe(true);
-    expect(result.url).toBe("http://agent-computer:4100");
+    expect(result.url).toBe("http://agent-computer:4100/");
     expect(calls).toContain("stop:bot-1");
     expect(calls.some((call) => call.startsWith("reset:"))).toBe(false);
     // One locate happened for the setup snapshot and one for the restart wake.
