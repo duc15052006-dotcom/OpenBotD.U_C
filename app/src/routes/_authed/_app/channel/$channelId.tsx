@@ -1,4 +1,8 @@
-import { IconDeviceDesktop, IconSettings } from "@tabler/icons-react";
+import {
+  IconDeviceDesktop,
+  IconPaperclip,
+  IconSettings,
+} from "@tabler/icons-react";
 import {
   useInfiniteQuery,
   useMutation,
@@ -7,13 +11,14 @@ import {
 } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { motion, useReducedMotion } from "motion/react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import { AgentProfile } from "@/components/agents/agent-profile";
 import { hasUnseenActivity } from "@/components/app-sidebar/app-sidebar";
 import { ChannelAvatar } from "@/components/channels/avatar";
 import { ChannelChat } from "@/components/channels/channel-chat";
 import { DelegationStatus } from "@/components/channels/delegation-status";
+import { SharedFilesDialog } from "@/components/channels/shared-files-dialog";
 import { ActivityLog } from "@/components/computer/activity-log";
 import { ComputerView } from "@/components/computer/computer-view";
 import { useNeedsYou } from "@/components/computer/needs-you";
@@ -85,6 +90,7 @@ function RouteComponent() {
   const isSettingsOpen = settings === true;
   const prefersReducedMotion = useReducedMotion();
   const isWatching = watch === true;
+  const [sharedFilesOpen, setSharedFilesOpen] = useState(false);
   /** The first linked Bot coordinates this Intelligence thread; peers join through durable handoffs. */
   const agentId = channel.data?.agentIds[0];
   /** Only polled while the screen is closed; the screen panel polls control itself. */
@@ -218,6 +224,16 @@ function RouteComponent() {
           </div>
           <div className="flex flex-row gap-1.5">
             <Button
+              aria-label="Shared files"
+              aria-pressed={sharedFilesOpen}
+              className={sharedFilesOpen ? "bg-foreground/5" : undefined}
+              onClick={() => setSharedFilesOpen((open) => !open)}
+              variant="ghost"
+              size="icon"
+            >
+              <IconPaperclip className="size-4.5" />
+            </Button>
+            <Button
               aria-label={
                 needsYou
                   ? "This Bot is waiting for you. Open its screen"
@@ -254,6 +270,11 @@ function RouteComponent() {
           </div>
         </div>
       </div>
+      <SharedFilesDialog
+        channelId={channelId}
+        onOpenChange={setSharedFilesOpen}
+        open={sharedFilesOpen}
+      />
       <DelegationStatus channelId={channelId} />
       <ChannelBody
         channel={channel.data}
