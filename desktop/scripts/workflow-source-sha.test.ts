@@ -2,8 +2,7 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-const SOURCE_SHA_EXPRESSION =
-  `\${{ github.event.pull_request.head.sha || github.sha }}`;
+const SOURCE_SHA_EXPRESSION = `\${{ github.event.pull_request.head.sha || github.sha }}`;
 
 function workflow(name: string): string {
   return readFileSync(

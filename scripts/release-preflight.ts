@@ -47,10 +47,7 @@ function fail(message: string): void {
 }
 
 function hasWorkflowCall(flow: Workflow): boolean {
-  return (
-    object(flow.on) &&
-    Object.hasOwn(flow.on, "workflow_call")
-  );
+  return object(flow.on) && Object.hasOwn(flow.on, "workflow_call");
 }
 
 function jobNeeds(job: WorkflowJob | undefined, dependency: string): boolean {
@@ -506,8 +503,7 @@ function checkDesktopUpdatePath(): void {
     }
   }
 
-  const sourceShaExpression =
-    `\${{ github.event.pull_request.head.sha || github.sha }}`;
+  const sourceShaExpression = `\${{ github.event.pull_request.head.sha || github.sha }}`;
   for (const [name, source] of [
     ["Desktop", desktopWorkflow],
     ["Windows signing", signingWorkflow],
