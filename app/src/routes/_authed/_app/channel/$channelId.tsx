@@ -91,10 +91,11 @@ function RouteComponent() {
    * the Computer and Settings panes follow the Bot the person is actually talking to.
    */
   const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
+  const firstAgentId = channel.data?.agentIds[0];
   useEffect(() => {
-    setActiveAgentId(channel.data?.agentIds[0] ?? null);
-  }, [channel.data?.id, channel.data?.agentIds]);
-  const agentId = activeAgentId ?? channel.data?.agentIds[0];
+    setActiveAgentId(firstAgentId ?? null);
+  }, [channel.data?.id, firstAgentId]);
+  const agentId = activeAgentId ?? firstAgentId;
   /** Only polled while the screen is closed; the screen panel polls control itself. */
   const needsYou = useNeedsYou(agentId, !isWatching);
 
