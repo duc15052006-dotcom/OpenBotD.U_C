@@ -110,6 +110,77 @@ export function createComputerRoutes(
     }
   });
 
+  routes.get("/:botId/quarantine", async (context) => {
+    try {
+      return context.json(
+        await gateway.listQuarantine(context.req.param("botId")),
+      );
+    } catch (error) {
+      return context.json(errorBody(error), statusFor(error));
+    }
+  });
+
+  routes.post("/:botId/quarantine/scan", async (context) => {
+    const body = (await context.req.json().catch(() => null)) as {
+      id?: unknown;
+    } | null;
+    if (typeof body?.id !== "string" || !body.id) {
+      return context.json({ error: "A quarantine download id is required." }, 400);
+    }
+    const record = context.var.actor;
+    try {
+      return context.json(
+        await gateway.scanQuarantine(
+          context.req.param("botId"),
+          {
+            id: record.id,
+            ...(record.email === DEV_ACTOR_EMAIL ? {} : { userId: record.id }),
+          },
+          body.id,
+        ),
+      );
+    } catch (error) {
+      return context.json(errorBody(error), statusFor(error));
+    }
+  });
+
+  routes.post("/:botId/quarantine/approve", async (context) => {
+    const botId = context.req.param("botId");
+    const body = (await context.req.json().catch(() => null)) as {
+      id?: unknown;
+      botId?: unknown;
+      confirm?: unknown;
+    } | null;
+    if (
+      typeof body?.id !== "string" ||
+      body.confirm !== "APPROVE" ||
+      body.botId !== botId
+    ) {
+      return context.json(
+        {
+          error:
+            "Approval requires APPROVE confirmation, the exact Bot id, and the quarantine download id.",
+        },
+        400,
+      );
+    }
+    const record = context.var.actor;
+    try {
+      return context.json(
+        await gateway.approveQuarantine(
+          botId,
+          {
+            id: record.id,
+            ...(record.email === DEV_ACTOR_EMAIL ? {} : { userId: record.id }),
+          },
+          body.id,
+        ),
+      );
+    } catch (error) {
+      return context.json(errorBody(error), statusFor(error));
+    }
+  });
+
   /**
    * Whether the same page is on both, ignoring the two ways one page spells itself.
    *
