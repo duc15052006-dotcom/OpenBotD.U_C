@@ -75,6 +75,7 @@ jobs:
       AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       AZURE_KEY_VAULT_URL: ${{ vars.AZURE_KEY_VAULT_URL }}
       CODE_SIGNING_CERT_NAME: ${{ vars.CODE_SIGNING_CERT_NAME }}
+      CODE_SIGNING_PUBLISHER: ${{ vars.CODE_SIGNING_PUBLISHER }}
       SIGNING_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       AZURE_CORE_OUTPUT: none
     steps:
@@ -84,7 +85,7 @@ jobs:
           persist-credentials: false
       - name: Check signing configuration
         run: |
-          foreach ($name in @('AZURE_CLIENT_ID', 'AZURE_TENANT_ID', 'AZURE_SUBSCRIPTION_ID', 'AZURE_KEY_VAULT_URL', 'CODE_SIGNING_CERT_NAME')) {
+          foreach ($name in @('AZURE_CLIENT_ID', 'AZURE_TENANT_ID', 'AZURE_SUBSCRIPTION_ID', 'AZURE_KEY_VAULT_URL', 'CODE_SIGNING_CERT_NAME', 'CODE_SIGNING_PUBLISHER')) {
             if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
               throw "Missing windows-signing environment variable: $name"
             }
