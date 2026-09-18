@@ -27,6 +27,18 @@ function draw(
     state,
     canManage,
   });
+  queryClient.setQueryData(computerKeys.metrics("writer"), {
+    botId: "writer",
+    state: "ready",
+    metrics: {
+      cpuPercent: 12.5,
+      memoryUsedBytes: 256 * 1024 * 1024,
+      memoryLimitBytes: 1024 * 1024 * 1024,
+      workspaceUsedBytes: 2 * 1024 * 1024 * 1024,
+      workspaceTotalBytes: 10 * 1024 * 1024 * 1024,
+      measuredAt: "2026-09-18T00:00:00.000Z",
+    },
+  });
   return render(
     <QueryClientProvider client={queryClient}>
       <ComputerPanel agentId="writer" />
@@ -73,6 +85,20 @@ test("start uses the governed lifecycle endpoint and refreshes status", async ()
           botId: "writer",
           state: "ready",
           canManage: true,
+        });
+      }
+      if (path === "/api/computers/writer/metrics" && method === "GET") {
+        return Response.json({
+          botId: "writer",
+          state: "ready",
+          metrics: {
+            cpuPercent: 8,
+            memoryUsedBytes: 128,
+            memoryLimitBytes: 1024,
+            workspaceUsedBytes: 64,
+            workspaceTotalBytes: 2048,
+            measuredAt: "2026-09-18T00:00:00.000Z",
+          },
         });
       }
       throw new Error(`Unexpected request: ${method} ${path}`);
