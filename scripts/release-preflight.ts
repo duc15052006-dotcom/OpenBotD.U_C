@@ -241,6 +241,33 @@ function checkReleaseWiring(): void {
     fail("signing: sign job does not request OIDC id-token: write");
   }
 
+  const stageReleaseArtifact = stepNamed(signJob, "Stage verified release artifact");
+  const stageReleaseRun =
+    typeof stageReleaseArtifact?.run === "string" ? stageReleaseArtifact.run : "";
+  for (const evidence of [
+    "desktop/release-artifact",
+    "desktop/signed-app/openbot-desktop.exe",
+    "desktop/build-version.json",
+    "Expected exactly one signed NSIS installer to stage",
+    "Expected exactly three staged release files",
+  ]) {
+    if (!stageReleaseRun.includes(evidence)) {
+      fail(`signing: flat Windows release staging is missing ${evidence}`);
+    }
+  }
+
+  const signedUpload = stepNamed(signJob, "Retain verified binaries");
+  const signedUploadWith =
+    signedUpload && object(signedUpload.with) ? signedUpload.with : {};
+  if (signedUploadWith["if-no-files-found"] !== "error") {
+    fail("signing: signed Windows artifact upload must fail when files are missing");
+  }
+  if (signedUploadWith.path !== "desktop/release-artifact/") {
+    fail(
+      "signing: signed Windows artifact must upload one flat desktop/release-artifact/ directory",
+    );
+  }
+
   const evidenceUpload = stepNamed(signJob, "Retain verification evidence");
   const evidenceUploadWith =
     evidenceUpload && object(evidenceUpload.with) ? evidenceUpload.with : {};
@@ -359,6 +386,8 @@ function checkReleaseWiring(): void {
     '.sourceSha "$build"',
     '.sourceSha "$evidence"',
     '.publisher == "Tawkit, Inc."',
+    'app="windows-release/openbot-desktop.exe"',
+    'matches="$(jq -r --arg name "$name"',
     "sha256sum",
   ]) {
     if (!identityRun.includes(evidence)) {

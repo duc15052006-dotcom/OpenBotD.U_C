@@ -428,13 +428,19 @@ jobs:
             exit 1
           fi
           installer="${installers[0]}"
-          name="$(basename "$installer")"
-          actual="$(sha256sum "$installer" | awk '{print $1}')"
-          recorded="$(jq -r --arg name "$name" '.files[] | select(.file == $name) | .sha256' "$evidence" | tr '[:upper:]' '[:lower:]')"
-          if [ -z "$recorded" ] || [ "$actual" != "$recorded" ]; then
-            echo "::error::Signed installer hash does not match signature evidence."
-            exit 1
-          fi
+          app="windows-release/openbot-desktop.exe"
+          test -f "$app"
+
+          for file in "$installer" "$app"; do
+            name="$(basename "$file")"
+            actual="$(sha256sum "$file" | awk '{print $1}')"
+            recorded="$(jq -r --arg name "$name" '.files[] | select(.file == $name) | .sha256' "$evidence" | tr '[:upper:]' '[:lower:]')"
+            matches="$(jq -r --arg name "$name" '[.files[] | select(.file == $name)] | length' "$evidence")"
+            if [ "$matches" != "1" ] || [ -z "$recorded" ] || [ "$actual" != "$recorded" ]; then
+              echo "::error::Signed Windows file $name does not match signature evidence."
+              exit 1
+            fi
+          done
 
       - name: Write the image manifest
         env:
