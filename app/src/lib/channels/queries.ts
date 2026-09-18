@@ -50,12 +50,26 @@ export const channelKeys = {
   all: ["channels"] as const,
   list: () => ["channels", "list"] as const,
   detail: (channelId: string) => ["channels", "detail", channelId] as const,
+  delegations: (channelId: string) =>
+    ["channels", "delegations", channelId] as const,
 };
 
 /** One page of channels, and where the next one starts. */
 export type ChannelPage = {
   channels: ChannelSummary[];
   nextCursor: string | null;
+};
+
+export type ChannelDelegation = {
+  key: string;
+  fromBotId: string;
+  toBotId: string;
+  task: string;
+  state: "queued" | "working" | "delivered" | "failed";
+  attempts: number;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
 /**
@@ -95,5 +109,18 @@ export function channelQueryOptions(channelId: string) {
         fallback: "Could not load this channel",
       });
     },
+  });
+}
+
+export function channelDelegationsQueryOptions(channelId: string) {
+  return queryOptions({
+    queryKey: channelKeys.delegations(channelId),
+    queryFn: async (): Promise<ChannelDelegation[]> =>
+      client(`/api/channels/${encodeURIComponent(channelId)}/delegations`, "delegations", {
+        fallback: "Could not load delegation status",
+      }),
+    // A handoff can move from queued to working to delivered in a few seconds. Poll only while the
+    // channel screen owns this query; TanStack Query stops background refetches for hidden tabs.
+    refetchInterval: 2_000,
   });
 }
