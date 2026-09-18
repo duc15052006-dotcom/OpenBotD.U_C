@@ -28,6 +28,7 @@ import {
   agentListQueryOptions,
   agentQueryOptions,
 } from "@/lib/agents/queries";
+import { resolveChannelResponder } from "@/lib/channels/responders";
 import { routeMessage } from "@/lib/channels/route";
 import { useStartChannel } from "@/lib/channels/start";
 import { useSkillCommands } from "@/lib/plugins/skill-commands";
@@ -220,10 +221,10 @@ function RouteComponent() {
         }
         onSubmit={async (draft) => {
           if (!canSend(recipients, draft.text)) return;
-          const targetId =
-            draft.agentId && selectedIds.includes(draft.agentId)
-              ? draft.agentId
-              : selectedIds[0];
+          const targetId = resolveChannelResponder(
+            selectedIds,
+            draft.agentId,
+          );
           if (!targetId) return;
 
           setError(null);
