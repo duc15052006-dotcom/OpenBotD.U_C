@@ -392,12 +392,12 @@ function checkInteractiveComputerControls(): void {
   }
 
   for (const evidence of [
-    'status: "pending"',
-    'status: "clean"',
-    'status: "blocked"',
-    'status: "scan_failed"',
-    'status: "approved"',
-    'status: "released"',
+    '| "pending"',
+    '| "clean"',
+    '| "blocked"',
+    '| "scan_failed"',
+    '| "approved"',
+    '| "released"',
     "Only a clean scanned download can be approved for export",
   ]) {
     if (!quarantine.includes(evidence)) {
