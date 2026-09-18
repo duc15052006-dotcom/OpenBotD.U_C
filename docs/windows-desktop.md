@@ -32,11 +32,18 @@ The visible setup journey is:
 2. let OpenBot prepare the local runtime
 3. connect CopilotKit Intelligence
 4. configure the model/provider used to get started
-5. start OpenBot
-6. continue in the local web app
+5. use **Test connection** to check the current provider/API-key/endpoint choice before starting
+6. start OpenBot
+7. continue in the local web app
 
 Per-coworker Model/API settings, Instructions, Skills and Knowledge can then be managed from the app
 without editing source files.
+
+For API-key providers, **Test connection** makes a bounded native request to the provider without
+saving the credential. Compatible endpoints are probed at their OpenAI-style `/models` route and
+never forward a credential through an HTTP redirect. Plan sign-ins validate that their current or
+saved session is still resolvable. The final setup question to the Bot remains the end-to-end check
+that the local stack and selected model can actually answer together.
 
 A failed migration or partially started local stack stops startup instead of presenting a
 half-migrated deployment as ready.
