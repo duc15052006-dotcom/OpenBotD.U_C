@@ -175,6 +175,10 @@ function checkReleaseWiring(): void {
   if (releaseSource.includes("ghcr.io/copilotkit/")) {
     fail("release: container publishing is still hard-coded to the upstream GHCR namespace");
   }
+  const releaseDocs = read("docs/releasing.md");
+  if (releaseDocs.includes("ghcr.io/copilotkit/")) {
+    fail("release: release documentation still points at the upstream GHCR namespace");
+  }
   for (const evidence of [
     "registry_owner: ${{ steps.release.outputs.registry_owner }}",
     "REGISTRY_OWNER: ${{ github.repository_owner }}",
