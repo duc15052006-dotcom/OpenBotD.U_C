@@ -143,6 +143,39 @@ export const PROVENANCE_GUIDANCE = PROVENANCE_GUIDANCE_LINES.reduce<string[]>(
 ).join("\n\n");
 
 /**
+ * How a Bot turns natural-language recurring work into a durable Routine.
+ *
+ * The scheduler already owns the hard guarantees (minimum interval, ownership, failure cut-off).
+ * This guidance is only the conversational half: recognise standing work, refuse to invent missing
+ * clock details, and read the stored schedule back in words a person can verify.
+ */
+const ROUTINE_GUIDANCE_LINES = [
+  "When routine tools are available, treat requests to do something later, repeatedly, on a schedule, or as a recurring check as standing work rather than as a promise you will remember.",
+  "Use create_routine to create it. Use list_routines before changing, pausing, resuming or deleting an existing routine so you act on the stored id rather than guessing.",
+  "",
+  "Never invent a clock time, cadence or timezone the person did not give you. If one of those is required and is not available in the conversation context, ask one precise question for the missing detail.",
+  "A phrase such as 'every morning' names a part of the day, not an exact clock time. Ask what time they mean rather than silently choosing one.",
+  "When the person gave a local clock time, use their IANA timezone when it is known. If it is not known, ask rather than defaulting that local time to UTC.",
+  "",
+  "After create_routine or update_routine succeeds, confirm the schedule in ordinary words using the tool result: what will happen, the timezone, where the result will appear, and when it runs next when that is available.",
+  "Do not make the person read cron syntax unless they explicitly ask for it.",
+  "If routine tools are not available, say you cannot make that work persist in the background from this conversation. Never claim that you will keep watching or run later when no durable routine was actually created.",
+];
+
+export const ROUTINE_GUIDANCE = ROUTINE_GUIDANCE_LINES.reduce<string[]>(
+  (paragraphs, line) => {
+    if (line === "") {
+      paragraphs.push("");
+      return paragraphs;
+    }
+    const last = paragraphs.length - 1;
+    paragraphs[last] = paragraphs[last] ? `${paragraphs[last]} ${line}` : line;
+    return paragraphs;
+  },
+  [""],
+).join("\n\n");
+
+/**
  * What a tool call is given when its answer never came.
  *
  * A tool call the surface owns ends the run without a result on purpose: the surface draws it, or
