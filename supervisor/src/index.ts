@@ -2,6 +2,7 @@ import { serve } from "bun";
 import { Hono } from "hono";
 import { environmentFor } from "./environment";
 import {
+  ComputerCapacityError,
   ComputerNotAnsweringError,
   DockerUnavailableError,
   ensure,
@@ -13,6 +14,7 @@ import {
 } from "./docker";
 import { registerEntry } from "./identity";
 import { namesFor } from "./names";
+import { computerMaxActive } from "./computer-max-active";
 import { computerMemoryBytes } from "./computer-memory-bytes";
 import { computerNanoCpus } from "./computer-nano-cpus";
 import { listenPort } from "./listen-port";
@@ -76,6 +78,12 @@ if (!resolvedCpu.ok) {
   process.exit(1);
 }
 const nanoCpus = resolvedCpu.nanoCpus;
+const resolvedMaxActive = computerMaxActive(process.env.COMPUTER_MAX_ACTIVE);
+if (!resolvedMaxActive.ok) {
+  console.error(resolvedMaxActive.reason);
+  process.exit(1);
+}
+const maxActiveComputers = resolvedMaxActive.maxActive;
 const spireSocketVolume =
   process.env.SPIRE_AGENT_SOCKET_VOLUME?.trim() || undefined;
 
@@ -115,6 +123,7 @@ app.post("/computers/:botId/ensure", async (context) => {
       ...(runtime ? { runtime } : {}),
       ...(memoryBytes ? { memoryBytes } : {}),
       ...(nanoCpus ? { nanoCpus } : {}),
+      ...(maxActiveComputers ? { maxActiveComputers } : {}),
       ...(spireSocketVolume ? { spireSocketVolume } : {}),
     });
     return context.json({
@@ -131,6 +140,9 @@ app.post("/computers/:botId/ensure", async (context) => {
     }
     // Not ready is a 503 like an outage is, because the caller's next move is the same: wait and
     // ask again. The message is what differs, and it is the part an operator acts on.
+    if (error instanceof ComputerCapacityError) {
+      return context.json({ error: error.message }, 409);
+    }
     if (
       error instanceof DockerUnavailableError ||
       error instanceof ComputerNotAnsweringError
