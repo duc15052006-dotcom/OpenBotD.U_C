@@ -213,3 +213,95 @@ describe("human input", () => {
     expect(calls).toHaveLength(0);
   });
 });
+
+
+describe("computer lifecycle authorization", () => {
+  function lifecycleApp(options: {
+    canManage: boolean;
+    actor?: AuthenticatedActor;
+  }) {
+    const calls: string[] = [];
+    const gateway = {
+      status: async (botId: string) => ({
+        botId,
+        state: "ready" as const,
+      }),
+      startComputer: async () => {
+        calls.push("start");
+        return { wasRunning: false };
+      },
+      restartComputer: async () => {
+        calls.push("restart");
+        return { wasRunning: true };
+      },
+      stopComputer: async () => {
+        calls.push("stop");
+        return { wasRunning: true };
+      },
+      resetComputer: async () => {
+        calls.push("reset");
+        return { cleared: true };
+      },
+    } as unknown as ComputerGateway;
+
+    const app = createComputerRoutes(
+      gateway,
+      {} as PolicyStore,
+      asActor(options.actor ?? member),
+      // This person may use the Agent.
+      async () => true,
+      undefined,
+      undefined,
+      // Lifecycle management is deliberately stricter than use.
+      async () => options.canManage,
+    );
+    return { app, calls };
+  }
+
+  test("a user who may use an Agent cannot reset its computer without manage permission", async () => {
+    const { app, calls } = lifecycleApp({ canManage: false });
+
+    const response = await app.request(
+      "http://openbot.test/shared-agent/computers/reset",
+      { method: "POST" },
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      error: "You cannot manage this Bot's computer.",
+    });
+    expect(calls).toEqual([]);
+  });
+
+  test("status says whether this actor may manage the lifecycle", async () => {
+    const { app } = lifecycleApp({ canManage: false });
+
+    const response = await app.request(
+      "http://openbot.test/shared-agent/status",
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      botId: "shared-agent",
+      state: "ready",
+      canManage: false,
+    });
+  });
+
+  test("an authorized manager can start and restart the computer", async () => {
+    const { app, calls } = lifecycleApp({ canManage: true });
+
+    const start = await app.request(
+      "http://openbot.test/owned-agent/computers/start",
+      { method: "POST" },
+    );
+    const restart = await app.request(
+      "http://openbot.test/owned-agent/computers/restart",
+      { method: "POST" },
+    );
+
+    expect(start.status).toBe(200);
+    expect(restart.status).toBe(200);
+    expect(calls).toEqual(["start", "restart"]);
+  });
+});
