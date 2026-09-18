@@ -714,6 +714,14 @@ fn model_endpoint_url(raw: &str, label: &str) -> Result<reqwest::Url, Problem> {
     if !url.username().is_empty() || url.password().is_some() {
         return Err(format!("{label} addresses must not contain credentials.").into());
     }
+    if url.host_str().is_some_and(model_probe_never_allowed_host) {
+        return Err(
+            format!(
+                "That {label} is reserved for cloud instance credentials and cannot be saved."
+            )
+            .into(),
+        );
+    }
     Ok(url)
 }
 
