@@ -69,6 +69,7 @@ export const agentKeys = {
   model: (agentId: string) => ["agents", "model", agentId] as const,
   instructions: (agentId: string) =>
     ["agents", "instructions", agentId] as const,
+  knowledge: (agentId: string) => ["agents", "knowledge", agentId] as const,
 };
 
 /** Keep the browser counter aligned with the server-enforced prompt limit. */
@@ -77,6 +78,26 @@ export const AGENT_INSTRUCTIONS_LIMIT = 8_000;
 export type AgentInstructionsSettings = {
   instructions: string;
   canManage: boolean;
+};
+
+export type AgentKnowledgeDocument = {
+  id: string;
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+  createdAt: string;
+  characters: number;
+};
+
+export type AgentKnowledgeSettings = {
+  documents: AgentKnowledgeDocument[];
+  canManage: boolean;
+  limits: {
+    documents: number;
+    fileBytes: number;
+    documentCharacters: number;
+    totalCharacters: number;
+  };
 };
 
 export type AgentModelProvider = "openai" | "anthropic" | "google";
@@ -191,6 +212,16 @@ export function agentInstructionsQueryOptions(agentId: string) {
     queryFn: (): Promise<AgentInstructionsSettings> =>
       client(`${agentApiPath(agentId)}/instructions`, "instructions", {
         fallback: "Could not load Agent instructions",
+      }),
+  });
+}
+
+export function agentKnowledgeQueryOptions(agentId: string) {
+  return queryOptions({
+    queryKey: agentKeys.knowledge(agentId),
+    queryFn: (): Promise<AgentKnowledgeSettings> =>
+      client(`${agentApiPath(agentId)}/knowledge`, "knowledge", {
+        fallback: "Could not load Agent knowledge",
       }),
   });
 }

@@ -2,6 +2,7 @@ import { mutationOptions, type QueryClient } from "@tanstack/react-query";
 import { client } from "@/lib/client";
 import {
   type AgentInstructionsSettings,
+  type AgentKnowledgeSettings,
   type AgentModelConnection,
   type AgentModelProvider,
   type AgentModelSettings,
@@ -155,6 +156,73 @@ export function saveAgentInstructionsMutationOptions(
         agentKeys.instructions(variables.agentId),
         instructions,
       );
+    },
+  });
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 32_768) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 32_768));
+  }
+  return btoa(binary);
+}
+
+export function uploadAgentKnowledgeMutationOptions(queryClient: QueryClient) {
+  return mutationOptions({
+    mutationFn: async (variables: {
+      agentId: string;
+      file: File;
+      maxBytes: number;
+    }): Promise<AgentKnowledgeSettings> => {
+      /*
+       * Refuse before arrayBuffer(). The server is authoritative, but without this browser-side
+       * guard a dragged multi-gigabyte file would be read into this tab just to be rejected later.
+       */
+      if (variables.file.size > variables.maxBytes) {
+        throw new Error(
+          `Knowledge files are limited to ${variables.maxBytes} bytes.`,
+        );
+      }
+      const bytes = new Uint8Array(await variables.file.arrayBuffer());
+      return client(
+        `${agentApiPath(variables.agentId)}/knowledge`,
+        "knowledge",
+        {
+          method: "POST",
+          body: {
+            name: variables.file.name,
+            mimeType: variables.file.type,
+            bytesBase64: bytesToBase64(bytes),
+          },
+          fallback: "Could not upload Agent knowledge",
+        },
+      );
+    },
+    onSuccess: (knowledge, variables) => {
+      queryClient.setQueryData(agentKeys.knowledge(variables.agentId), knowledge);
+    },
+  });
+}
+
+export function removeAgentKnowledgeMutationOptions(queryClient: QueryClient) {
+  return mutationOptions({
+    mutationFn: (variables: {
+      agentId: string;
+      documentId: string;
+    }): Promise<AgentKnowledgeSettings> =>
+      client(
+        `${agentApiPath(variables.agentId)}/knowledge/${encodeURIComponent(
+          variables.documentId,
+        )}`,
+        "knowledge",
+        {
+          method: "DELETE",
+          fallback: "Could not remove Agent knowledge",
+        },
+      ),
+    onSuccess: (knowledge, variables) => {
+      queryClient.setQueryData(agentKeys.knowledge(variables.agentId), knowledge);
     },
   });
 }

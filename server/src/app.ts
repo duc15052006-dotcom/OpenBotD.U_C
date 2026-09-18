@@ -10,6 +10,8 @@ import {
 } from "./agents/callback-token";
 import { createAgentInstructionsRoutes } from "./agents/instructions-routes";
 import type { AgentInstructionsStore } from "./agents/instructions-store";
+import { createAgentKnowledgeRoutes } from "./agents/knowledge-routes";
+import type { AgentKnowledgeStore } from "./agents/knowledge-store";
 import { createAgentModelConfigRoutes } from "./agents/model-config-routes";
 import type { AgentModelConfigStore } from "./agents/model-config-store";
 import type { AgentModelConnectionService } from "./agents/model-connection-service";
@@ -323,6 +325,8 @@ export function createApp(
   agentModelConnections?: AgentModelConnectionService,
   /** Durable instructions that belong to one Agent rather than to the signed-in person. */
   agentInstructions?: AgentInstructionsStore,
+  /** Bounded uploaded reference material owned by one Agent. */
+  agentKnowledge?: AgentKnowledgeStore,
 ) {
   const app = new Hono<{ Variables: AppVariables }>();
 
@@ -1155,6 +1159,12 @@ export function createApp(
       app.route(
         "/api/agents",
         createAgentInstructionsRoutes(agentInstructions, requireUser),
+      );
+    }
+    if (agentKnowledge) {
+      app.route(
+        "/api/agents",
+        createAgentKnowledgeRoutes(agentKnowledge, requireUser),
       );
     }
     // Choosing a coworker for an untagged message needs the same permission-filtered roster the
