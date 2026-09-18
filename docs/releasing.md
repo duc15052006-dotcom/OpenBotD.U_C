@@ -79,10 +79,10 @@ Then, in order:
 - the protected Windows signing workflow signs and verifies the app plus NSIS installer from that
   same release commit; its `windows-signing` environment approval is the publisher-certificate
   boundary, and nothing is published before it succeeds
-- one image is built and pushed to `ghcr.io/copilotkit/openbot`, tagged with the version, the commit
-  and `latest`
+- one image is built and pushed under the current repository owner's GHCR namespace as
+  `ghcr.io/<owner>/openbot`, tagged with the version, the commit and `latest`
 - the services `docker-compose.yml` can build are published too, one image each, at
-  `ghcr.io/copilotkit/openbot-<service>`. Those are `linux/amd64` and `linux/arm64`, built on native
+  `ghcr.io/<owner>/openbot-<service>`. Those are `linux/amd64` and `linux/arm64`, built on native
   runners of each architecture and joined into one manifest list, because the machines pulling them
   are laptops as well as servers. `.github/published-images.json` is the list, and CI fails if it
   stops matching the Dockerfiles in the tree
@@ -127,8 +127,10 @@ Before deploying, you can check an image is the one this repository built. Every
 carries its own attestation:
 
 ```sh
-gh attestation verify oci://ghcr.io/copilotkit/openbot:v0.1.0 -R CopilotKit/OpenBot
-gh attestation verify oci://ghcr.io/copilotkit/openbot-supervisor:v0.1.0 -R CopilotKit/OpenBot
+OWNER="$(gh repo view --json owner --jq .owner.login | tr '[:upper:]' '[:lower:]')"
+REPOSITORY="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
+gh attestation verify "oci://ghcr.io/$OWNER/openbot:v0.1.0" -R "$REPOSITORY"
+gh attestation verify "oci://ghcr.io/$OWNER/openbot-supervisor:v0.1.0" -R "$REPOSITORY"
 ```
 
 ## What has to be green
