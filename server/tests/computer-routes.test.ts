@@ -39,6 +39,47 @@ describe("computer routes", () => {
     expect(calls).toEqual(["start:bot-17", "restart:bot-17"]);
   });
 
+  test("reset requires an explicit acknowledgement bound to the Bot being wiped", async () => {
+    const calls: string[] = [];
+    const gateway = {
+      resetComputer: async (botId: string) => {
+        calls.push(botId);
+        return { cleared: true };
+      },
+    } as unknown as ComputerGateway;
+    const routes = createComputerRoutes(
+      gateway,
+      {} as PolicyStore,
+      asActor(member),
+      async () => true,
+    );
+
+    const request = (body?: unknown) =>
+      routes.request("http://openbot.test/bot-17/computers/reset", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+
+    expect((await request()).status).toBe(400);
+    expect(
+      (
+        await request({
+          confirm: "RESET",
+          botId: "bot-18",
+        })
+      ).status,
+    ).toBe(400);
+    expect(calls).toEqual([]);
+
+    const confirmed = await request({
+      confirm: "RESET",
+      botId: "bot-17",
+    });
+    expect(confirmed.status).toBe(200);
+    expect(calls).toEqual(["bot-17"]);
+  });
+
   test("gets a screenshot through the governed computer gateway", async () => {
     const requestedBotIds: string[] = [];
     const gateway = {

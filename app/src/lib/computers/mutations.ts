@@ -20,6 +20,17 @@ export function setComputerStateMutationOptions(queryClient: QueryClient) {
         `/api/computers/${encodeURIComponent(variables.botId)}/computers/${variables.action}`,
         {
           method: "POST",
+          ...(variables.action === "reset"
+            ? {
+                body: {
+                  confirm: "RESET",
+                  // Bind the destructive acknowledgement to the same Bot named in the URL. The
+                  // server requires both, so an old dialog cannot wipe whichever Bot the route now
+                  // points at.
+                  botId: variables.botId,
+                },
+              }
+            : {}),
           fallback: `The computer could not be ${variables.action}.`,
         },
       );

@@ -419,9 +419,24 @@ export function createComputerRoutes(
     act(context, (botId, actor) => gateway.stopComputer(botId, actor)),
   );
 
-  /** Delete the profile. Every login goes with it, which is the point and also the danger. */
+  /**
+   * Delete the profile. Every login goes with it, which is the point and also the danger.
+   *
+   * The UI already asks for confirmation, but the API is the boundary: a stale client, script, or
+   * accidental POST must not be able to wipe a different Bot just because it reached the route.
+   * Require both a destructive-action word and the exact Bot id in the body. This is not a secret;
+   * it is an explicit acknowledgement bound to the resource being destroyed.
+   */
   routes.post("/:botId/computers/reset", (context) =>
-    act(context, (botId, actor) => gateway.resetComputer(botId, actor)),
+    act(context, (botId, actor, body) => {
+      if (body?.confirm !== "RESET" || body?.botId !== botId) {
+        return {
+          error:
+            "Reset requires explicit confirmation for this Bot. Confirm RESET and the exact Bot id.",
+        };
+      }
+      return gateway.resetComputer(botId, actor);
+    }),
   );
 
   routes.post("/:botId/control/take", (context) =>
