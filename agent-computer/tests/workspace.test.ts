@@ -47,6 +47,18 @@ function workspace() {
 }
 
 describe("reading and writing inside the workspace", () => {
+  test("keeps files when the workspace service is recreated", async () => {
+    const first = workspace();
+    await first.write("persistent/state.txt", "survives a computer restart");
+
+    // A new service instance points at the same mounted workspace directory, as a restarted
+    // agent-computer process does. Persistence belongs to the volume, not to in-memory state.
+    const second = createWorkspace(root);
+    expect((await second.read("persistent/state.txt")).text).toBe(
+      "survives a computer restart",
+    );
+  });
+
   test("writes a file and reads it back", async () => {
     const ws = workspace();
     const written = await ws.write("notes.md", "# Findings\nAll good.");
