@@ -462,7 +462,6 @@ function checkDesktopCredentialBoundary(): void {
   }
 }
 
-
 function checkProviderConnectionTest(): void {
   const picker = read("desktop/src/ProviderPicker.tsx");
   const native = read("desktop/src-tauri/src/main.rs");
