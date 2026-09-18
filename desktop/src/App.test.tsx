@@ -2323,6 +2323,31 @@ test("Start credential failures do not expose a restore action", async () => {
   ).toEqual([]);
 });
 
+test("a successful setup hands directly into the first coworker creator", async () => {
+  useCompatibleEndpointSetup({});
+  const previous = invokeHandler;
+  invokeHandler = async (command, args) => {
+    if (command === "ask_the_bot") return "391";
+    if (command === "show_agent_creator") return null;
+    return previous(command, args);
+  };
+
+  const view = await enterCompatibleEndpoint("https://models.example/v1");
+  await userEvent.click(view.getByRole("button", { name: "Continue" }));
+  await userEvent.click(view.getByRole("button", { name: "Start OpenBot" }));
+  await userEvent.click(await view.findByRole("button", { name: "Ask" }));
+
+  expect(await view.findByText("391")).toBeTruthy();
+  await userEvent.click(
+    view.getByRole("button", { name: "Create a coworker" }),
+  );
+
+  expect(invokeCalls).toContainEqual({ command: "show_agent_creator" });
+  expect(
+    view.getByRole("button", { name: "Open OpenBot" }),
+  ).toBeTruthy();
+});
+
 test("the Enter that finishes a composed character does not ask the Bot", async () => {
   useCompatibleEndpointSetup({});
   const previous = invokeHandler;
