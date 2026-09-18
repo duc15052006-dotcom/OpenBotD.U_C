@@ -1,6 +1,7 @@
 import { mutationOptions, type QueryClient } from "@tanstack/react-query";
 import { client } from "@/lib/client";
 import {
+  type AgentInstructionsSettings,
   type AgentModelConnection,
   type AgentModelProvider,
   type AgentModelSettings,
@@ -129,6 +130,32 @@ export function testAgentModelMutationOptions() {
         method: "POST",
         fallback: "Could not test the model connection",
       }),
+  });
+}
+
+export function saveAgentInstructionsMutationOptions(
+  queryClient: QueryClient,
+) {
+  return mutationOptions({
+    mutationFn: (variables: {
+      agentId: string;
+      instructions: string;
+    }): Promise<AgentInstructionsSettings> =>
+      client(
+        `${agentApiPath(variables.agentId)}/instructions`,
+        "instructions",
+        {
+          method: "PUT",
+          body: { instructions: variables.instructions },
+          fallback: "Could not save Agent instructions",
+        },
+      ),
+    onSuccess: (instructions, variables) => {
+      queryClient.setQueryData(
+        agentKeys.instructions(variables.agentId),
+        instructions,
+      );
+    },
   });
 }
 
