@@ -9,6 +9,8 @@ mod desktop_telemetry;
 
 #[cfg(test)]
 mod test_support;
+#[cfg(test)]
+mod model_connection_tests;
 
 use openbot_desktop_lib::{
     acquire, deployment, deployment_release, engine, env as openbot_env, harness, host_access,
@@ -803,6 +805,159 @@ impl ChosenModel {
                 "{provider} cannot be connected by {login}, which is not a way in that screen offers."
             )
             .into()),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelConnectionCheck {
+    detail: String,
+}
+
+fn model_probe_client() -> Result<reqwest::Client, Problem> {
+    reqwest::Client::builder()
+        // A provider credential must never follow a redirect to a different origin. If an endpoint
+        // moved, the person should see that and update the address rather than send a key wherever
+        // the redirect happened to point.
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|error| {
+            Problem::with(
+                "OpenBot could not prepare the connection test.",
+                error.to_string(),
+            )
+        })
+}
+
+fn models_probe_url(base_url: &str) -> Result<reqwest::Url, Problem> {
+    let mut url = reqwest::Url::parse(base_url.trim()).map_err(|_| {
+        Problem::plain("Enter a valid http:// or https:// model endpoint before testing it.")
+    })?;
+    if !matches!(url.scheme(), "http" | "https") || !url.has_host() {
+        return Err(
+            "Enter a valid http:// or https:// model endpoint before testing it.".into(),
+        );
+    }
+    let path = format!("{}/models", url.path().trim_end_matches('/'));
+    url.set_path(&path);
+    url.set_query(None);
+    url.set_fragment(None);
+    Ok(url)
+}
+
+async fn provider_probe(
+    request: reqwest::RequestBuilder,
+    provider: &str,
+) -> Result<(), Problem> {
+    let response = request.send().await.map_err(|error| {
+        Problem::with(
+            format!("OpenBot could not reach {provider}."),
+            error.to_string(),
+        )
+    })?;
+    let status = response.status();
+    if status.is_success() {
+        return Ok(());
+    }
+    if matches!(status.as_u16(), 401 | 403) {
+        return Err(format!("{provider} rejected this credential.").into());
+    }
+    if status.is_redirection() {
+        return Err(format!(
+            "{provider} redirected the connection test. Update the provider address instead of forwarding a credential through a redirect."
+        )
+        .into());
+    }
+    Err(format!("{provider} answered with HTTP {status}.").into())
+}
+
+/// Check exactly the model/provider answer currently shown in setup, without saving it.
+///
+/// API-key and compatible-endpoint choices make a bounded read-only provider request. Plan choices
+/// have already gone through the vendor's interactive sign-in, so this command verifies that the
+/// resulting token/store (or its saved copy) still resolves. The full Bot round-trip remains the
+/// final setup check after the local stack starts.
+#[tauri::command]
+async fn test_model_connection(
+    root: String,
+    model: ChosenModel,
+) -> Result<ModelConnectionCheck, Problem> {
+    let root = stack::root_from(&root);
+    let credential = model.into_credential(&root)?;
+    match credential {
+        openbot_env::ModelCredential::OpenAi { api_key } => {
+            if api_key.trim().is_empty() {
+                return Err("Enter an OpenAI API key before testing it.".into());
+            }
+            let client = model_probe_client()?;
+            provider_probe(
+                client
+                    .get("https://api.openai.com/v1/models")
+                    .bearer_auth(api_key),
+                "OpenAI",
+            )
+            .await?;
+            Ok(ModelConnectionCheck {
+                detail: "OpenAI accepted this API key.".into(),
+            })
+        }
+        openbot_env::ModelCredential::Anthropic { api_key } => {
+            if api_key.trim().is_empty() {
+                return Err("Enter an Anthropic API key before testing it.".into());
+            }
+            let client = model_probe_client()?;
+            provider_probe(
+                client
+                    .get("https://api.anthropic.com/v1/models?limit=1")
+                    .header("x-api-key", api_key)
+                    .header("anthropic-version", "2023-06-01"),
+                "Anthropic",
+            )
+            .await?;
+            Ok(ModelConnectionCheck {
+                detail: "Anthropic accepted this API key.".into(),
+            })
+        }
+        openbot_env::ModelCredential::Compatible {
+            base_url,
+            api_key,
+            model,
+            ..
+        } => {
+            let client = model_probe_client()?;
+            let url = models_probe_url(&base_url)?;
+            let mut request = client.get(url);
+            if !api_key.trim().is_empty() {
+                request = request.bearer_auth(api_key);
+            }
+            provider_probe(request, "The model endpoint").await?;
+            Ok(ModelConnectionCheck {
+                detail: format!(
+                    "The endpoint answered successfully. OpenBot will use model {model:?}; the final setup check verifies a real Bot response."
+                ),
+            })
+        }
+        openbot_env::ModelCredential::ClaudePlan { token } => {
+            if token.trim().is_empty() {
+                return Err("That Claude plan sign-in is no longer available.".into());
+            }
+            Ok(ModelConnectionCheck {
+                detail:
+                    "The Claude sign-in is available. The final setup check verifies a real Bot response."
+                        .into(),
+            })
+        }
+        openbot_env::ModelCredential::ChatGptPlan { store } => {
+            if store.trim().is_empty() {
+                return Err("That ChatGPT sign-in is no longer available.".into());
+            }
+            Ok(ModelConnectionCheck {
+                detail:
+                    "The ChatGPT sign-in is available. The final setup check verifies a real Bot response."
+                        .into(),
+            })
         }
     }
 }
@@ -3053,6 +3208,7 @@ fn main() {
             harnesses,
             providers,
             already_configured,
+            test_model_connection,
             begin_claude_sign_in,
             finish_claude_sign_in,
             begin_chatgpt_sign_in,
