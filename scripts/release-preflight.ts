@@ -454,6 +454,7 @@ function checkFirstCoworkerHandoff(): void {
     'action: "start"',
     "ComputerFilesDialog",
     "Start or wake this coworker",
+    "profile.builtIn ?",
   ]) {
     if (!agentDialog.includes(evidence)) {
       fail(`app: new coworker profile lost computer quickstart evidence ${evidence}`);
