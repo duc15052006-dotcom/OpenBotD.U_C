@@ -25,6 +25,8 @@ export type ComputerStatus = {
   botId: string;
   state: ComputerState;
   reason?: string;
+  /** Server-decided owner/admin permission for lifecycle mutations. */
+  canManage: boolean;
 };
 
 /**
