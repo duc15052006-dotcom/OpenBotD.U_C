@@ -274,6 +274,10 @@ function GeneralSection({
   const [computerStatus, setComputerStatus] = useState<string | null>(null);
 
   const startComputer = async (openFiles = false) => {
+    // A managed coworker runs at somebody else's AG-UI endpoint. It has no deployment-owned
+    // browser/workspace to start, so keep the local Computer gateway a built-in-only action even if
+    // this callback is reached through a stale render.
+    if (!profile.builtIn) return;
     setComputerStatus(null);
     try {
       await computer.mutateAsync({ botId: agentId, action: "start" });
@@ -353,34 +357,36 @@ function GeneralSection({
         ) : null}
       </div>
 
-      <Item variant="muted">
-        <ItemContent>
-          <ItemTitle>Computer</ItemTitle>
-          <ItemDescription>
-            Start or wake this coworker&apos;s persistent browser and workspace.
-            {computerStatus ? (
-              <span className="mt-1 block">{computerStatus}</span>
-            ) : null}
-          </ItemDescription>
-        </ItemContent>
-        <ItemActions>
-          <Button
-            disabled={computer.isPending}
-            onClick={() => void startComputer(false)}
-            size="sm"
-            variant="outline"
-          >
-            {computer.isPending ? "Starting…" : "Start"}
-          </Button>
-          <Button
-            disabled={computer.isPending}
-            onClick={() => void startComputer(true)}
-            size="sm"
-          >
-            Files
-          </Button>
-        </ItemActions>
-      </Item>
+      {profile.builtIn ? (
+        <Item variant="muted">
+          <ItemContent>
+            <ItemTitle>Computer</ItemTitle>
+            <ItemDescription>
+              Start or wake this coworker&apos;s persistent browser and workspace.
+              {computerStatus ? (
+                <span className="mt-1 block">{computerStatus}</span>
+              ) : null}
+            </ItemDescription>
+          </ItemContent>
+          <ItemActions>
+            <Button
+              disabled={computer.isPending}
+              onClick={() => void startComputer(false)}
+              size="sm"
+              variant="outline"
+            >
+              {computer.isPending ? "Starting…" : "Start"}
+            </Button>
+            <Button
+              disabled={computer.isPending}
+              onClick={() => void startComputer(true)}
+              size="sm"
+            >
+              Files
+            </Button>
+          </ItemActions>
+        </Item>
+      ) : null}
 
       <Item variant="muted">
         <ItemContent>
@@ -404,12 +410,14 @@ function GeneralSection({
         </ItemActions>
       </Item>
 
-      <ComputerFilesDialog
-        botId={agentId}
-        botName={profile.name}
-        onOpenChange={setFilesOpen}
-        open={filesOpen}
-      />
+      {profile.builtIn ? (
+        <ComputerFilesDialog
+          botId={agentId}
+          botName={profile.name}
+          onOpenChange={setFilesOpen}
+          open={filesOpen}
+        />
+      ) : null}
     </>
   );
 }
