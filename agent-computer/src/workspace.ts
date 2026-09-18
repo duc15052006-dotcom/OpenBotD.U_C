@@ -97,7 +97,8 @@ export function createWorkspace(
   rootPath: string,
   limits: WorkspaceLimits = DEFAULT_WORKSPACE_LIMITS,
 ) {
-  const totalBytes =\n    limits.totalBytes ?? DEFAULT_WORKSPACE_LIMITS.totalBytes ?? Infinity;
+  const totalBytes =
+    limits.totalBytes ?? DEFAULT_WORKSPACE_LIMITS.totalBytes ?? Infinity;
 
   /*
    * Quota check and write are one critical section.
@@ -431,7 +432,9 @@ async function nearestExistingAncestor(
 export async function workspaceUsageBytes(root: string): Promise<number> {
   let total = 0;
   const walk = async (directory: string): Promise<void> => {
-    const entries = await readdir(directory, { withFileTypes: true }).catch(\n      () => [],\n    );
+    const entries = await readdir(directory, { withFileTypes: true }).catch(
+      () => [],
+    );
     for (const entry of entries) {
       const full = join(directory, entry.name);
       if (entry.isDirectory()) {
