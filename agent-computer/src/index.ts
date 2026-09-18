@@ -1016,7 +1016,12 @@ serve<StreamData>({
         });
       } catch (error) {
         return json(
-          { error: describe(error, "The quarantined file could not be deleted.") },
+          {
+            error: describe(
+              error,
+              "The quarantined file could not be deleted.",
+            ),
+          },
           400,
         );
       }
