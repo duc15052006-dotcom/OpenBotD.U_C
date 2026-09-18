@@ -18,6 +18,7 @@ import {
 } from "@/components/channels/transcript-messages";
 import { agentListQueryOptions } from "@/lib/agents/queries";
 import { attachmentUrl } from "@/lib/channels/attachments";
+import { routeMessage } from "@/lib/channels/route";
 import {
   recordChannelActivityMutationOptions,
   setChannelBusy,
@@ -227,11 +228,13 @@ function describeAttachments(attachments: readonly Attachment[]): string {
  */
 export function ChannelChat({
   channel,
-  runtimeAgentId,
+  runtimeAgentId: initialRuntimeAgentId,
 }: {
   channel: AgentChannel;
   runtimeAgentId: string;
 }) {
+  // A group channel keeps one shared thread while the responder may change per message.
+  const [runtimeAgentId, setRuntimeAgentId] = useState(initialRuntimeAgentId);
   // The core attaches the frontend tool registry; direct agent runs do not.
   const { copilotkit } = useCopilotKit();
   // Mentions are scoped to the channel's permitted agents.
@@ -309,6 +312,13 @@ export function ChannelChat({
     "ready" | "unavailable"
   >("ready");
   const [historyReadFailed, setHistoryReadFailed] = useState(false);
+  /**
+   * Which runtime Bot has completed the channel join for this shared thread.
+   *
+   * A mention can switch the runtime agent without changing the channel or thread. The send that
+   * caused the switch waits for this marker so it cannot race a new agent's history restore.
+   */
+  const [joinedRuntimeAgentId, setJoinedRuntimeAgentId] = useState<string | null>(null);
   // Mount reads and Bot refreshes share one ordering: only the newest read owns the notice.
   const historyReadVersion = useRef(0);
   useEffect(() => {
@@ -320,6 +330,7 @@ export function ChannelChat({
     if (!isReady) return;
     let current = true;
     const version = ++historyReadVersion.current;
+    setJoinedRuntimeAgentId(null);
 
     void (async () => {
       try {
@@ -364,7 +375,10 @@ export function ChannelChat({
       } finally {
         // Cleared on failure too: placeholders over an empty transcript promise messages that are
         // never coming.
-        if (current) setRestoring(false);
+        if (current) {
+          setRestoring(false);
+          setJoinedRuntimeAgentId(runtimeAgentId);
+        }
         // Release even on join/restore failure; the gate orders messages, not withholds them.
         openJoinGate.current();
       }
@@ -765,6 +779,70 @@ export function ChannelChat({
   const sayRef = useRef(say);
   sayRef.current = say;
 
+  type RoutedSend = {
+    targetId: string;
+    text: string;
+    skillInstructions: string[];
+    attachments: Attachment[];
+    resolve: () => void;
+    reject: (error: unknown) => void;
+  };
+  const pendingRoutedSend = useRef<RoutedSend | null>(null);
+
+  /**
+   * Route one message to a coworker already in this channel.
+   *
+   * Switching runtime agents is a render boundary: useAgent must first bind the shared thread to the
+   * newly selected runtime Agent and restore it. The promise stays open across that render, so the
+   * composer remains pending and the draft is not cleared until the addressed Bot really ran.
+   */
+  const sendToAgent = (
+    targetId: string,
+    text: string,
+    skillInstructions: string[],
+    attachments: Attachment[],
+  ): Promise<void> => {
+    if (!channel.agentIds.includes(targetId)) {
+      return Promise.reject(new Error("That coworker is not in this channel."));
+    }
+    if (targetId === runtimeAgentId) {
+      return sayRef.current(text, skillInstructions, attachments);
+    }
+
+    return new Promise<void>((resolve, reject) => {
+      pendingRoutedSend.current = {
+        targetId,
+        text,
+        skillInstructions,
+        attachments,
+        resolve,
+        reject,
+      };
+      setRuntimeAgentId(targetId);
+    });
+  };
+
+  useEffect(() => {
+    const pending = pendingRoutedSend.current;
+    if (
+      !pending ||
+      pending.targetId !== runtimeAgentId ||
+      !isReady ||
+      joinedRuntimeAgentId !== runtimeAgentId
+    ) {
+      return;
+    }
+
+    pendingRoutedSend.current = null;
+    void sayRef
+      .current(
+        pending.text,
+        pending.skillInstructions,
+        pending.attachments,
+      )
+      .then(pending.resolve, pending.reject);
+  }, [isReady, joinedRuntimeAgentId, runtimeAgentId]);
+
   /**
    * Component buttons speak as user turns without forcing every transcript card to re-render.
    *
@@ -815,8 +893,9 @@ export function ChannelChat({
            * "Thinking" line exists for. Same value as `pending`, deliberately.
            */
           busy={agent.isRunning || turnsInFlight > 0}
-          // The `/` menu exposes only skills granted to this Bot.
-          commands={skillCommands}
+          // Skills are per-Bot. A group can switch responders with @, so exposing one Bot's slash
+          // menu there would let a skill chip silently execute against another Bot.
+          commands={channel.agentIds.length === 1 ? skillCommands : []}
           // Readiness is handled by `say`; deletion is the only disabled-chat state.
           disabled={!channel.active}
           messages={transcriptMessages(agent.messages, seed)}
@@ -840,14 +919,16 @@ export function ChannelChat({
             </>
           }
           onSubmit={async (draft) => {
-            // `draft.agentId` carries the @mentioned coworker, but nothing routes on it yet: this
-            // channel is pinned to one `runtimeAgentId` for the life of its thread, so honouring a
-            // per-message mention is a change to that binding, not to the composer.
-            //
-            // `commandIds` are the `/` chips that survived into the send, in the order they were
-            // typed. Resolved against the same list the menu was built from, so a chip left over from
-            // a skill that has since been revoked resolves to nothing rather than to a stale
-            // instruction — the menu is refetched, and this reads from it.
+            // Group channels route an explicit @mention to that coworker. Without a mention the
+            // current responder remains active, so a natural follow-up continues with the Bot that
+            // just answered instead of jumping back to the first member.
+            const targetId =
+              draft.agentId && channel.agentIds.includes(draft.agentId)
+                ? draft.agentId
+                : runtimeAgentId;
+
+            // Skills remain single-Bot affordances. Group channels hide the slash menu below, so
+            // these are only populated in a direct channel where the runtime Bot cannot change.
             const skillInstructions = draft.commandIds
               .map(
                 (id) =>
@@ -857,8 +938,18 @@ export function ChannelChat({
                 Boolean(instruction),
               );
 
-            await say(draft.text, skillInstructions, draft.attachments);
-          }}
+            if (draft.agentId) {
+              // The mention is already the person's decision. This call is only the audit record;
+              // failure to write that row must not block the conversation they explicitly addressed.
+              await routeMessage(draft.text, targetId).catch(() => undefined);
+            }
+            await sendToAgent(
+              targetId,
+              draft.text,
+              skillInstructions,
+              draft.attachments,
+            );
+          }
           /**
            * Stop through the core so the abort signal reaches frontend tools; `say` repairs any
            * unanswered tool call before the next turn.
@@ -880,7 +971,7 @@ export function ChannelChat({
            * moment this one is over — including when it is over because somebody pressed the button
            * above.
            */
-          queueWhileBusy
+          queueWhileBusy={channel.agentIds.length === 1}
           restoring={restoring}
           /*
            * The run, not the turn. Stop reaches a run through the core's abort controller, and that
