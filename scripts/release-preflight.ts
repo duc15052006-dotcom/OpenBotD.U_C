@@ -127,6 +127,25 @@ function checkDesktopBoundary(): void {
   if ("remote" in capability) {
     fail("desktop: the capability grants remote content access to native APIs");
   }
+
+  if (tauri.mainBinaryName !== "openbot-desktop") {
+    fail("desktop: mainBinaryName drifted from the Windows shortcut target");
+  }
+  const bundle = object(tauri.bundle) ? tauri.bundle : {};
+  const windows = object(bundle.windows) ? bundle.windows : {};
+  const nsis = object(windows.nsis) ? windows.nsis : {};
+  if (nsis.installerHooks !== "./windows/hooks.nsh") {
+    fail("desktop: NSIS installer no longer loads the desktop-shortcut hook");
+  }
+  const hooks = read("desktop/src-tauri/windows/hooks.nsh");
+  for (const evidence of [
+    'CreateShortcut "$DESKTOP\\OpenBot.lnk" "$INSTDIR\\openbot-desktop.exe"',
+    'Delete "$DESKTOP\\OpenBot.lnk"',
+  ]) {
+    if (!hooks.includes(evidence)) {
+      fail(`desktop: Windows shortcut lifecycle is missing ${evidence}`);
+    }
+  }
 }
 
 function checkReleaseWiring(): void {
@@ -227,7 +246,9 @@ function checkReleaseWiring(): void {
     "Users group",
     "IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)",
     "Start-Process -FilePath $Installer",
-    "Start-Process -FilePath $apps[0].FullName",
+    "OpenBot.lnk",
+    "Desktop shortcut remains after uninstall.",
+    "Start-Process -FilePath $appPath",
     "Start-Process -FilePath $uninstallers[0].FullName",
   ]) {
     if (!standardUserScript.includes(evidence)) {
