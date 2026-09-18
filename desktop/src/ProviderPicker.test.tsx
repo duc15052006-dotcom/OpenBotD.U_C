@@ -87,6 +87,7 @@ async function renderPicker(
         root=" /tmp/openbot-provider-root "
         onBack={() => {}}
         onChoose={onChoose}
+        requireConnectionTest={requireConnectionTest}
       />,
     );
   });
