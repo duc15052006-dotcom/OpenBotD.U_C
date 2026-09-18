@@ -213,6 +213,10 @@ services:
       # Set to runsc to run every computer under gVisor, when the host has it. Left unset each
       # computer is an ordinary container and shares the host kernel.
       COMPUTER_RUNTIME: ${COMPUTER_RUNTIME:-}
+      # Windows-first defaults sized for ordinary Browser/Files work. Operators can override both,
+      # but an unset desktop install must not let one Agent consume the whole host.
+      COMPUTER_MEMORY_BYTES: ${COMPUTER_MEMORY_BYTES:-2147483648}
+      COMPUTER_NANO_CPUS: ${COMPUTER_NANO_CPUS:-2000000000}
       # Identity, when SPIRE is part of this deployment. The supervisor registers an entry per Bot
       # and mounts the agent's socket into that Bot's computer so it can fetch its own SVID.
       SPIRE_SOCKET: /tmp/spire-server/private/api.sock
