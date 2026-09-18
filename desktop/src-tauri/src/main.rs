@@ -3356,16 +3356,41 @@ fn main() {
             let _ = window
                 .eval("document.addEventListener('contextmenu', e => e.preventDefault(), true)");
         })
-        // Closing the window means Keep running in the system tray: Agents and Computers may keep
-        // working. STOP ALL AGENTS and Exit are explicit, separately labelled actions that stop the
-        // runtime. A tray application whose window is destroyed on close has a menu item that points
-        // at nothing: `get_webview_window` returns None from then on, and the
-        // only way back is to quit and start again, with a stack still running that nothing on
-        // screen can reach.
+        // Closing the window is an explicit product choice, not a hidden background transition.
+        //
+        // Minimize never comes through this branch and keeps running. The X button asks whether the
+        // person wants the same tray behaviour or a real Exit. A real Exit goes through RunEvent::
+        // ExitRequested below, which is the one cleanup path that retires host processes, folder
+        // operations, supervisor-created Computers and Compose services before the process exits.
+        //
+        // The window itself is hidden rather than destroyed for "Keep running": the tray's Open item
+        // must still have a WebView to restore, and a hidden window costs far less than an Agent
+        // Computer while making the running state recoverable and visible.
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+
                 api.prevent_close();
-                let _ = window.hide();
+                let app = window.app_handle();
+                let keep_running = app
+                    .dialog()
+                    .message(
+                        "OpenBot is still running. Keep Agents and Computers running in the system tray, or exit OpenBot and stop all Agents?",
+                    )
+                    .title("Close OpenBot")
+                    .kind(MessageDialogKind::Warning)
+                    .buttons(MessageDialogButtons::OkCancelCustom(
+                        "Keep running in tray".into(),
+                        "Exit and stop all Agents".into(),
+                    ))
+                    .parent(window)
+                    .blocking_show();
+
+                if keep_running {
+                    let _ = window.hide();
+                } else {
+                    app.exit(0);
+                }
             }
         })
         .setup(|app| {
