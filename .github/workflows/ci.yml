@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, "verify/**"]
   # Callable, so publishing a release runs these same checks against the release commit rather than
   # trusting that they ran somewhere earlier.
   workflow_call:
