@@ -249,6 +249,32 @@ export type ChannelStore = {
 const PRIVATE_AGENT_CHANNEL_DESCRIPTION = "Private agent channel.";
 const MAX_CHANNEL_NAME_CODE_POINTS = 120;
 const MAX_ACTIVITY_GRAPHEMES = 200;
+export const MAX_CHANNEL_AGENTS = 8;
+
+type GroupChannelOverride = {
+  group?: {
+    version?: number;
+    coordinatorAgentId?: string;
+  };
+};
+
+function coordinatorAgentId(override: unknown): string | null {
+  if (!override || typeof override !== "object" || Array.isArray(override)) {
+    return null;
+  }
+  const group = (override as GroupChannelOverride).group;
+  return group &&
+    typeof group === "object" &&
+    typeof group.coordinatorAgentId === "string"
+    ? group.coordinatorAgentId
+    : null;
+}
+
+function coordinatorFirst(agentIds: string[], override: unknown): string[] {
+  const coordinator = coordinatorAgentId(override);
+  if (!coordinator || !agentIds.includes(coordinator)) return agentIds;
+  return [coordinator, ...agentIds.filter((agentId) => agentId !== coordinator)];
+}
 
 /** Reduce a message to the one line a roster draws. See `oneLine` for why it is shared. */
 function previewOf(text: string) {
@@ -311,6 +337,16 @@ export function createChannelStore(
       id,
       name,
       description: PRIVATE_AGENT_CHANNEL_DESCRIPTION,
+      ...(agentIds.length > 1
+        ? {
+            override: {
+              group: {
+                version: 1,
+                coordinatorAgentId: agentIds[0],
+              },
+            },
+          }
+        : {}),
     });
     await transaction.insert(channelMemberships).values({
       channelId: id,
@@ -409,6 +445,7 @@ export function createChannelStore(
           agentId: channelAgents.agentId,
           threadId: intelligenceChannelMappings.threadId,
           lastMessageAt: channels.lastMessageAt,
+          channelOverride: channels.override,
           deletedAt: agentProfiles.deletedAt,
         })
         .from(channels)
@@ -440,7 +477,10 @@ export function createChannelStore(
       return {
         id: first.id,
         name: first.name,
-        agentIds: rows.map((row) => row.agentId),
+        agentIds: coordinatorFirst(
+          rows.map((row) => row.agentId),
+          first.channelOverride,
+        ),
         threadId: first.threadId,
         active: rows.every((row) => row.deletedAt === null),
         lastMessageAt: first.lastMessageAt,
@@ -516,6 +556,7 @@ export function createChannelStore(
           createdAt: channels.createdAt,
           pinnedAt: channelMemberships.pinnedAt,
           lastReadAt: channelMemberships.lastReadAt,
+          channelOverride: channels.override,
         })
         .from(channels)
         .innerJoin(
@@ -555,7 +596,9 @@ export function createChannelStore(
       // One row per channel-agent pair; the ordering above keeps each channel's rows together and
       // its agents in the same lexicographic order `get` returns.
       const summaries = new Map<string, ChannelSummary>();
+      const channelOverrides = new Map<string, unknown>();
       for (const row of rows) {
+        channelOverrides.set(row.id, row.channelOverride);
         const summary = summaries.get(row.id);
         if (summary) {
           summary.agentIds.push(row.agentId);
@@ -576,6 +619,12 @@ export function createChannelStore(
           pinned: row.pinnedAt !== null,
           lastReadAt: row.lastReadAt,
         });
+      }
+      for (const [channelId, summary] of summaries) {
+        summary.agentIds = coordinatorFirst(
+          summary.agentIds,
+          channelOverrides.get(channelId),
+        );
       }
       return { channels: [...summaries.values()], nextCursor };
     },
@@ -1015,6 +1064,12 @@ export function parseChannelInput(input: unknown): ChannelInputParseResult {
 
   if (new Set(agentIds).size !== agentIds.length) {
     return { ok: false, error: "Agent IDs must be unique." };
+  }
+  if (agentIds.length > MAX_CHANNEL_AGENTS) {
+    return {
+      ok: false,
+      error: `A channel may have at most ${MAX_CHANNEL_AGENTS} agents.`,
+    };
   }
 
   // Preserve the person's ordering. The first Bot is the group coordinator; database locks are
