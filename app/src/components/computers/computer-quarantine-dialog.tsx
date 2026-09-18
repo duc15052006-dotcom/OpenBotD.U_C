@@ -154,8 +154,7 @@ export function ComputerQuarantineDialog({
                         size="sm"
                         variant="outline"
                       >
-                        {approve.isPending &&
-                        approve.variables?.id === entry.id
+                        {approve.isPending && approve.variables?.id === entry.id
                           ? "Approving…"
                           : "Approve export"}
                       </Button>
