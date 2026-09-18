@@ -14,7 +14,6 @@ fn compatible_probe_keeps_local_http_available() {
     assert_eq!(url.as_str(), "http://127.0.0.1:11434/v1/models");
 }
 
-
 #[test]
 fn compatible_probe_refuses_cloud_metadata_endpoints_even_when_local_http_is_supported() {
     for endpoint in [
