@@ -208,6 +208,14 @@ export interface ComputerGateway {
       egress?: string | null;
     }[];
   }>;
+  startComputer(
+    botId: string,
+    actor: ActionActor,
+  ): Promise<{ started: boolean; url: string }>;
+  restartComputer(
+    botId: string,
+    actor: ActionActor,
+  ): Promise<{ restarted: boolean; url: string }>;
   stopComputer(
     botId: string,
     actor: ActionActor,
@@ -696,6 +704,48 @@ export function createComputerGateway(
           egress: computer.egress,
         })),
       };
+    },
+
+    /**
+     * Start (or wake) a computer without changing its saved browser profile.
+     *
+     * Per-Bot providers already define locating as "ensure this Bot has a running computer", so the
+     * lifecycle surface uses that same primitive rather than adding a second start path that could
+     * drift from the one every normal action relies on. A shared provider may already be running as
+     * a service; in that mode this is an idempotent reachability/wake request.
+     */
+    async startComputer(botId: string, actor: ActionActor) {
+      const before = await provider.status(botId).catch(() => ({
+        botId,
+        state: "unreachable" as const,
+      }));
+      const url = await locate(botId);
+      const started = before.state !== "ready";
+      await writeControlEvent(auditStore, "computer.started", {
+        botId,
+        actor,
+        reason: started
+          ? "the computer was started or resumed"
+          : "the computer was already running",
+      });
+      return { started, url };
+    },
+
+    /**
+     * Restart a computer while preserving its saved profile.
+     *
+     * Stop first, then use the provider's normal ensure path to bring it back. This deliberately does
+     * not call reset: restart must never sign the Bot out or erase its workspace/browser profile.
+     */
+    async restartComputer(botId: string, actor: ActionActor) {
+      await provider.stop(botId);
+      const url = await locate(botId);
+      await writeControlEvent(auditStore, "computer.restarted", {
+        botId,
+        actor,
+        reason: "the computer was stopped and started again without clearing its saved profile",
+      });
+      return { restarted: true, url };
     },
 
     /**
