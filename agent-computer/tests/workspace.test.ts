@@ -139,12 +139,12 @@ describe("reading and writing inside the workspace", () => {
       ws.write("one.txt", "123456"),
       ws.write("two.txt", "abcdef"),
     ]);
-    expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(
-      1,
-    );
-    expect(outcomes.filter((outcome) => outcome.status === "rejected")).toHaveLength(
-      1,
-    );
+    expect(
+      outcomes.filter((outcome) => outcome.status === "fulfilled"),
+    ).toHaveLength(1);
+    expect(
+      outcomes.filter((outcome) => outcome.status === "rejected"),
+    ).toHaveLength(1);
   });
 
   test("reading something that is not there says so plainly", async () => {
