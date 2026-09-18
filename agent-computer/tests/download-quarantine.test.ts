@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   approveQuarantinedDownload,
+  approvedQuarantineFile,
+  deleteQuarantinedDownload,
   listQuarantinedDownloads,
+  markQuarantinedDownloadReleased,
   quarantineDirectoryFor,
   quarantineDownload,
   QuarantineStateError,
@@ -59,7 +62,7 @@ describe("download quarantine", () => {
     expect(quarantineDirectoryFor(root, "agent-a")).toBe(join(root, "agent-a"));
   });
 
-  test("persists a download only under quarantine as pending untrusted input", async () => {
+  test("persists identity only under quarantine as pending untrusted input", async () => {
     let savedAs = "";
     const result = await quarantineDownload(root, "agent-a", {
       failure: async () => null,
@@ -74,15 +77,21 @@ describe("download quarantine", () => {
     expect(savedAs.startsWith(join(root, "agent-a"))).toBe(true);
     expect(savedAs.endsWith("-installer.exe")).toBe(true);
     expect(await readFile(result.file, "utf8")).toBe("untrusted bytes");
+    expect(result.record.status).toBe("pending");
+    expect(result.record.sha256).toMatch(/^[a-f0-9]{64}$/);
 
     const metadata = JSON.parse(await readFile(result.metadata, "utf8")) as {
       status: string;
       originalName: string;
       sourceUrl: string;
+      sha256: string;
+      file?: unknown;
     };
     expect(metadata.status).toBe("pending");
     expect(metadata.originalName).toBe("../../installer.exe");
     expect(metadata.sourceUrl).toBe("https://example.test/installer.exe");
+    expect(metadata.sha256).toBe(result.record.sha256);
+    expect(metadata.file).toBeUndefined();
   });
 
   test("a failed scanner is never treated as clean or approvable", async () => {
@@ -116,7 +125,28 @@ describe("download quarantine", () => {
     ).rejects.toThrow(QuarantineStateError);
   });
 
-  test("approval requires a clean scan and still does not export or execute the file", async () => {
+  test("changing the file during a clean scan fails closed", async () => {
+    const download = await addDownload();
+    const scanned = await scanQuarantinedDownload(
+      root,
+      "agent-a",
+      download.id,
+      async (file) => {
+        await Bun.write(file, "different bytes after scan started");
+        return {
+          status: "clean",
+          scanner: "clamav",
+          detail: "no malware",
+          scannedAt: new Date().toISOString(),
+        };
+      },
+    );
+    expect(scanned.status).toBe("scan_failed");
+    expect(scanned.scannedSha256).toBeUndefined();
+    expect(scanned.scan?.detail).toContain("changed");
+  });
+
+  test("approval and export stay bound to the exact clean bytes", async () => {
     const download = await addDownload();
     const scanned = await scanQuarantinedDownload(
       root,
@@ -125,6 +155,7 @@ describe("download quarantine", () => {
       fakeScan("clean", "no malware"),
     );
     expect(scanned.status).toBe("clean");
+    expect(scanned.scannedSha256).toBe(scanned.sha256);
 
     const approved = await approveQuarantinedDownload(
       root,
@@ -133,8 +164,57 @@ describe("download quarantine", () => {
     );
     expect(approved.status).toBe("approved");
     expect(approved.approvedAt).toBeTruthy();
-    expect(await readFile(download.file, "utf8")).toBe("untrusted bytes");
-    expect(download.file.startsWith(join(root, "agent-a"))).toBe(true);
+
+    const exportable = await approvedQuarantineFile(
+      root,
+      "agent-a",
+      download.id,
+    );
+    expect(exportable.record.sha256).toBe(scanned.sha256);
+    expect(await readFile(exportable.file, "utf8")).toBe("untrusted bytes");
+
+    await Bun.write(download.file, "tampered but still quarantined");
+    await expect(
+      approvedQuarantineFile(root, "agent-a", download.id),
+    ).rejects.toThrow(QuarantineStateError);
+    await expect(
+      markQuarantinedDownloadReleased(root, "agent-a", download.id),
+    ).rejects.toThrow(QuarantineStateError);
+  });
+
+  test("release is a separate transition after native export succeeds", async () => {
+    const download = await addDownload();
+    await scanQuarantinedDownload(
+      root,
+      "agent-a",
+      download.id,
+      fakeScan("clean"),
+    );
+    await approveQuarantinedDownload(root, "agent-a", download.id);
+    const released = await markQuarantinedDownloadReleased(
+      root,
+      "agent-a",
+      download.id,
+    );
+    expect(released.status).toBe("released");
+    expect(released.releasedAt).toBeTruthy();
+    await expect(
+      approvedQuarantineFile(root, "agent-a", download.id),
+    ).rejects.toThrow(QuarantineStateError);
+  });
+
+  test("delete accepts only the generated id and remains per-Agent", async () => {
+    const download = await addDownload("agent-a");
+    await expect(
+      deleteQuarantinedDownload(root, "agent-a", "../../installer.exe"),
+    ).rejects.toThrow(QuarantineStateError);
+    expect(await deleteQuarantinedDownload(root, "agent-b", download.id)).toBe(
+      false,
+    );
+    expect(await deleteQuarantinedDownload(root, "agent-a", download.id)).toBe(
+      true,
+    );
+    expect(await listQuarantinedDownloads(root, "agent-a")).toEqual([]);
   });
 
   test("one Agent cannot list or scan another Agent's quarantine", async () => {
