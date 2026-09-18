@@ -14,6 +14,7 @@ Start with the root [README](../README.md), then use these references:
 - [Deployment](deployment.md): the container, what is in the image, minimum sizes, and the platform notes.
 - [Kubernetes](../charts/openbot/README.md): the Helm chart, what a cluster needs before it, and the values that differ per cloud.
 - [Windows desktop](windows-desktop.md): installer-first end-user setup, first run, persistence, diagnostics, updates and uninstall.
+- [NOTE 1337 — Computer/VM runtime](note-1337-computer-vm-runtime.md): Agent isolation, app exit semantics, persistence, resource limits, malware containment, sleep/wake and emergency stop requirements.
 - [Releasing](releasing.md): how a release is proposed, reviewed and published.
 - [Windows desktop signing](windows-signing.md): protected Azure Key Vault signing and verification of the app and NSIS installer.
 
