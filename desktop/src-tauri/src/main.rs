@@ -4040,7 +4040,7 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(
             root.join(".env"),
-            "INTELLIGENCE_API_KEY=file-cpk\nOPENAI_API_KEY=file-openai\nOPENAI_BASE_URL=https://models.example/v1\n",
+            "INTELLIGENCE_API_KEY=file-cpk\nOPENAI_API_KEY=file-openai\nANTHROPIC_API_KEY=file-anthropic\nOPENAI_BASE_URL=https://models.example/v1\n",
         )
         .unwrap();
         std::fs::create_dir_all(root.join(".langchain")).unwrap();
@@ -4058,7 +4058,11 @@ mod tests {
         );
         assert!(
             !configured.values.contains_key("OPENAI_API_KEY"),
-            "passive hydration must not return a legacy model key to the WebView"
+            "passive hydration must not return a legacy OpenAI key to the WebView"
+        );
+        assert!(
+            !configured.values.contains_key("ANTHROPIC_API_KEY"),
+            "passive hydration must not return a legacy Anthropic key to the WebView"
         );
         assert_eq!(
             configured.values.get("OPENAI_BASE_URL"),
@@ -4066,6 +4070,7 @@ mod tests {
         );
         assert_eq!(configured.saved.intelligence_api_key, Some(true));
         assert_eq!(configured.saved.model_api_keys.openai, Some(true));
+        assert_eq!(configured.saved.model_api_keys.anthropic, Some(true));
         assert_eq!(configured.saved.model_sessions.openai, Some(true));
         assert_eq!(configured.saved.model_sessions.anthropic, None);
         let _ = std::fs::remove_dir_all(root);
