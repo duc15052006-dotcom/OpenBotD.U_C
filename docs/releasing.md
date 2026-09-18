@@ -117,6 +117,20 @@ gh attestation verify oci://ghcr.io/copilotkit/openbot-supervisor:v0.1.0 -R Copi
 
 ## What has to be green
 
+Before asking GitHub for runners, the repository has a fast static release wiring check:
+
+```sh
+bun run release:preflight
+```
+
+It verifies the packaged WebView boundary, reusable workflow wiring, Windows installer acceptance
+step, protected signing gate, signed release assets, release-commit identity checks, and version
+sources. It does **not** replace actually running CI, installing on Windows, or using the protected
+certificate; its job is to make broken release wiring fail immediately instead of on release day.
+
+Both **CI** and **Desktop** can also be started manually from the Actions tab after a branch is
+available to Actions, which is useful when pull-request events are unavailable or suppressed.
+
 Branch protection should require one check, `verify`, which fails unless every other job succeeded.
 A job added to `ci.yml` is covered by it without anybody updating a list.
 
