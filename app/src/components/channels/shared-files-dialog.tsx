@@ -51,7 +51,7 @@ export function SharedFilesDialog({
           </p>
         ) : (
           <div className="max-h-[55svh] overflow-y-auto rounded-md border border-border">
-            {files.data.map((file, index) => (
+            {files.data.map((file) => (
               <a
                 className="flex items-center justify-between gap-4 px-3 py-2.5 text-sm hover:bg-muted/60"
                 href={attachmentUrl(file.id)}
@@ -68,7 +68,6 @@ export function SharedFilesDialog({
                 <span className="shrink-0 text-muted-foreground text-xs">
                   {new Date(file.attachedAt).toLocaleString()}
                 </span>
-                {index !== files.data.length - 1 ? null : null}
               </a>
             ))}
           </div>
