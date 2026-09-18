@@ -540,7 +540,6 @@ describe("GET /:channelId/attachments", () => {
           name: "shared-notes.txt",
           mimeType: "text/plain",
           sizeBytes: 6,
-          uploadedBy: memberId,
           attachedAt: sentAt.toISOString(),
         },
       ],
