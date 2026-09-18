@@ -385,8 +385,8 @@ function GeneralSection({
             <ItemContent>
               <ItemTitle>Computer resources</ItemTitle>
               <ItemDescription>
-                Light: 1 CPU / 1.5 GB · Normal: 2 CPU / 2 GB · Heavy: 3 CPU /
-                4 GB. The supervisor applies this limit to this coworker only.
+                Light: 1 CPU / 1.5 GB · Normal: 2 CPU / 2 GB · Heavy: 3 CPU / 4
+                GB. The supervisor applies this limit to this coworker only.
               </ItemDescription>
             </ItemContent>
             <ItemActions>
