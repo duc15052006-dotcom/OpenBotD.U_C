@@ -251,9 +251,11 @@ export const auditEventTypes = [
   // which field it went in; the value is on a path this trail is not on.
   "computer.secret_requested",
   "computer.secret_supplied",
-  // The computer itself being stopped or wiped. `reset` destroys every login the Bot had, which is
-  // both the recovery path and the most consequential button on the admin page, so who pressed it and
-  // when is exactly the sort of thing an investigator needs and nothing else records.
+  // Explicit lifecycle changes. Restart and stop preserve profile/workspace state; reset destroys the
+  // saved browser profile. All are recorded because a lifecycle button changes what the Bot can do
+  // next, and reset is irreversible.
+  "computer.started",
+  "computer.restarted",
   "computer.stopped",
   "computer.reset",
   /**
