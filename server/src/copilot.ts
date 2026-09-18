@@ -219,7 +219,7 @@ type RuntimeAgentRow = {
   name: string;
   type: "built_in" | "remote_ag_ui" | "remote_mastra";
   configuration: unknown;
-  /** Deployment-owned mutable namespaces such as model, computer, and instructions. */
+  /** Deployment-owned mutable namespaces such as model, computer, instructions, and knowledge. */
   override?: unknown;
   title: string;
   roleDescription: string;
@@ -393,16 +393,15 @@ export function builtInAgentConfiguration(
   return {
     ...modelConfiguration,
     /*
-     * The package's role, then the person's own standing instructions, then what this Bot actually
-     * holds, then the computer.
+     * Order is deliberate: immutable package role; deployment-owned per-Agent instructions; the
+     * person's standing preferences; bounded Agent reference knowledge; provenance; granted tools;
+     * then computer guidance.
      *
-     * The grants go BEFORE the computer prose on purpose. That prose is long and emphatic about the
-     * browser and mentions connectors nowhere, so a Bot that read it last reached for the browser
-     * even when it held a tool for the exact system being asked about.
-     *
-     * The person's instructions go straight after the role and before all of it, because they are
-     * the other half of the same question — who you are and who you are working for — and because
-     * their precedence sentence only means anything next to the role it defers to.
+     * Knowledge follows the instruction layers and labels itself untrusted data, so prose inside an
+     * uploaded document cannot become a competing instruction merely by being later in the prompt.
+     * Grants go BEFORE the computer prose because the latter is long and emphatic about the browser:
+     * a Bot that reads it last should still prefer a granted tool for the exact system being asked
+     * about.
      */
     prompt: [
       agent.systemPrompt,
