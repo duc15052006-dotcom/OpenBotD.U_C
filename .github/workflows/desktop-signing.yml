@@ -140,6 +140,7 @@ jobs:
         env:
           WINDOWS_SIGNING: keyvault
           OPENBOT_RELEASE_REPOSITORY: ${{ github.repository }}
+          OPENBOT_SOURCE_SHA: ${{ github.sha }}
         run: bun run tauri build --config src-tauri/tauri.windows-signing.conf.json --config src-tauri/tauri.build-version.conf.json --bundles nsis
         working-directory: desktop
       # Tauri restores the unsigned build output after bundling. Verify the app
