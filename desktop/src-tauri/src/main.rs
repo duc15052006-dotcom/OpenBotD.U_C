@@ -2697,23 +2697,23 @@ fn already_configured_for_root(root: String) -> AlreadyConfigured {
     let hint = |category, file_present| {
         (file_present || intent.categories.contains(&category)).then_some(true)
     };
+
+    // Legacy installs may still have credentials in .env. Passive setup hydration only needs to know
+    // that those values exist; returning the bytes would copy a plaintext credential into WebView
+    // state merely because the desktop app opened. Explicit Start/Test actions resolve the value
+    // natively through the vault compatibility reader and migrate/store it on the trusted side.
+    let intelligence_key = values.remove("INTELLIGENCE_API_KEY").is_some();
+    let openai_key = values.remove("OPENAI_API_KEY").is_some();
+    let anthropic_key = values.remove("ANTHROPIC_API_KEY").is_some();
     let claude_plan = values.remove("CLAUDE_CODE_OAUTH_TOKEN").is_some();
+
     AlreadyConfigured {
         launch: preparation::launch(&root),
         saved: SavedConfiguration {
-            intelligence_api_key: hint(
-                Category::Intelligence,
-                values.contains_key("INTELLIGENCE_API_KEY"),
-            ),
+            intelligence_api_key: hint(Category::Intelligence, intelligence_key),
             model_api_keys: SavedModelApiKeys {
-                openai: hint(
-                    Category::OpenAiApiKey,
-                    values.contains_key("OPENAI_API_KEY"),
-                ),
-                anthropic: hint(
-                    Category::AnthropicApiKey,
-                    values.contains_key("ANTHROPIC_API_KEY"),
-                ),
+                openai: hint(Category::OpenAiApiKey, openai_key),
+                anthropic: hint(Category::AnthropicApiKey, anthropic_key),
                 compatible: values
                     .get("OPENAI_BASE_URL")
                     .is_some_and(|url| intent.has_compatible_key_for(url))
