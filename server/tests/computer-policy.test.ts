@@ -5,7 +5,7 @@ import {
   policyInitiator,
   type PolicyContext,
 } from "../src/computer/policy";
-import { parseActionPolicy } from "../src/computer/policy-store";
+import {\n  DEFAULT_ACTION_POLICY,\n  parseActionPolicy,\n} from "../src/computer/policy-store";
 
 /**
  * These test the decision, not the plumbing.
@@ -30,6 +30,49 @@ function context(overrides: Partial<PolicyContext> = {}): PolicyContext {
 }
 
 const permissive: ActionPolicy = { mode: "enforce", deny: [], allow: ["true"] };
+
+describe("built-in default action policy", () => {
+  test.each([
+    ["browser navigation", "computer_navigate", "navigate"],
+    ["browser activation", "computer_click", "activate"],
+    ["workspace read", "computer_read_file", "read_file"],
+    ["workspace write", "computer_write_file", "write_file"],
+  ] as const)("permits the existing %s capability explicitly", (_label, tool, intent) => {
+    const decision = evaluateActionPolicy(DEFAULT_ACTION_POLICY, {
+      tool: { name: tool },
+      bot: { id: "default-bot" },
+      actor: { id: "dev-local-user" },
+      page: { url: "https://example.com/", host: "example.com" },
+      intent,
+    });
+    expect(decision.allowed).toBe(true);
+  });
+
+  test("refuses shell execution until a deployment explicitly opts in", () => {
+    const decision = evaluateActionPolicy(DEFAULT_ACTION_POLICY, {
+      tool: { name: "computer_run_command" },
+      bot: { id: "default-bot" },
+      actor: { id: "dev-local-user" },
+      page: { url: "", host: "" },
+      intent: "run_command",
+      command: "echo should-not-run-by-default",
+    });
+    expect(decision.allowed).toBe(false);
+    expect(decision.forward).toBe(false);
+  });
+
+  test("refuses a future action kind instead of inheriting permission", () => {
+    const decision = evaluateActionPolicy(DEFAULT_ACTION_POLICY, {
+      tool: { name: "computer_future_capability" },
+      bot: { id: "default-bot" },
+      actor: { id: "dev-local-user" },
+      page: { url: "", host: "" },
+      intent: "future_capability" as PolicyContext["intent"],
+    });
+    expect(decision.allowed).toBe(false);
+    expect(decision.forward).toBe(false);
+  });
+});
 
 describe("evaluateActionPolicy", () => {
   test("an absent policy refuses, rather than permitting everything", () => {
