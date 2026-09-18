@@ -19,6 +19,7 @@ import {
 import { agentListQueryOptions } from "@/lib/agents/queries";
 import { attachmentUrl } from "@/lib/channels/attachments";
 import {
+  groupCoordinatorInstruction,
   groupMentionInstruction,
   resolveGroupMention,
 } from "@/lib/channels/group-routing";
@@ -867,9 +868,18 @@ export function ChannelChat({
                   targetName: mentioned.name,
                 })
               : null;
+            const coordinatorInstruction =
+              !mentioned && channel.agentIds.length > 1
+                ? groupCoordinatorInstruction({
+                    coordinatorId: runtimeAgentId,
+                    channelAgentIds: channel.agentIds,
+                    agentProfiles,
+                  })
+                : null;
 
             const skillInstructions = [
               routingInstruction,
+              coordinatorInstruction,
               ...draft.commandIds.map(
                 (id) =>
                   skillCommands.find((command) => command.id === id)?.prompt,

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { COMPUTER_GUIDANCE } from "./bot-prompt";
+import { COMPUTER_GUIDANCE, ROUTINE_GUIDANCE } from "./bot-prompt";
 
 describe("COMPUTER_GUIDANCE", () => {
   test("keeps paragraph breaks as blank lines instead of collapsing them into spaces", () => {
@@ -33,6 +33,36 @@ describe("COMPUTER_GUIDANCE", () => {
     );
     expect(COMPUTER_GUIDANCE).toContain(
       "Say what you found or did in plain language, briefly.",
+    );
+  });
+});
+
+describe("ROUTINE_GUIDANCE", () => {
+  test("recognises recurring work without inventing missing schedule details", () => {
+    expect(ROUTINE_GUIDANCE).toContain(
+      "requests to do something later, repeatedly, on a schedule, or as a recurring check",
+    );
+    expect(ROUTINE_GUIDANCE).toContain(
+      "Never invent a clock time, cadence or timezone",
+    );
+    expect(ROUTINE_GUIDANCE).toContain(
+      "every morning' names a part of the day, not an exact clock time",
+    );
+  });
+
+  test("requires durable creation before promising background work", () => {
+    expect(ROUTINE_GUIDANCE).toContain("Use create_routine to create it");
+    expect(ROUTINE_GUIDANCE).toContain(
+      "Never claim that you will keep watching or run later when no durable routine was actually created",
+    );
+  });
+
+  test("confirms schedules in human-readable words instead of cron by default", () => {
+    expect(ROUTINE_GUIDANCE).toContain(
+      "confirm the schedule in ordinary words using the tool result",
+    );
+    expect(ROUTINE_GUIDANCE).toContain(
+      "Do not make the person read cron syntax unless they explicitly ask for it",
     );
   });
 });

@@ -2,6 +2,16 @@ import { describe, expect, test } from "bun:test";
 import type { RunAgentInput } from "@ag-ui/core";
 import { NO_ANSWER_CAME, toProviderMessages } from "../src/history";
 
+test("includes durable Routine behavior in the built-in system guidance", () => {
+  const messages = toProviderMessages(input([]));
+  const system = messages[0];
+  expect(system?.role).toBe("system");
+  expect(String(system?.content)).toContain("Use create_routine to create it");
+  expect(String(system?.content)).toContain(
+    "Never invent a clock time, cadence or timezone",
+  );
+});
+
 /**
  * The Bot that ships in the box, and the conversation a declined handover used to end.
  *
