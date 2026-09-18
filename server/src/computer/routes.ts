@@ -404,6 +404,16 @@ export function createComputerRoutes(
     }
   });
 
+  /** Explicitly start or wake the computer without inventing a browser action. */
+  routes.post("/:botId/computers/start", (context) =>
+    act(context, (botId, actor) => gateway.startComputer(botId, actor)),
+  );
+
+  /** Restart the runtime/browser while keeping its saved profile and workspace. */
+  routes.post("/:botId/computers/restart", (context) =>
+    act(context, (botId, actor) => gateway.restartComputer(botId, actor)),
+  );
+
   /** Stop the browser, keep the logins. */
   routes.post("/:botId/computers/stop", (context) =>
     act(context, (botId, actor) => gateway.stopComputer(botId, actor)),
