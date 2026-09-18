@@ -122,6 +122,11 @@ export function createComputerRoutes(
     });
   });
 
+  routes.get("/:botId/metrics", async (context) => {
+    const botId = context.req.param("botId");
+    return context.json(await gateway.resourceMetrics(botId));
+  });
+
   routes.get("/:botId/screenshot", async (context) => {
     try {
       return context.json(await gateway.screenshot(context.req.param("botId")));
