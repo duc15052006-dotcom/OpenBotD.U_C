@@ -301,7 +301,9 @@ function GeneralSection({
     }
   };
 
-  const changeComputerState = async (action: Exclude<ComputerAction, "start">) => {
+  const changeComputerState = async (
+    action: Exclude<ComputerAction, "start">,
+  ) => {
     if (!profile.builtIn) return;
     setComputerStatus(null);
     try {
