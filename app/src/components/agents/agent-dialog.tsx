@@ -15,6 +15,7 @@ import { useState } from "react";
 import type { ZodType } from "zod";
 import { AbstractAvatar } from "@/components/agents/abstract-avatar";
 import { CallbackTokenPanel } from "@/components/agents/callback-token-panel";
+import { ComputerFilesDialog } from "@/components/computers/computer-files-dialog";
 import { HandoffPanel } from "@/components/agents/handoff-panel";
 import { InstructionsPanel } from "@/components/agents/instructions-panel";
 import { KnowledgePanel } from "@/components/agents/knowledge-panel";
@@ -77,6 +78,7 @@ import {
 } from "@/lib/agents/mutations";
 import { type AgentProfile, agentQueryOptions } from "@/lib/agents/queries";
 import { isComposing } from "@/lib/composing";
+import { setComputerStateMutationOptions } from "@/lib/computers/mutations";
 import { agentPluginsQueryOptions } from "@/lib/plugins/queries";
 import { readToolName } from "@/lib/plugins/tool-name";
 
@@ -267,6 +269,22 @@ function GeneralSection({
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const updateAgent = useMutation(updateAgentMutationOptions(queryClient));
+  const computer = useMutation(setComputerStateMutationOptions(queryClient));
+  const [filesOpen, setFilesOpen] = useState(false);
+  const [computerStatus, setComputerStatus] = useState<string | null>(null);
+
+  const startComputer = async (openFiles = false) => {
+    setComputerStatus(null);
+    try {
+      await computer.mutateAsync({ botId: agentId, action: "start" });
+      setComputerStatus("Computer ready. Browser profile and workspace are preserved.");
+      if (openFiles) setFilesOpen(true);
+    } catch (error) {
+      setComputerStatus(
+        error instanceof Error ? error.message : "The computer could not be started.",
+      );
+    }
+  };
 
   /*
    * One field at a time, over the whole update endpoint: the API takes the full profile, so the
@@ -337,9 +355,38 @@ function GeneralSection({
 
       <Item variant="muted">
         <ItemContent>
+          <ItemTitle>Computer</ItemTitle>
+          <ItemDescription>
+            Start or wake this coworker&apos;s persistent browser and workspace.
+            {computerStatus ? (
+              <span className="mt-1 block">{computerStatus}</span>
+            ) : null}
+          </ItemDescription>
+        </ItemContent>
+        <ItemActions>
+          <Button
+            disabled={computer.isPending}
+            onClick={() => void startComputer(false)}
+            size="sm"
+            variant="outline"
+          >
+            {computer.isPending ? "Starting…" : "Start"}
+          </Button>
+          <Button
+            disabled={computer.isPending}
+            onClick={() => void startComputer(true)}
+            size="sm"
+          >
+            Files
+          </Button>
+        </ItemActions>
+      </Item>
+
+      <Item variant="muted">
+        <ItemContent>
           <ItemTitle>Start channel</ItemTitle>
           <ItemDescription>
-            Open a new channel with this coworker.
+            Open a channel to ask this coworker to use its browser, files and tools.
           </ItemDescription>
         </ItemContent>
         <ItemActions>
@@ -356,6 +403,13 @@ function GeneralSection({
           </Button>
         </ItemActions>
       </Item>
+
+      <ComputerFilesDialog
+        botId={agentId}
+        botName={profile.name}
+        onOpenChange={setFilesOpen}
+        open={filesOpen}
+      />
     </>
   );
 }
