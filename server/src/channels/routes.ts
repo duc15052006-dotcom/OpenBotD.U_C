@@ -222,6 +222,8 @@ export type ChannelStore = {
 const PRIVATE_AGENT_CHANNEL_DESCRIPTION = "Private agent channel.";
 const MAX_CHANNEL_NAME_CODE_POINTS = 120;
 const MAX_ACTIVITY_GRAPHEMES = 200;
+/** Match the client group-composer cap; server enforcement is authoritative. */
+export const MAX_CHANNEL_AGENTS = 8;
 
 /** Reduce a message to the one line a roster draws. See `oneLine` for why it is shared. */
 function previewOf(text: string) {
@@ -885,6 +887,12 @@ export function parseChannelInput(input: unknown): ChannelInputParseResult {
 
   if (!Array.isArray(input.agentIds) || input.agentIds.length === 0) {
     return { ok: false, error: "Agent IDs must be a non-empty array." };
+  }
+  if (input.agentIds.length > MAX_CHANNEL_AGENTS) {
+    return {
+      ok: false,
+      error: `A channel can contain at most ${MAX_CHANNEL_AGENTS} agents.`,
+    };
   }
 
   const agentIds: string[] = [];
