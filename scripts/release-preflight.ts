@@ -206,9 +206,8 @@ function checkReleaseWiring(): void {
   }
 
   const evidenceUpload = stepNamed(signJob, "Retain verification evidence");
-  const evidenceUploadWith = object(evidenceUpload?.with)
-    ? evidenceUpload.with
-    : {};
+  const evidenceUploadWith =
+    evidenceUpload && object(evidenceUpload.with) ? evidenceUpload.with : {};
   if (evidenceUploadWith["if-no-files-found"] !== "error") {
     fail("signing: signature evidence upload must fail when evidence is missing");
   }
