@@ -79,7 +79,7 @@ export function createDockerSupervisorProvider(
   async function call(
     path: string,
     method = "POST",
-    body?: unknown,
+    requestBody?: unknown,
   ): Promise<unknown> {
     let response: Response;
     try {
@@ -89,9 +89,9 @@ export function createDockerSupervisorProvider(
           ...(options.token
             ? { authorization: `Bearer ${options.token}` }
             : {}),
-          ...(body === undefined ? {} : { "content-type": "application/json" }),
+          ...(requestBody === undefined ? {} : { "content-type": "application/json" }),
         },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        ...(requestBody === undefined ? {} : { body: JSON.stringify(requestBody) }),
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (error) {
