@@ -450,10 +450,22 @@ mod tests {
     #[test]
     fn mutable_or_cross_repository_image_references_are_refused() {
         let names: Vec<&str> = IMAGE_VARIABLES.iter().map(|(name, _)| *name).collect();
+
         let mut mutable = manifest(&names);
         mutable.images.get_mut("server").unwrap().reference =
-            "ghcr.io/other/openbot-server:latest".into();
+            expected_image_repository("server").unwrap() + ":latest";
         assert!(pin(&mutable).is_err());
+
+        let mut cross_repository = manifest(&names);
+        cross_repository
+            .images
+            .get_mut("server")
+            .unwrap()
+            .reference = format!(
+            "ghcr.io/other/openbot-server@sha256:{}",
+            "b".repeat(64)
+        );
+        assert!(pin(&cross_repository).is_err());
 
         let mut short_digest = manifest(&names);
         short_digest.images.get_mut("server").unwrap().reference =
