@@ -9,6 +9,7 @@ import {
 } from "@/components/layout/page-shell";
 import { StaggerItem } from "@/components/layout/stagger";
 import { ComputerFilesDialog } from "@/components/computers/computer-files-dialog";
+import { ComputerQuarantineDialog } from "@/components/computers/computer-quarantine-dialog";
 import { ComputerScreenDialog } from "@/components/computers/computer-screen-dialog";
 import { Button } from "@/components/ui/button";
 import {
@@ -56,6 +57,8 @@ function ComputersPage() {
   const [filesFor, setFilesFor] = useState<string | null>(null);
   /** Computer whose browser is being watched or driven by the administrator. */
   const [screenFor, setScreenFor] = useState<string | null>(null);
+  /** Computer whose untrusted browser downloads are being inspected. */
+  const [quarantineFor, setQuarantineFor] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const nameFor = useBotNames();
 
@@ -113,6 +116,18 @@ function ComputersPage() {
         await setState.mutateAsync({ action: "start", botId });
       }
       setScreenFor(botId);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const showQuarantine = async (botId: string, running: boolean) => {
+    setBusy(botId);
+    try {
+      if (!running) {
+        await setState.mutateAsync({ action: "start", botId });
+      }
+      setQuarantineFor(botId);
     } finally {
       setBusy(null);
     }
@@ -273,6 +288,16 @@ function ComputersPage() {
                       Screen
                     </Button>
                     <Button
+                      disabled={busy === computer.botId}
+                      onClick={() =>
+                        void showQuarantine(computer.botId, computer.running)
+                      }
+                      size="sm"
+                      variant="outline"
+                    >
+                      Quarantine
+                    </Button>
+                    <Button
                       disabled={!computer.running || busy === computer.botId}
                       onClick={() => setFilesFor(computer.botId)}
                       size="sm"
@@ -311,6 +336,15 @@ function ComputersPage() {
           botId={screenFor}
           botName={nameFor(screenFor)}
           onOpenChange={(open) => !open && setScreenFor(null)}
+          open
+        />
+      ) : null}
+
+      {quarantineFor ? (
+        <ComputerQuarantineDialog
+          botId={quarantineFor}
+          botName={nameFor(quarantineFor)}
+          onOpenChange={(open) => !open && setQuarantineFor(null)}
           open
         />
       ) : null}
