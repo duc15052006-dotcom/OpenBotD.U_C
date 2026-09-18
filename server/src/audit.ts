@@ -254,6 +254,8 @@ export const auditEventTypes = [
   // The computer itself being stopped or wiped. `reset` destroys every login the Bot had, which is
   // both the recovery path and the most consequential button on the admin page, so who pressed it and
   // when is exactly the sort of thing an investigator needs and nothing else records.
+  "computer.started",
+  "computer.restarted",
   "computer.stopped",
   "computer.reset",
   /**
