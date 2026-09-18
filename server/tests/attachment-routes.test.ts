@@ -510,6 +510,64 @@ function controlCharactersIn(value: string): string[] {
     .map((char) => `0x${(char.codePointAt(0) ?? 0).toString(16)}`);
 }
 
+describe("GET /:channelId/attachments", () => {
+  test("lists sent channel files as metadata and keeps staged drafts private", async () => {
+    const { app, channelId, memberId } = await harness();
+    const sentAt = new Date("2026-09-18T02:30:00.000Z");
+    const sentId = await uploadText(database, {
+      channelId,
+      uploadedBy: memberId,
+      name: "shared-notes.txt",
+      text: "shared",
+      attachedAt: sentAt,
+    });
+    await uploadText(database, {
+      channelId,
+      uploadedBy: memberId,
+      name: "unsent-draft.txt",
+      text: "private draft",
+    });
+
+    const response = await app.request(
+      `http://test/${channelId}/attachments`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      attachments: [
+        {
+          id: sentId,
+          name: "shared-notes.txt",
+          mimeType: "text/plain",
+          sizeBytes: 6,
+          uploadedBy: memberId,
+          attachedAt: sentAt.toISOString(),
+        },
+      ],
+    });
+  });
+
+  test("a non-member cannot use the listing to discover another channel's files", async () => {
+    const { channelId, database: db, memberId, stranger } = await harness();
+    await uploadText(db, {
+      channelId,
+      uploadedBy: memberId,
+      name: "secret.txt",
+      text: "not theirs",
+      attachedAt: new Date(),
+    });
+    const outsider = new Hono<{ Variables: AppVariables }>();
+    outsider.route("/", createChannelAttachmentRoutes(db, stranger));
+
+    const response = await outsider.request(
+      `http://test/${channelId}/attachments`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ attachments: [] });
+  });
+});
+
 describe("POST /:channelId/attachments", () => {
   test("a member uploads a PNG and gets back a staged attachment", async () => {
     const { app, channelId } = await harness();
