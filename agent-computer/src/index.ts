@@ -981,7 +981,12 @@ serve<StreamData>({
         );
       } catch (error) {
         return json(
-          { error: describe(error, "The quarantined file could not be scanned.") },
+          {
+            error: describe(
+              error,
+              "The quarantined file could not be scanned.",
+            ),
+          },
           error instanceof QuarantineStateError ? 409 : 500,
         );
       }
@@ -1012,7 +1017,12 @@ serve<StreamData>({
         );
       } catch (error) {
         return json(
-          { error: describe(error, "The quarantined file could not be approved.") },
+          {
+            error: describe(
+              error,
+              "The quarantined file could not be approved.",
+            ),
+          },
           error instanceof QuarantineStateError ? 409 : 500,
         );
       }
