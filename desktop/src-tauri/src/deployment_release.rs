@@ -82,8 +82,12 @@ mod tests {
     #[test]
     fn an_installed_version_does_not_query_github_or_upgrade() {
         let root = scratch("release-installed");
-        deployment::record(&root, "v0.0.7").unwrap();
-        std::fs::write(deployment::images_path(&root), "{}").unwrap();
+        deployment::record(&root, "v0.0.7", "1111111111111111111111111111111111111111").unwrap();
+        std::fs::write(
+            deployment::images_path(&root),
+            r#"{"version":"v0.0.7","commit":"1111111111111111111111111111111111111111","images":{}}"#,
+        )
+        .unwrap();
         let version = resolve_version_with(&root, || panic!("must work offline")).unwrap();
         assert_eq!(version, "v0.0.7");
         assert!(!deployment::needs_fetch(&root, &version));
@@ -93,7 +97,7 @@ mod tests {
     #[test]
     fn a_missing_manifest_repairs_the_pinned_version() {
         let root = scratch("release-repair");
-        deployment::record(&root, "v0.0.7").unwrap();
+        deployment::record(&root, "v0.0.7", "1111111111111111111111111111111111111111").unwrap();
         let version = resolve_version_with(&root, || panic!("keep the installed pin")).unwrap();
         assert_eq!(version, "v0.0.7");
         assert!(deployment::needs_fetch(&root, &version));
