@@ -10,7 +10,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { setComputerStateMutationOptions } from "@/lib/computers/mutations";
-import { computerStatusQueryOptions } from "@/lib/computers/queries";
+import {
+  computerMetricsQueryOptions,
+  computerStatusQueryOptions,
+} from "@/lib/computers/queries";
 
 function stateLabel(state: "ready" | "starting" | "absent" | "unreachable") {
   switch (state) {
@@ -25,6 +28,18 @@ function stateLabel(state: "ready" | "starting" | "absent" | "unreachable") {
   }
 }
 
+function formatBytes(bytes: number | null) {
+  if (bytes === null) return "Not reported";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
+}
+
 /**
  * Lifecycle controls for exactly one Agent's computer.
  *
@@ -35,6 +50,10 @@ function stateLabel(state: "ready" | "starting" | "absent" | "unreachable") {
 export function ComputerPanel({ agentId }: { agentId: string }) {
   const queryClient = useQueryClient();
   const status = useQuery(computerStatusQueryOptions(agentId));
+  const metrics = useQuery({
+    ...computerMetricsQueryOptions(agentId),
+    enabled: status.data?.state === "ready",
+  });
   const lifecycle = useMutation(setComputerStateMutationOptions(queryClient));
   const [confirmReset, setConfirmReset] = useState(false);
 
@@ -88,6 +107,53 @@ export function ComputerPanel({ agentId }: { agentId: string }) {
           </Button>
         </div>
       </div>
+
+      {state === "ready" ? (
+        <div className="grid gap-2 sm:grid-cols-3">
+          <div className="rounded-lg border p-3">
+            <p className="text-xs text-muted-foreground">CPU</p>
+            <p className="mt-1 font-medium">
+              {metrics.data?.metrics?.cpuPercent === null ||
+              metrics.data?.metrics?.cpuPercent === undefined
+                ? "Not reported"
+                : `${metrics.data.metrics.cpuPercent.toFixed(1)}%`}
+            </p>
+          </div>
+          <div className="rounded-lg border p-3">
+            <p className="text-xs text-muted-foreground">Memory</p>
+            <p className="mt-1 font-medium">
+              {metrics.data?.metrics
+                ? `${formatBytes(metrics.data.metrics.memoryUsedBytes)}${
+                    metrics.data.metrics.memoryLimitBytes === null
+                      ? ""
+                      : ` / ${formatBytes(
+                          metrics.data.metrics.memoryLimitBytes,
+                        )}`
+                  }`
+                : "Loading…"}
+            </p>
+          </div>
+          <div className="rounded-lg border p-3">
+            <p className="text-xs text-muted-foreground">Workspace disk</p>
+            <p className="mt-1 font-medium">
+              {metrics.data?.metrics
+                ? `${formatBytes(metrics.data.metrics.workspaceUsedBytes)}${
+                    metrics.data.metrics.workspaceTotalBytes === null
+                      ? ""
+                      : ` / ${formatBytes(
+                          metrics.data.metrics.workspaceTotalBytes,
+                        )}`
+                  }`
+                : "Loading…"}
+            </p>
+          </div>
+          {metrics.error ? (
+            <p className="text-xs text-destructive sm:col-span-3" role="alert">
+              {metrics.error.message}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
       {status.data.canManage ? (
         <div className="flex flex-wrap gap-2">
