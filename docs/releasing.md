@@ -3,6 +3,11 @@
 A release is one person choosing a version, and a reviewed pull request doing everything else. No
 step involves a terminal, a tag pushed by hand, or an image built on somebody's laptop.
 
+> **Fork verification:** GitHub Actions does not run workflows in a newly created fork until Actions
+> is enabled for that fork. Enable Actions before relying on CI, then push or synchronize the
+> release-candidate branch so the workflows receive a fresh event. Never treat an empty Actions
+> history as a successful verification.
+
 ## Cutting one
 
 1. Check `## Unreleased` in [CHANGELOG.md](../CHANGELOG.md) reads the way you want it to. It is the
