@@ -223,7 +223,17 @@ export async function listOwned(): Promise<ComputerState[]> {
  * decide they are the last free slot. Bun can interleave them across the Docker list await, so the
  * first one to resume records its reservation before the second counts.
  */
-const startingBots = new Set<string>();
+const startingBots = new Map<string, number>();
+
+function holdStartingBot(botId: string): void {
+  startingBots.set(botId, (startingBots.get(botId) ?? 0) + 1);
+}
+
+function releaseStartingBot(botId: string): void {
+  const remaining = (startingBots.get(botId) ?? 1) - 1;
+  if (remaining <= 0) startingBots.delete(botId);
+  else startingBots.set(botId, remaining);
+}
 
 async function reserveActiveSlot(
   names: ComputerNames,
@@ -231,16 +241,29 @@ async function reserveActiveSlot(
 ): Promise<boolean> {
   if (!maxActive) return false;
   const existing = await inspectOwned(names);
-  if (existing?.status === "running" || startingBots.has(names.botId)) {
-    return false;
+  if (existing?.status === "running") return false;
+
+  // A second request for the same Bot shares the one capacity slot but holds its own reference, so
+  // the first request finishing cannot make that slot look free while the second is still starting.
+  if (startingBots.has(names.botId)) {
+    holdStartingBot(names.botId);
+    return true;
   }
+
   const running = (await listOwned()).filter(
     (computer) => computer.status === "running",
   ).length;
+
+  // Another request may have reserved this Bot while Docker was answering the list above.
+  if (startingBots.has(names.botId)) {
+    holdStartingBot(names.botId);
+    return true;
+  }
+
   if (running + startingBots.size >= maxActive) {
     throw new ComputerCapacityError(maxActive);
   }
-  startingBots.add(names.botId);
+  holdStartingBot(names.botId);
   return true;
 }
 
@@ -654,7 +677,7 @@ export async function ensure(
       `The computer for ${names.botId} was removed while it was being started.`,
     );
   } finally {
-    if (reserved) startingBots.delete(names.botId);
+    if (reserved) releaseStartingBot(names.botId);
   }
 }
 
