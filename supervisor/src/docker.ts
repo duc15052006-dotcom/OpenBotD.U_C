@@ -625,8 +625,9 @@ export async function stop(names: ComputerNames): Promise<boolean> {
 /**
  * Throw this Bot's computer away so the next request builds a clean one.
  *
- * The profile goes with it. The workspace is left alone: files a Bot was asked to produce are work,
- * not browser state.
+ * Reset is deliberately destructive: both the browser profile and workspace go with it. Stop and
+ * restart are the non-destructive lifecycle controls; reset is the recovery path for an unwanted
+ * download, broken profile or workspace state and must leave no persistent Computer data behind.
  */
 export async function reset(names: ComputerNames): Promise<boolean> {
   if (!(await inspectOwned(names))) return false;
@@ -641,13 +642,15 @@ export async function reset(names: ComputerNames): Promise<boolean> {
     }
   }
 
-  try {
-    await docker.getVolume(names.profileVolume).remove();
-  } catch (error) {
-    const status = (error as { statusCode?: number }).statusCode;
-    // 409 is "still in use", which resolves itself once the container is gone.
-    if (status !== 404 && status !== 409) {
-      throw new DockerUnavailableError(String(error));
+  for (const volume of [names.profileVolume, names.workspaceVolume]) {
+    try {
+      await docker.getVolume(volume).remove();
+    } catch (error) {
+      const status = (error as { statusCode?: number }).statusCode;
+      // 409 is "still in use", which resolves itself once the container is gone.
+      if (status !== 404 && status !== 409) {
+        throw new DockerUnavailableError(String(error));
+      }
     }
   }
   return true;
