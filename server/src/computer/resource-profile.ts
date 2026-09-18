@@ -1,6 +1,7 @@
 export type ComputerResourceProfile = "light" | "normal" | "heavy";
 
-export const DEFAULT_COMPUTER_RESOURCE_PROFILE: ComputerResourceProfile = "normal";
+export const DEFAULT_COMPUTER_RESOURCE_PROFILE: ComputerResourceProfile =
+  "normal";
 
 /**
  * Server-side parser for the only resource profile names the supervisor accepts.
