@@ -4,6 +4,7 @@ import { recordAuditEvent, type AuditStore } from "../audit";
 import type { AppVariables } from "../auth/guards";
 import { sameToken } from "../agents/callback-token";
 import type { BotAccessCheck } from "../agents/profile-policy";
+import type { ComputerGateway } from "../computer/gateway";
 import { HostAccessRefusedError, type HostAccessBroker } from "./broker";
 import {
   asHostAccessDesktopResult,
@@ -46,6 +47,8 @@ export function createHostAccessRoutes(options: {
   requireUser: MiddlewareHandler<{ Variables: AppVariables }>;
   canUseBot: BotAccessCheck;
   auditStore?: AuditStore;
+  /** The only source of quarantine bytes for the native desktop worker. */
+  computerGateway?: ComputerGateway;
   botName?: (
     botId: string,
     actor: AppVariables["actor"],
@@ -76,6 +79,72 @@ export function createHostAccessRoutes(options: {
       next ?? { operations: [], leaseMs: HOST_ACCESS_DESKTOP_LEASE_MS },
     );
   });
+
+  /**
+   * Stream one already-approved quarantine object to the native worker.
+   *
+   * This route has no user-session alternative and no browser-facing token. The fresh desktop bearer
+   * token plus the live operation id are both required, and the digest queued for Save As must still
+   * match the Computer's response before any bytes are forwarded.
+   */
+  routes.get(
+    "/desktop/quarantine/:operationId",
+    requireDesktop,
+    async (context) => {
+      const source = broker.quarantineExportSource(
+        context.req.param("operationId"),
+      );
+      if (!source) {
+        return context.json(
+          { error: "That native quarantine export is not active." },
+          404,
+        );
+      }
+      const gateway = options.computerGateway;
+      if (!gateway) {
+        return context.json(
+          { error: "Quarantine export is not configured." },
+          503,
+        );
+      }
+
+      try {
+        const response = await gateway.quarantineExportResponse(
+          source.botId,
+          source.quarantineId,
+        );
+        const sha256 = response.headers.get("x-openbot-sha256");
+        if (sha256 !== source.sha256) {
+          await response.body?.cancel().catch(() => undefined);
+          return context.json(
+            {
+              error:
+                "The quarantined bytes changed after native export approval.",
+            },
+            409,
+          );
+        }
+        const headers = new Headers({
+          "content-type": "application/octet-stream",
+          "x-openbot-sha256": sha256,
+          "cache-control": "no-store",
+        });
+        const length = response.headers.get("content-length");
+        if (length) headers.set("content-length", length);
+        return new Response(response.body, { status: 200, headers });
+      } catch (error) {
+        return context.json(
+          {
+            error:
+              error instanceof Error
+                ? error.message
+                : "The quarantined bytes could not be streamed.",
+          },
+          409,
+        );
+      }
+    },
+  );
 
   routes.post("/desktop/result", requireDesktop, async (context) => {
     const parsed = asHostAccessDesktopResult(
