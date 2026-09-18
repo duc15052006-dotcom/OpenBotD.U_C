@@ -43,6 +43,20 @@ export function setComputerStateMutationOptions(queryClient: QueryClient) {
   });
 }
 
+export function stopAllComputersMutationOptions(
+  queryClient: QueryClient,
+) {
+  return mutationOptions({
+    mutationFn: async () => {
+      await client("/api/computers/stop-all", {
+        method: "POST",
+        fallback: "The Computers could not all be stopped.",
+      });
+    },
+    onSuccess: () => invalidateComputers(queryClient),
+  });
+}
+
 /**
  * Replace the whole policy.
  *
