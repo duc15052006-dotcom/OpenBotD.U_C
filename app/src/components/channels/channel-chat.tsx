@@ -221,10 +221,11 @@ function describeAttachments(attachments: readonly Attachment[]): string {
 }
 
 /**
- * One channel's conversation with one coworker.
+ * One channel's conversation, owned by one coordinator runtime Bot.
  *
- * The local agent id is channel-scoped so two channels with the same coworker keep separate
- * durable threads.
+ * Direct channels have only that Bot. Group channels keep the same single Intelligence thread and
+ * route explicit peer mentions through durable handoffs, so two channels with the same coordinator
+ * still keep separate durable threads and group membership never leaks between them.
  */
 export function ChannelChat({
   channel,
