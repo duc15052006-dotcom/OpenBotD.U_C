@@ -12,6 +12,7 @@ import {
   sql,
 } from "drizzle-orm";
 import type { Context, MiddlewareHandler } from "hono";
+import { MAX_CHANNEL_AGENTS } from "../../../shared/channel-groups";
 import { Hono } from "hono";
 import {
   AgentNotFoundError,
@@ -249,8 +250,6 @@ export type ChannelStore = {
 const PRIVATE_AGENT_CHANNEL_DESCRIPTION = "Private agent channel.";
 const MAX_CHANNEL_NAME_CODE_POINTS = 120;
 const MAX_ACTIVITY_GRAPHEMES = 200;
-export const MAX_CHANNEL_AGENTS = 8;
-
 type GroupChannelOverride = {
   group?: {
     version?: number;
