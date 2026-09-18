@@ -214,7 +214,9 @@ function checkComputerSandboxBoundary(): void {
     "if !stop_computers(engine, root)?",
   ]) {
     if (!stack.includes(evidence)) {
-      fail(`desktop: Quit/Stop no longer proves per-Agent Computer shutdown through ${evidence}`);
+      fail(
+        `desktop: Quit/Stop no longer proves per-Agent Computer shutdown through ${evidence}`,
+      );
     }
   }
 }
