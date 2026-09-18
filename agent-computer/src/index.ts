@@ -818,6 +818,32 @@ serve<StreamData>({
     }
 
     /**
+     * Explicitly start this Bot's browser without navigating anywhere.
+     *
+     * This uses the same lazy page path as a real action, so persistent profile handling, launch
+     * serialization, browser caps and idle tracking cannot drift into a second start implementation.
+     */
+    if (url.pathname === "/computers/start" && request.method === "POST") {
+      const wasRunning = profiles.isLive(botId);
+      await currentPage(botId);
+      return json({ started: true, wasRunning, botId });
+    }
+
+    /**
+     * Restart the browser while keeping its profile and workspace.
+     *
+     * Different from reset: cookies, local storage and files survive. The control handover belongs
+     * to the browser session being replaced, so it is released before the fresh browser is returned.
+     */
+    if (url.pathname === "/computers/restart" && request.method === "POST") {
+      const wasRunning = profiles.isLive(botId);
+      await profiles.stop(botId);
+      session.control.release();
+      await currentPage(botId);
+      return json({ restarted: true, wasRunning, botId });
+    }
+
+    /**
      * Stop the browser, keep what it knows.
      *
      * Closed gracefully so Chromium flushes its profile, and deliberately
