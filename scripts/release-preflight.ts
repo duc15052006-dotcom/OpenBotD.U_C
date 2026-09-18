@@ -366,8 +366,22 @@ function checkReleaseWiring(): void {
 function checkDesktopUpdatePath(): void {
   const native = read("desktop/src-tauri/src/main.rs");
   const updater = read("desktop/src-tauri/src/update.rs");
+  const deployment = read("desktop/src-tauri/src/deployment.rs");
+  const deploymentRelease = read("desktop/src-tauri/src/deployment_release.rs");
   const desktopWorkflow = read(".github/workflows/desktop.yml");
   const signingWorkflow = read(".github/workflows/desktop-signing.yml");
+
+  for (const [name, source] of [
+    ["deployment", deployment],
+    ["deployment release resolver", deploymentRelease],
+  ] as const) {
+    if (source.includes("CopilotKit/OpenBot")) {
+      fail(`desktop: ${name} still downloads release artifacts from the upstream repository`);
+    }
+    if (!source.includes("crate::update::release_repository()")) {
+      fail(`desktop: ${name} is not bound to the desktop build release repository`);
+    }
+  }
 
   for (const evidence of [
     '"updates" => check_for_updates',
