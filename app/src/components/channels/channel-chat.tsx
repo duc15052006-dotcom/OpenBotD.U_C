@@ -18,7 +18,10 @@ import {
 } from "@/components/channels/transcript-messages";
 import { agentListQueryOptions } from "@/lib/agents/queries";
 import { attachmentUrl } from "@/lib/channels/attachments";
-import { groupMentionInstruction } from "@/lib/channels/group-routing";
+import {
+  groupMentionInstruction,
+  resolveGroupMention,
+} from "@/lib/channels/group-routing";
 import {
   recordChannelActivityMutationOptions,
   setChannelBusy,
@@ -842,18 +845,21 @@ export function ChannelChat({
             </>
           }
           onSubmit={async (draft) => {
-            // `draft.agentId` carries the @mentioned coworker, but nothing routes on it yet: this
-            // channel is pinned to one `runtimeAgentId` for the life of its thread, so honouring a
-            // per-message mention is a change to that binding, not to the composer.
+            // The coordinator owns this Intelligence thread for its whole life. An explicit peer
+            // mention therefore becomes a durable handoff instruction rather than swapping the
+            // runtime agent mid-thread. Re-check channel membership here even though the composer
+            // only offers participants: a stale or crafted client can still submit any agent id.
             //
             // `commandIds` are the `/` chips that survived into the send, in the order they were
             // typed. Resolved against the same list the menu was built from, so a chip left over from
             // a skill that has since been revoked resolves to nothing rather than to a stale
             // instruction — the menu is refetched, and this reads from it.
-            const mentioned =
-              draft.agentId && draft.agentId !== runtimeAgentId
-                ? agentProfiles?.find((profile) => profile.id === draft.agentId)
-                : undefined;
+            const mentioned = resolveGroupMention({
+              coordinatorId: runtimeAgentId,
+              draftAgentId: draft.agentId,
+              channelAgentIds: channel.agentIds,
+              agentProfiles,
+            });
             const routingInstruction = mentioned
               ? groupMentionInstruction({
                   coordinatorId: runtimeAgentId,
