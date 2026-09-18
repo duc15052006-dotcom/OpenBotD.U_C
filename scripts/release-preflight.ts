@@ -324,8 +324,8 @@ function checkInteractiveComputerControls(): void {
     '"Return control"',
     '"Stop viewing"',
     "releaseControl(botId)",
-    'sendHumanInput(botId, "click"'
-    'sendHumanInput(botId, "type"'
+    'sendHumanInput(botId, "click"',
+    'sendHumanInput(botId, "type"',
     "supplySecret(botId, secretText)",
   ]) {
     if (!screen.includes(evidence)) {

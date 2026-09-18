@@ -158,8 +158,7 @@ describe("a server that was not listening when it changed", () => {
     const listener = await startPolicyListener(databaseUrl, wasDown);
     try {
       await until(
-        () =>
-          wasDown.get().deny.length === 1 && wasDown.get().deny[0] === RULE,
+        () => wasDown.get().deny.length === 1 && wasDown.get().deny[0] === RULE,
       );
       expect(wasDown.get().deny).toEqual([RULE]);
     } finally {
