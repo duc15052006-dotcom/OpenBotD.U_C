@@ -379,7 +379,9 @@ function checkInteractiveComputerControls(): void {
 
   for (const evidence of [
     "ComputerScreenDialog",
-    "showScreen(computer.botId, computer.running)",
+    'computer.running',
+    'showScreen(computer.botId, true)',
+    'startOrWarn(computer.botId, "screen")',
     '"KILL ALL COMPUTERS"',
     "resourceSummary(computer.metrics)",
   ]) {
