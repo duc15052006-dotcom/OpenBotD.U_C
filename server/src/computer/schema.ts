@@ -370,7 +370,6 @@ export type ComputerResourceMetrics = {
   browserRunning?: boolean;
 };
 
-
 /** Malware-scanning lifecycle for an untrusted browser download. */
 export type QuarantineStatus =
   | "pending"
