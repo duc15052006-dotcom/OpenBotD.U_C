@@ -154,6 +154,7 @@ function checkReleaseWiring(): void {
     "github.paginate(github.rest.pulls.list",
     "package.json version must be a stable numeric SemVer",
     "Number.isSafeInteger",
+    "next.every(Number.isSafeInteger)",
     'refs/tags/v$version',
     "Refusing to create a release PR for an existing version",
   ]) {
