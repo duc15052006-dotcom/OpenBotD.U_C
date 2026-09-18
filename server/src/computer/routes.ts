@@ -391,6 +391,70 @@ export function createComputerRoutes(
   });
 
   /**
+   * Quarantined browser downloads, for an administrator.
+   *
+   * The Bot never receives this route as a tool. It returns metadata only, so inspecting quarantine
+   * does not feed hostile bytes back into a model or expose the container's filesystem path.
+   */
+  routes.get("/quarantine", requireUser, async (context) => {
+    const denied = requireAdmin(context);
+    if (denied) return denied;
+
+    const botId = context.req.query("botId")?.trim() ?? "";
+    if (!botId || botId.length > 100) {
+      return context.json({ error: "A valid Bot id is required." }, 400);
+    }
+
+    try {
+      return context.json(await gateway.quarantinedDownloads(botId));
+    } catch (error) {
+      return context.json(errorBody(error), statusFor(error));
+    }
+  });
+
+  /**
+   * Delete one quarantined download.
+   *
+   * Destructive confirmation is enforced here, not trusted to the UI. The acknowledgement binds the
+   * exact Bot and generated quarantine id so a stale dialog cannot delete whichever row it now shows.
+   */
+  routes.delete("/quarantine", requireUser, async (context) => {
+    const denied = requireAdmin(context);
+    if (denied) return denied;
+
+    const body = (await context.req.json().catch(() => null)) as {
+      botId?: unknown;
+      id?: unknown;
+      confirm?: unknown;
+    } | null;
+    if (
+      typeof body?.botId !== "string" ||
+      !body.botId.trim() ||
+      body.botId.length > 100 ||
+      typeof body.id !== "string" ||
+      !body.id ||
+      body.id.length > 100 ||
+      body.confirm !== "DELETE_QUARANTINED_FILE"
+    ) {
+      return context.json(
+        {
+          error:
+            "Deleting a quarantined file requires the exact Bot id, file id and explicit confirmation.",
+        },
+        400,
+      );
+    }
+
+    try {
+      return context.json(
+        await gateway.deleteQuarantinedDownload(body.botId.trim(), body.id),
+      );
+    } catch (error) {
+      return context.json(errorBody(error), statusFor(error));
+    }
+  });
+
+  /**
    * Emergency stop for every Computer in this deployment.
    *
    * Admin-only and intentionally non-destructive: it stops runtime activity but keeps profiles,
