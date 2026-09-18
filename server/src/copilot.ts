@@ -32,6 +32,11 @@ import {
   agentInstructionsGuidance,
   storedAgentInstructionsFromOverride,
 } from "./agents/instructions";
+import {
+  type AgentKnowledgeDocument,
+  agentKnowledgeGuidance,
+  storedAgentKnowledgeFromOverride,
+} from "./agents/knowledge";
 import { sanitizeSeededHistory } from "./agents/history-sanitize";
 import type { AgentActor } from "./agents/profile-types";
 import type { RuntimeAgentModel } from "./agents/runtime-model";
@@ -80,6 +85,8 @@ type RegisteredBuiltInAgent = {
   systemPrompt: string;
   /** Deployment-owned instructions that refine this Agent's package/base role. */
   instructions?: string;
+  /** Bounded reference documents configured for this Agent. */
+  knowledge?: AgentKnowledgeDocument[];
 };
 
 type RegisteredRemoteAgentFacts = {
@@ -151,8 +158,10 @@ export type AgentStandingProfile = {
 export function standingRoleMessage(
   profile: AgentStandingProfile,
   instructions?: string | null,
+  knowledge?: readonly AgentKnowledgeDocument[] | null,
 ): StandingRoleMessage {
   const agentInstructions = agentInstructionsGuidance(instructions);
+  const knowledgeGuidance = agentKnowledgeGuidance(knowledge);
   return {
     id: `standing-role:${profile.id}`,
     role: "system",
@@ -160,6 +169,7 @@ export function standingRoleMessage(
       `You are ${profile.name}, ${profile.title}.`,
       profile.roleDescription,
       ...(agentInstructions ? [agentInstructions] : []),
+      ...(knowledgeGuidance ? [knowledgeGuidance] : []),
       "This standing role applies in every channel. Treat channel messages as task-specific instructions within it.",
       /*
        * Here rather than in the package, because for a remote Bot the standing role is the only
@@ -223,6 +233,7 @@ export function registeredAgentFromRow(
   }
   const configuration = row.configuration;
   const instructions = storedAgentInstructionsFromOverride(row.override);
+  const knowledge = storedAgentKnowledgeFromOverride(row.override);
   if (row.type === "built_in") {
     const systemPrompt = configuration?.systemPrompt;
     const trimmedSystemPrompt =
@@ -234,6 +245,7 @@ export function registeredAgentFromRow(
           type: "built_in",
           systemPrompt: trimmedSystemPrompt,
           ...(instructions ? { instructions } : {}),
+          ...(knowledge.length > 0 ? { knowledge } : {}),
         }
       : null;
   }
@@ -256,7 +268,7 @@ export function registeredAgentFromRow(
         ...(typeof remoteAgentId === "string" && remoteAgentId.length > 0
           ? { remoteAgentId }
           : {}),
-        standingMessage: standingRoleMessage(row, instructions),
+        standingMessage: standingRoleMessage(row, instructions, knowledge),
       }
     : null;
 }
@@ -375,6 +387,7 @@ export function builtInAgentConfiguration(
   }
 
   const agentInstructions = agentInstructionsGuidance(agent.instructions);
+  const knowledgeGuidance = agentKnowledgeGuidance(agent.knowledge);
   const standing = standingInstructionsGuidance(standingInstructions);
 
   return {
@@ -395,6 +408,7 @@ export function builtInAgentConfiguration(
       agent.systemPrompt,
       ...(agentInstructions ? [agentInstructions] : []),
       ...(standing ? [standing] : []),
+      ...(knowledgeGuidance ? [knowledgeGuidance] : []),
       /*
        * Unconditional, unlike the two below it.
        *
