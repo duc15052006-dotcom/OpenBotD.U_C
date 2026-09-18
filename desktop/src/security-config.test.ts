@@ -33,6 +33,7 @@ function text(csp: Csp | string): string {
 type Capability = {
   windows?: string[];
   permissions?: string[];
+  remote?: unknown;
 };
 
 function capability(): Capability {
@@ -87,6 +88,9 @@ describe("desktop Tauri capability surface", () => {
     const allowed = capability();
     expect(allowed.windows).toEqual(["main"]);
     expect(allowed.permissions).toEqual(["core:event:default"]);
+    // The main window intentionally navigates to the local OpenBot web app after setup. That remote
+    // HTTP page must remain ordinary web content, never a Tauri-command caller.
+    expect(allowed.remote).toBeUndefined();
     expect(
       allowed.permissions?.some((permission) =>
         /shell|opener|dialog|fs|process|http/i.test(permission),
