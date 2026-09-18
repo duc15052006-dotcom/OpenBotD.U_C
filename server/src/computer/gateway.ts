@@ -208,6 +208,14 @@ export interface ComputerGateway {
       egress?: string | null;
     }[];
   }>;
+  startComputer(
+    botId: string,
+    actor: ActionActor,
+  ): Promise<{ wasRunning: boolean }>;
+  restartComputer(
+    botId: string,
+    actor: ActionActor,
+  ): Promise<{ wasRunning: boolean }>;
   stopComputer(
     botId: string,
     actor: ActionActor,
@@ -699,6 +707,57 @@ export function createComputerGateway(
     },
 
     /**
+     * Start or wake the computer explicitly, without making up a browser action to do it.
+     *
+     * Providers that predate the lifecycle extension still work: locate() has always been the
+     * provider's "make it ready" verb. Built-in providers implement start() so shared computers can
+     * also start the browser rather than merely returning their fixed address.
+     */
+    async startComputer(botId: string, actor: ActionActor) {
+      const before = await provider.status(botId);
+      const result = provider.start
+        ? await provider.start(botId)
+        : (await provider.locate(botId), {
+            wasRunning: before.state === "ready",
+          });
+      // A stopped browser/container may have left a last snapshot in Postgres. It belongs to the
+      // previous run and must not survive an explicit start on providers that cannot report sessions.
+      await snapshots.clear(botId);
+      await writeControlEvent(auditStore, "computer.started", {
+        botId,
+        actor,
+        reason: result.wasRunning
+          ? "the computer was already running"
+          : "the computer was started",
+      });
+      return result;
+    },
+
+    /**
+     * Restart the runtime/browser while preserving profile and workspace state.
+     *
+     * A restart is deliberately not a reset: saved logins and files survive. Opaque page refs do
+     * not, so the current snapshot is cleared after the new run is ready.
+     */
+    async restartComputer(botId: string, actor: ActionActor) {
+      const before = await provider.status(botId);
+      const result = provider.restart
+        ? await provider.restart(botId)
+        : (await provider.stop(botId),
+          await provider.locate(botId),
+          { wasRunning: before.state === "ready" });
+      await snapshots.clear(botId);
+      await writeControlEvent(auditStore, "computer.restarted", {
+        botId,
+        actor,
+        reason: result.wasRunning
+          ? "the running computer was restarted"
+          : "the stopped computer was started as a fresh run",
+      });
+      return result;
+    },
+
+    /**
      * Stop a computer's browser, keeping what it knows.
      *
      * Audited, unlike the read above, because a person reached in and stopped something. Recorded
@@ -708,6 +767,9 @@ export function createComputerGateway(
      */
     async stopComputer(botId: string, actor: ActionActor) {
       const result = await provider.stop(botId);
+      // Stop ends the run even though it keeps durable state. Clear page refs now rather than waiting
+      // for a future start, especially for shared providers that have no session id to compare.
+      await snapshots.clear(botId);
       await writeControlEvent(auditStore, "computer.stopped", {
         botId,
         actor,
@@ -1191,6 +1253,8 @@ async function writeControlEvent(
     | "computer.control_released"
     | "computer.secret_requested"
     | "computer.secret_supplied"
+    | "computer.started"
+    | "computer.restarted"
     | "computer.stopped"
     | "computer.reset",
   entry: {
