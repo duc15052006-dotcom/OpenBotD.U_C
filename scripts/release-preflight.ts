@@ -311,7 +311,7 @@ function checkComputerSandboxBoundary(): void {
     fail("computer: admin Kill All Computers route is missing");
   }
 
-  const supervisorIndex = read("supervisor/src/index.ts");
+  const capacitySupervisorIndex = read("supervisor/src/index.ts");
   const provider = read("server/src/computer/provider.ts");
   const computerQueries = read("app/src/lib/computers/queries.ts");
   for (const evidence of [
@@ -320,7 +320,7 @@ function checkComputerSandboxBoundary(): void {
     "defaultComputerNanoCpus",
     "maxActiveComputers",
   ]) {
-    if (!supervisorIndex.includes(evidence)) {
+    if (!capacitySupervisorIndex.includes(evidence)) {
       fail(`computer: supervisor capacity reporting is missing ${evidence}`);
     }
   }
