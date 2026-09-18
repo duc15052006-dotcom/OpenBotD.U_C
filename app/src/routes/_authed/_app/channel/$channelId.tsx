@@ -7,7 +7,7 @@ import {
 } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { motion, useReducedMotion } from "motion/react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import { AgentProfile } from "@/components/agents/agent-profile";
 import { hasUnseenActivity } from "@/components/app-sidebar/app-sidebar";
@@ -84,8 +84,17 @@ function RouteComponent() {
   const isSettingsOpen = settings === true;
   const prefersReducedMotion = useReducedMotion();
   const isWatching = watch === true;
-  /** Channel routing currently supports one coworker. */
-  const agentId = channel.data?.agentIds[0];
+  /**
+   * The coworker currently answering this shared thread.
+   *
+   * Direct channels never change it. Group channels update it when an @mention routes a message, so
+   * the Computer and Settings panes follow the Bot the person is actually talking to.
+   */
+  const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
+  useEffect(() => {
+    setActiveAgentId(channel.data?.agentIds[0] ?? null);
+  }, [channel.data?.id, channel.data?.agentIds]);
+  const agentId = activeAgentId ?? channel.data?.agentIds[0];
   /** Only polled while the screen is closed; the screen panel polls control itself. */
   const needsYou = useNeedsYou(agentId, !isWatching);
 
@@ -251,25 +260,25 @@ function RouteComponent() {
       </div>
       <ChannelBody
         channel={channel.data}
-        isPending={channel.isPending}
         hasError={Boolean(channel.error)}
+        isPending={channel.isPending}
+        onRuntimeAgentChange={setActiveAgentId}
       />
     </DetailPanel>
   );
 }
 
-/**
- * A channel holds exactly one coworker. More than one is not supported yet, and rendering a shared
- * transcript for several agents before the runtime can route between them would look like it works.
- */
+/** A channel can hold one coworker or a bounded group sharing one durable thread. */
 function ChannelBody({
   channel,
   isPending,
   hasError,
+  onRuntimeAgentChange,
 }: {
   channel: AgentChannel | undefined;
   isPending: boolean;
   hasError: boolean;
+  onRuntimeAgentChange: (agentId: string) => void;
 }) {
   // Nothing while the channel loads: a placeholder inside a local round-trip is a flicker.
   if (isPending) return null;
@@ -281,12 +290,11 @@ function ChannelBody({
     );
   }
 
-  const runtimeAgentId =
-    channel.agentIds.length === 1 ? channel.agentIds[0] : undefined;
+  const runtimeAgentId = channel.agentIds[0];
   if (!runtimeAgentId) {
     return (
       <p className="p-8 text-sm text-muted-foreground">
-        This channel has more than one coworker, which is not supported yet.
+        This channel has no active coworkers.
       </p>
     );
   }
@@ -296,6 +304,7 @@ function ChannelBody({
     <ChannelChat
       channel={channel}
       key={channel.id}
+      onRuntimeAgentChange={onRuntimeAgentChange}
       runtimeAgentId={runtimeAgentId}
     />
   );
