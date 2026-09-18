@@ -71,24 +71,28 @@ for (const name of readdirSync(workflows).filter((file) => /\.ya?ml$/.test(file)
 
     // External reusable workflows are owner/repo/.github/workflows/file.yml@ref. They are not
     // filesystem references in this repository and are outside this check.
-    if (uses.includes("@") && !uses.startsWith("./")) {
+    if (uses.includes("@") && !uses.startsWith("./") && !uses.startsWith("$/")) {
       continue;
     }
 
-    if (!uses.startsWith("./.github/workflows/")) {
+    const local =
+      uses.startsWith("./.github/workflows/") ||
+      uses.startsWith("$/.github/workflows/");
+    if (!local) {
       failures.push(
-        `${name} job ${jobName}: local reusable workflow must start with ./.github/workflows/, got ${uses}`,
+        `${name} job ${jobName}: local reusable workflow must use ./.github/workflows/ or $/.github/workflows/, got ${uses}`,
       );
       continue;
     }
 
     if (uses.includes("@")) {
       failures.push(
-        `${name} job ${jobName}: a local reusable workflow must not carry an @ref: ${uses}`,
+        `${name} job ${jobName}: a same-repository reusable workflow must not carry an @ref: ${uses}`,
       );
       continue;
     }
 
+    // Both GitHub Cloud same-repository forms have a two-character prefix: "./" and "$/".
     const target = resolve(root, uses.slice(2));
     if (!existsSync(target)) {
       failures.push(
