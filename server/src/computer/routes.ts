@@ -420,7 +420,8 @@ export function createComputerRoutes(
   );
 
   /**
-   * Delete the profile. Every login goes with it, which is the point and also the danger.
+   * Delete the Computer's persistent profile and workspace. Every login and saved file goes with
+   * it, which is the point and also the danger.
    *
    * The UI already asks for confirmation, but the API is the boundary: a stale client, script, or
    * accidental POST must not be able to wipe a different Bot just because it reached the route.
