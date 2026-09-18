@@ -79,6 +79,9 @@ Do not put API keys in repository files, channel messages or tenant YAML.
 When desktop startup fails, the failure panel offers **Run diagnostics**. The report intentionally
 contains only a small read-only support snapshot:
 
+- desktop release version
+- source revision for CI/release builds
+- repository whose releases this artifact follows
 - local container engine and whether it responds
 - selected/default OpenBot root
 - whether the stack appears to be running

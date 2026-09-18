@@ -22,7 +22,7 @@ struct GitHubRelease {
     prerelease: bool,
 }
 
-fn release_repository() -> Result<&'static str, String> {
+pub fn release_repository() -> Result<&'static str, String> {
     let repository =
         option_env!("OPENBOT_RELEASE_REPOSITORY").unwrap_or(DEFAULT_RELEASE_REPOSITORY);
     let mut parts = repository.split('/');

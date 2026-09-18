@@ -2,6 +2,11 @@ import { invoke } from "@tauri-apps/api/core";
 
 export type DesktopDiagnostics = {
   capturedAt: string;
+  build: {
+    version: string;
+    sourceRevision: string | null;
+    releaseRepository: string;
+  } | null;
   engine: {
     engine: "docker" | "podman" | null;
     responding: boolean;
@@ -28,12 +33,16 @@ type Invoke = <T>(
 export async function collectDesktopDiagnostics(
   call: Invoke = invoke,
 ): Promise<DesktopDiagnostics> {
-  const [engine, selectedRoot, defaultRoot, lastFailure] = await Promise.all([
-    call<DesktopDiagnostics["engine"]>("detect_engine").catch(() => null),
-    call<string | null>("selected_root").catch(() => null),
-    call<string>("default_root").catch(() => null),
-    call<{ said?: string } | null>("last_failure").catch(() => null),
-  ]);
+  const [build, engine, selectedRoot, defaultRoot, lastFailure] =
+    await Promise.all([
+      call<DesktopDiagnostics["build"]>("desktop_build_identity").catch(
+        () => null,
+      ),
+      call<DesktopDiagnostics["engine"]>("detect_engine").catch(() => null),
+      call<string | null>("selected_root").catch(() => null),
+      call<string>("default_root").catch(() => null),
+      call<{ said?: string } | null>("last_failure").catch(() => null),
+    ]);
 
   const root = selectedRoot ?? defaultRoot;
   const stackRunning = root
@@ -42,6 +51,7 @@ export async function collectDesktopDiagnostics(
 
   return {
     capturedAt: new Date().toISOString(),
+    build,
     engine,
     selectedRoot,
     defaultRoot,
@@ -57,8 +67,12 @@ export function formatDesktopDiagnostics(
   diagnostics: DesktopDiagnostics,
 ): string {
   const engine = diagnostics.engine;
+  const build = diagnostics.build;
   return [
     `Captured: ${diagnostics.capturedAt}`,
+    `Desktop version: ${build?.version ?? "unknown"}`,
+    `Source revision: ${build?.sourceRevision ?? "unknown"}`,
+    `Release repository: ${build?.releaseRepository ?? "unknown"}`,
     `Engine: ${engine?.engine ?? "not detected"}`,
     `Engine responding: ${engine ? String(engine.responding) : "unknown"}`,
     `Engine detail: ${engine?.detail ?? "unavailable"}`,

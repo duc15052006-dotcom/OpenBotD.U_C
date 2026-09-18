@@ -50,6 +50,12 @@ test("problem_ui_has_no_credential_restore_action", () => {
 test("diagnostics_reads_only_safe_status_commands_after_the_person_asks", async () => {
   invokeHandler = async (command, args) => {
     switch (command) {
+      case "desktop_build_identity":
+        return {
+          version: "0.0.12",
+          sourceRevision: "0123456789abcdef0123456789abcdef01234567",
+          releaseRepository: "duc15052006-dotcom/OpenBotD.U_C",
+        };
       case "detect_engine":
         return {
           engine: "podman",
@@ -80,10 +86,15 @@ test("diagnostics_reads_only_safe_status_commands_after_the_person_asks", async 
   await waitFor(() => {
     expect(view.getByText(/Engine: podman/)).toBeTruthy();
   });
+  expect(view.getByText(/Desktop version: 0\.0\.12/)).toBeTruthy();
+  expect(
+    view.getByText(/Release repository: duc15052006-dotcom\/OpenBotD\.U_C/),
+  ).toBeTruthy();
   expect(view.getByText(/Stack running: true/)).toBeTruthy();
   expect(view.getByText(/Last failure: Previous startup stopped\./)).toBeTruthy();
 
   expect(invokeCalls).toEqual([
+    { command: "desktop_build_identity", args: undefined },
     { command: "detect_engine", args: undefined },
     { command: "selected_root", args: undefined },
     { command: "default_root", args: undefined },

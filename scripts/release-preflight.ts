@@ -336,6 +336,33 @@ function checkDesktopUpdatePath(): void {
         `desktop: ${name} build does not bind update checks to the repository that built the artifact`,
       );
     }
+    if (!source.includes("OPENBOT_SOURCE_SHA: ${{ github.sha }}")) {
+      fail(
+        `desktop: ${name} build does not stamp the source commit into diagnostics`,
+      );
+    }
+  }
+
+  const diagnostics = read("desktop/src/diagnostics.ts");
+  for (const evidence of [
+    "desktop_build_identity",
+    "sourceRevision",
+    "releaseRepository",
+  ]) {
+    if (!diagnostics.includes(evidence)) {
+      fail(
+        `desktop: diagnostics no longer report build identity field ${evidence}`,
+      );
+    }
+  }
+  for (const evidence of [
+    "fn desktop_build_identity()",
+    'option_env!("OPENBOT_SOURCE_SHA")',
+    'env!("CARGO_PKG_VERSION")',
+  ]) {
+    if (!native.includes(evidence)) {
+      fail(`desktop: native build identity is missing ${evidence}`);
+    }
   }
 }
 
