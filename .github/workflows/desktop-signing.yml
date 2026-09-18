@@ -155,6 +155,22 @@ jobs:
         run: |
           $build = Get-Content desktop/build-version.json -Raw | ConvertFrom-Json
           ./desktop/scripts/verify-windows-signatures.ps1 -ExpectedVersion $build.version
+
+      # Signature validity alone does not prove the thing a person downloads still installs and
+      # launches after signing. Exercise the exact signed NSIS artifact under a fresh Users-only
+      # account before it is retained for release.
+      - name: Signed installer standard-user acceptance
+        run: |
+          $installers = @(Get-ChildItem 'desktop/src-tauri/target/release/bundle/nsis' -Filter '*-setup.exe' -File)
+          if ($installers.Count -ne 1) {
+            throw "Expected exactly one signed NSIS installer, found $($installers.Count)."
+          }
+          $windowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          & $windowsPowerShell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File desktop/scripts/test-windows-installer-standard-user.ps1 -InstallerPath $installers[0].FullName
+          if ($LASTEXITCODE -ne 0) {
+            throw 'The signed installer failed standard-user acceptance.'
+          }
+
       - name: Retain verified binaries
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

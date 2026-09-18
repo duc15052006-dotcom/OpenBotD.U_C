@@ -72,6 +72,10 @@ Then, in order:
   packaging must pass on macOS/Linux and the Windows NSIS artifact must build, install, launch, and
   uninstall twice: once on the hosted runner and once inside a fresh **Users-only, non-admin**
   account, so an accidental elevation dependency cannot pass as a clean-machine success
+- protected Windows signing then repeats the Users-only install → first launch → uninstall journey
+  against the **exact signed NSIS artifact** that will be retained for the GitHub Release; a valid
+  Authenticode signature is not enough if signing or packaging produced an installer that no longer
+  works
 - the protected Windows signing workflow signs and verifies the app plus NSIS installer from that
   same release commit; its `windows-signing` environment approval is the publisher-certificate
   boundary, and nothing is published before it succeeds
