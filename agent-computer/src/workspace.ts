@@ -67,6 +67,8 @@ export type WorkspaceLimits = {
   writeBytes: number;
   /** Most entries a listing describes, so a Bot cannot paste a whole disk into its own context. */
   listEntries: number;
+  /** Total bytes the ordinary workspace may hold. Optional for focused tests and legacy callers. */
+  totalBytes?: number;
 };
 
 /**
@@ -88,12 +90,36 @@ export const DEFAULT_WORKSPACE_LIMITS: WorkspaceLimits = {
   readBytes: 64_000,
   writeBytes: 1_000_000,
   listEntries: 500,
+  totalBytes: 4 * 1024 * 1024 * 1024,
 };
 
 export function createWorkspace(
   rootPath: string,
   limits: WorkspaceLimits = DEFAULT_WORKSPACE_LIMITS,
 ) {
+  const totalBytes = limits.totalBytes ?? DEFAULT_WORKSPACE_LIMITS.totalBytes ?? Infinity;
+
+  /*
+   * Quota check and write are one critical section.
+   *
+   * Two concurrent writes must not both read "3.9 GiB used", both decide they fit, and together push
+   * the workspace beyond its limit. The agent-computer is one process, so a tiny promise queue is the
+   * right lock and has no cross-process state to recover.
+   */
+  let writeTail: Promise<void> = Promise.resolve();
+  async function withWriteLock<T>(work: () => Promise<T>): Promise<T> {
+    const previous = writeTail;
+    let release!: () => void;
+    writeTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await work();
+    } finally {
+      release();
+    }
+  }
   /**
    * Turn a Bot's requested path into a real one inside the workspace, or refuse.
    *
@@ -297,13 +323,27 @@ export function createWorkspace(
         );
       }
 
-      const full = await resolvePath(requested, true);
-      await mkdir(dirname(full), { recursive: true });
-      await writeFile(full, contents, {
-        encoding: "utf8",
-        flag: options.append ? "a" : "w",
+      return withWriteLock(async () => {
+        const full = await resolvePath(requested, true);
+        const root = await realpath(rootPath);
+        const used = await workspaceUsageBytes(root);
+        const existing = await stat(full).catch(() => null);
+        const existingBytes =
+          existing?.isFile() && !options.append ? existing.size : 0;
+        const projected = used - existingBytes + bytes;
+        if (projected > totalBytes) {
+          throw new WorkspaceFileError(
+            `That write would use ${projected} bytes and this workspace is limited to ${totalBytes} bytes.`,
+          );
+        }
+
+        await mkdir(dirname(full), { recursive: true });
+        await writeFile(full, contents, {
+          encoding: "utf8",
+          flag: options.append ? "a" : "w",
+        });
+        return { path: requested, bytes, appended: options.append === true };
       });
-      return { path: requested, bytes, appended: options.append === true };
     },
   };
 }
@@ -384,4 +424,25 @@ async function nearestExistingAncestor(
       current = parent;
     }
   }
+}
+
+
+/** Bytes occupied by ordinary files inside a workspace, without following symlinks outside it. */
+export async function workspaceUsageBytes(root: string): Promise<number> {
+  let total = 0;
+  const walk = async (directory: string): Promise<void> => {
+    const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      const full = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        await walk(full);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const info = await lstat(full).catch(() => null);
+      if (info?.isFile()) total += info.size;
+    }
+  };
+  await walk(root);
+  return total;
 }
