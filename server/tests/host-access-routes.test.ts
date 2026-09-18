@@ -115,6 +115,7 @@ describe("host access routes", () => {
       error: "That Bot is not available to you.",
     });
   });
+
   test("quarantine is marked released only after native export succeeds", async () => {
     let released = 0;
     const approved = {
@@ -239,5 +240,4 @@ describe("host access routes", () => {
     expect(response.status).toBe(409);
     expect(released).toBe(0);
   });
-
 });
