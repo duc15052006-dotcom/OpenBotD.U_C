@@ -46,11 +46,8 @@ export type SavedConfiguration = {
 };
 
 export type HeldConfiguration = {
-  INTELLIGENCE_API_KEY?: string;
   INTELLIGENCE_API_URL?: string;
   INTELLIGENCE_GATEWAY_WS_URL?: string;
-  OPENAI_API_KEY?: string;
-  ANTHROPIC_API_KEY?: string;
   OPENAI_BASE_URL?: string;
   OPENAI_CONTAINER_BASE_URL?: string;
   BOT_MODEL?: string;
@@ -101,10 +98,10 @@ export function ProviderPicker({
 }: {
   chosen: ModelChoice | null;
   /**
-   * Credentials a previous run already wrote, by environment name.
+   * Non-secret connection metadata plus presence-only saved credential indicators.
    *
-   * Used to fill the key field for whichever provider is chosen, so somebody who has set this up
-   * before is not sent to find a key they already produced. Their own file, on their own machine.
+   * A saved secret stays native-side; choosing it records reuse intent and Start resolves it from
+   * the selected installation's vault.
    */
   held: HeldConfiguration;
   root: string;
@@ -396,14 +393,9 @@ export function ProviderPicker({
                 setProgress(null);
                 // The first way in is the default, which is the plan wherever there is one.
                 setLogin(r.logins[0] ?? null);
-                // Fill from what is already on this machine, if anything.
-                const kept =
-                  r.id === "openai"
-                    ? held.OPENAI_API_KEY
-                    : r.id === "anthropic"
-                      ? held.ANTHROPIC_API_KEY
-                      : undefined;
-                setApiKey(kept ?? "");
+                // Saved keys are presence-only here. Never rehydrate a vault secret into WebView
+                // state; a blank field plus the saved indicator becomes { saved: true }.
+                setApiKey("");
                 setReuseEndpointKey(
                   r.id === "openai-compatible" &&
                     held.saved?.modelApiKeys?.compatible === true,
