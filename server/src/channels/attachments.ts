@@ -751,7 +751,6 @@ export function createChannelAttachmentRoutes(
         name: attachments.name,
         mimeType: attachments.mimeType,
         sizeBytes: attachments.sizeBytes,
-        uploadedBy: attachments.uploadedBy,
         attachedAt: attachments.attachedAt,
       })
       .from(attachments)
