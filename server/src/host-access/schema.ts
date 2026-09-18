@@ -6,6 +6,7 @@ export type HostAccessOperationKind =
   | "read_file"
   | "write_file"
   | "run_command"
+  | "export_quarantine"
   | "cancel"
   | "stop";
 
@@ -29,6 +30,13 @@ export type HostAccessDesktopOperation = {
   content?: string;
   command?: string;
   writable?: boolean;
+  /** Opaque OpenBot download identity; never a container or Windows path. */
+  quarantineId?: string;
+  /** Filename hint only. Native Save As chooses the real destination. */
+  suggestedName?: string;
+  sha256?: string;
+  sizeBytes?: number;
+  dangerous?: boolean;
   expiresAt?: number;
 };
 
