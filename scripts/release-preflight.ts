@@ -393,6 +393,42 @@ function checkProviderConnectionTest(): void {
   }
 }
 
+function checkFirstCoworkerHandoff(): void {
+  const app = read("desktop/src/App.tsx");
+  const ask = read("desktop/src/Ask.tsx");
+  const native = read("desktop/src-tauri/src/main.rs");
+  const agents = read("app/src/routes/_authed/_app/agents/index.tsx");
+
+  for (const evidence of [
+    'invoke("show_agent_creator")',
+    'onCreateCoworker',
+  ]) {
+    if (!app.includes(evidence)) {
+      fail(`desktop: completed setup no longer hands off through ${evidence}`);
+    }
+  }
+  if (!ask.includes("Create a coworker")) {
+    fail("desktop: successful setup no longer offers coworker creation");
+  }
+  for (const evidence of [
+    "fn show_agent_creator",
+    'Some(("/agents", "new=true"))',
+    "openbot_route_url",
+  ]) {
+    if (!native.includes(evidence)) {
+      fail(`desktop: fixed coworker route is missing ${evidence}`);
+    }
+  }
+  for (const evidence of [
+    "new: z.boolean().optional()",
+    "open={showCreate}",
+  ]) {
+    if (!agents.includes(evidence)) {
+      fail(`app: /agents?new=true no longer opens the coworker creator (${evidence})`);
+    }
+  }
+}
+
 function checkVersionSources(): void {
   const pkg = json("package.json");
   const version = pkg.version;
@@ -418,6 +454,7 @@ checkDesktopBoundary();
 checkReleaseWiring();
 checkDesktopUpdatePath();
 checkProviderConnectionTest();
+checkFirstCoworkerHandoff();
 checkVersionSources();
 
 if (failures.length > 0) {
