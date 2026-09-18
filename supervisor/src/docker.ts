@@ -127,6 +127,15 @@ export class ComputerNotAnsweringError extends Error {
   }
 }
 
+export class ComputerCapacityError extends Error {
+  constructor(maxActive: number) {
+    super(
+      `The per-Agent Computer limit is ${maxActive}. Stop or let another Computer sleep before starting one more, or raise COMPUTER_MAX_ACTIVE if this host has enough RAM.`,
+    );
+    this.name = "ComputerCapacityError";
+  }
+}
+
 export class DockerUnavailableError extends Error {
   constructor(cause: string) {
     super(
@@ -205,6 +214,34 @@ export async function listOwned(): Promise<ComputerState[]> {
   } catch (error) {
     throw new DockerUnavailableError(String(error));
   }
+}
+
+/**
+ * Starts in flight count against capacity before Docker reports them running.
+ *
+ * The reservation closes the ordinary race where two Bots both see N-1 running containers and both
+ * decide they are the last free slot. Bun can interleave them across the Docker list await, so the
+ * first one to resume records its reservation before the second counts.
+ */
+const startingBots = new Set<string>();
+
+async function reserveActiveSlot(
+  names: ComputerNames,
+  maxActive: number | undefined,
+): Promise<boolean> {
+  if (!maxActive) return false;
+  const existing = await inspectOwned(names);
+  if (existing?.status === "running" || startingBots.has(names.botId)) {
+    return false;
+  }
+  const running = (await listOwned()).filter(
+    (computer) => computer.status === "running",
+  ).length;
+  if (running + startingBots.size >= maxActive) {
+    throw new ComputerCapacityError(maxActive);
+  }
+  startingBots.add(names.botId);
+  return true;
 }
 
 /**
@@ -393,6 +430,8 @@ export type EnsureOptions = {
   memoryBytes?: number;
   /** Docker CPU quota in NanoCPUs; 1_000_000_000 is one logical CPU. */
   nanoCpus?: number;
+  /** Deployment-wide ceiling for concurrently running per-Bot Computer containers. */
+  maxActiveComputers?: number;
   /**
    * How long a started computer is given to answer before the attempt is called a failure.
    *
@@ -472,7 +511,9 @@ export async function ensure(
   names: ComputerNames,
   options: EnsureOptions,
 ): Promise<ComputerState> {
-  for (let attempt = ATTEMPTS; attempt > 0; attempt--) {
+  const reserved = await reserveActiveSlot(names, options.maxActiveComputers);
+  try {
+    for (let attempt = ATTEMPTS; attempt > 0; attempt--) {
     let existing = await inspectOwned(names);
 
     /*
@@ -602,9 +643,12 @@ export async function ensure(
     };
   }
 
-  throw new DockerUnavailableError(
-    `The computer for ${names.botId} was removed while it was being started.`,
-  );
+    throw new DockerUnavailableError(
+      `The computer for ${names.botId} was removed while it was being started.`,
+    );
+  } finally {
+    if (reserved) startingBots.delete(names.botId);
+  }
 }
 
 /** Stop this Bot's computer. Its storage is untouched, so its logins survive. */
