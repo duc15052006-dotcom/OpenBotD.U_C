@@ -775,7 +775,7 @@ export function createChannelAttachmentRoutes(
         ),
       )
       .orderBy(desc(attachments.attachedAt), desc(attachments.createdAt))
-      .limit(100)
+      .limit(101)
       .catch((error: unknown) => {
         console.error(
           `Could not list shared attachments in ${channelId} for ${actor.id}.`,
@@ -794,10 +794,11 @@ export function createChannelAttachmentRoutes(
     // The membership join deliberately makes an unknown channel and somebody else's channel both
     // look like an empty list. It reveals no channel existence and matches the attachment fetch.
     return context.json({
-      attachments: rows.map((row) => ({
+      attachments: rows.slice(0, 100).map((row) => ({
         ...row,
         attachedAt: row.attachedAt?.toISOString() ?? null,
       })),
+      truncated: rows.length > 100,
     });
   });
 
