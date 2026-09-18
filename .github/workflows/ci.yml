@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   pull_request:
   push:
     branches: [main]
@@ -37,6 +38,8 @@ jobs:
       - run: bun run typecheck
       - name: Reusable workflow references are valid
         run: bun scripts/check-workflow-references.ts
+      - name: Release readiness preflight
+        run: bun run release:preflight
       - name: Desktop version tracks the release version
         run: bun desktop/scripts/desktop-version.ts check
       # The chart's default image tag is its appVersion, and a release must move both together. They

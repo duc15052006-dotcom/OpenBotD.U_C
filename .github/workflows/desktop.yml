@@ -4,6 +4,7 @@ name: Desktop
 # Windows app and a Linux app built from one tree, and the ways they differ are exactly the ways
 # this fails. So it tests and builds on all three, on every change to it.
 on:
+  workflow_dispatch:
   pull_request:
     paths: ["desktop/**", "package.json", ".github/workflows/desktop.yml"]
   push:
