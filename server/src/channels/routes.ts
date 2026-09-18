@@ -1209,6 +1209,29 @@ export function createChannelRoutes(
     }
   });
 
+  routes.get("/:channelId/delegations", requireUser, async (context) => {
+    const channelId = context.req.param("channelId");
+    if (!channelId.trim()) {
+      return context.json({ error: "A channel id is required." }, 400);
+    }
+
+    try {
+      const delegations = await store.listDelegations(
+        context.var.actor,
+        channelId,
+      );
+      return context.json({
+        delegations: delegations.map((delegation) => ({
+          ...delegation,
+          createdAt: delegation.createdAt.toISOString(),
+          updatedAt: delegation.updatedAt.toISOString(),
+        })),
+      });
+    } catch (error) {
+      return mapStoreError(context, error);
+    }
+  });
+
   routes.post("/:channelId/activity", requireUser, async (context) => {
     const parsed = parseActivityInput(
       await context.req.json().catch(() => null),
