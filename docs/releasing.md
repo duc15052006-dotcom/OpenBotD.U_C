@@ -143,6 +143,11 @@ certificate; its job is to make broken release wiring fail immediately instead o
 Both **CI** and **Desktop** can also be started manually from the Actions tab after a branch is
 available to Actions, which is useful when pull-request events are unavailable or suppressed.
 
+A branch under `verify/**` is also an explicit release-candidate verification lane: pushes there run
+the full CI workflow, and desktop-relevant pushes run the cross-platform Desktop workflow. That keeps
+ordinary feature branches from burning runner time while still providing a push-triggered path when
+PR events are unavailable.
+
 Branch protection should require one check, `verify`, which fails unless every other job succeeded.
 A job added to `ci.yml` is covered by it without anybody updating a list.
 
