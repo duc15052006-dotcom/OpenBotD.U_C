@@ -70,6 +70,9 @@ export function computerFleetQueryOptions() {
       });
       return response.json();
     },
+    // Resource samples are useful only while fresh. TanStack Query pauses this in the background,
+    // so an open Admin page updates without turning hidden tabs into a monitoring daemon.
+    refetchInterval: 5_000,
   });
 }
 
