@@ -398,6 +398,7 @@ function checkFirstCoworkerHandoff(): void {
   const ask = read("desktop/src/Ask.tsx");
   const native = read("desktop/src-tauri/src/main.rs");
   const agents = read("app/src/routes/_authed/_app/agents/index.tsx");
+  const agentDialog = read("app/src/components/agents/agent-dialog.tsx");
 
   for (const evidence of [
     'invoke("show_agent_creator")',
@@ -425,6 +426,17 @@ function checkFirstCoworkerHandoff(): void {
   ]) {
     if (!agents.includes(evidence)) {
       fail(`app: /agents?new=true no longer opens the coworker creator (${evidence})`);
+    }
+  }
+
+  for (const evidence of [
+    "setComputerStateMutationOptions",
+    'action: "start"',
+    "ComputerFilesDialog",
+    "Start or wake this coworker",
+  ]) {
+    if (!agentDialog.includes(evidence)) {
+      fail(`app: new coworker profile lost computer quickstart evidence ${evidence}`);
     }
   }
 }
