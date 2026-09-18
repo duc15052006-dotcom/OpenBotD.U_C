@@ -22,7 +22,7 @@ describe("download quarantine", () => {
   test("sanitizes path-shaped and Windows-hostile file names", () => {
     expect(safeDownloadName("../../evil.exe")).toBe("evil.exe");
     expect(safeDownloadName("..\\..\\payload.cmd")).toBe("payload.cmd");
-    expect(safeDownloadName('bad:<name>?.ps1')).toBe("bad__name__.ps1");
+    expect(safeDownloadName("bad:<name>?.ps1")).toBe("bad__name__.ps1");
     expect(safeDownloadName("..")).toBe("download");
   });
 
