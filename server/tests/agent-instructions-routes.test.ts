@@ -38,10 +38,7 @@ function store(
   };
 }
 
-function testApp(
-  instructions: AgentInstructionsStore,
-  actor: Actor = OWNER,
-) {
+function testApp(instructions: AgentInstructionsStore, actor: Actor = OWNER) {
   const app = new Hono<{ Variables: AppVariables }>();
   app.route(
     "/api/agents",

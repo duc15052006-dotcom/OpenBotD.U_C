@@ -134,9 +134,7 @@ export function testAgentModelMutationOptions() {
   });
 }
 
-export function saveAgentInstructionsMutationOptions(
-  queryClient: QueryClient,
-) {
+export function saveAgentInstructionsMutationOptions(queryClient: QueryClient) {
   return mutationOptions({
     mutationFn: (variables: {
       agentId: string;
@@ -200,7 +198,10 @@ export function uploadAgentKnowledgeMutationOptions(queryClient: QueryClient) {
       );
     },
     onSuccess: (knowledge, variables) => {
-      queryClient.setQueryData(agentKeys.knowledge(variables.agentId), knowledge);
+      queryClient.setQueryData(
+        agentKeys.knowledge(variables.agentId),
+        knowledge,
+      );
     },
   });
 }
@@ -222,7 +223,10 @@ export function removeAgentKnowledgeMutationOptions(queryClient: QueryClient) {
         },
       ),
     onSuccess: (knowledge, variables) => {
-      queryClient.setQueryData(agentKeys.knowledge(variables.agentId), knowledge);
+      queryClient.setQueryData(
+        agentKeys.knowledge(variables.agentId),
+        knowledge,
+      );
     },
   });
 }

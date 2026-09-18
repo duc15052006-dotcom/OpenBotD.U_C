@@ -528,9 +528,7 @@ describe("GET /:channelId/attachments", () => {
       text: "private draft",
     });
 
-    const response = await app.request(
-      `http://test/${channelId}/attachments`,
-    );
+    const response = await app.request(`http://test/${channelId}/attachments`);
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
@@ -564,7 +562,10 @@ describe("GET /:channelId/attachments", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ attachments: [], truncated: false });
+    expect(await response.json()).toEqual({
+      attachments: [],
+      truncated: false,
+    });
   });
 });
 

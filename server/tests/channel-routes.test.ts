@@ -280,11 +280,7 @@ describe("channel routes", () => {
         },
       ],
     });
-    expect(store.calls).toContainEqual([
-      "listDelegations",
-      actor,
-      "channel-1",
-    ]);
+    expect(store.calls).toContainEqual(["listDelegations", actor, "channel-1"]);
   });
 
   test("attaches authentication middleware to every route before calling the store", async () => {
@@ -305,7 +301,7 @@ describe("channel routes", () => {
     expect(store.calls).toEqual([]);
   });
 
-  test("uses the authenticated context actor and canonical agent IDs", async () => {
+  test("uses the authenticated actor and trimmed agent IDs in requested order", async () => {
     const store = fakeStore();
     const app = appFor(store);
 
@@ -319,7 +315,7 @@ describe("channel routes", () => {
     expect(created.status).toBe(201);
     expect(fetched.status).toBe(200);
     expect(store.calls).toEqual([
-      ["create", actor, ["agent-1", "agent-2"]],
+      ["create", actor, ["agent-2", "agent-1"]],
       ["get", actor, "channel-1"],
     ]);
   });

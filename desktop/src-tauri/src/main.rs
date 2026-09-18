@@ -8,11 +8,11 @@ mod desktop_host_access;
 mod desktop_telemetry;
 
 #[cfg(test)]
-mod test_support;
-#[cfg(test)]
 mod model_connection_tests;
 #[cfg(test)]
 mod show_route_tests;
+#[cfg(test)]
+mod test_support;
 
 use openbot_desktop_lib::{
     acquire, deployment, deployment_release, engine, env as openbot_env, harness, host_access,
@@ -707,20 +707,16 @@ fn model_endpoint_url(raw: &str, label: &str) -> Result<reqwest::Url, Problem> {
         ))
     })?;
     if !matches!(url.scheme(), "http" | "https") || !url.has_host() {
-        return Err(
-            format!("Enter a valid http:// or https:// address for your {label}.").into(),
-        );
+        return Err(format!("Enter a valid http:// or https:// address for your {label}.").into());
     }
     if !url.username().is_empty() || url.password().is_some() {
         return Err(format!("{label} addresses must not contain credentials.").into());
     }
     if url.host_str().is_some_and(model_probe_never_allowed_host) {
-        return Err(
-            format!(
-                "That {label} is reserved for cloud instance credentials and cannot be saved."
-            )
-            .into(),
-        );
+        return Err(format!(
+            "That {label} is reserved for cloud instance credentials and cannot be saved."
+        )
+        .into());
     }
     Ok(url)
 }
@@ -890,9 +886,8 @@ fn model_probe_never_allowed_host(host: &str) -> bool {
             }
 
             let bytes = address.octets();
-            let mapped = bytes[..10].iter().all(|byte| *byte == 0)
-                && bytes[10] == 0xff
-                && bytes[11] == 0xff;
+            let mapped =
+                bytes[..10].iter().all(|byte| *byte == 0) && bytes[10] == 0xff && bytes[11] == 0xff;
             let compatible = bytes[..12].iter().all(|byte| *byte == 0);
             let nat64 = bytes[..4] == [0x00, 0x64, 0xff, 0x9b]
                 && bytes[4..12].iter().all(|byte| *byte == 0);
@@ -921,10 +916,7 @@ fn models_probe_url(base_url: &str) -> Result<reqwest::Url, Problem> {
     Ok(url)
 }
 
-async fn provider_probe(
-    request: reqwest::RequestBuilder,
-    provider: &str,
-) -> Result<(), Problem> {
+async fn provider_probe(request: reqwest::RequestBuilder, provider: &str) -> Result<(), Problem> {
     let response = request.send().await.map_err(|error| {
         Problem::with(
             format!("OpenBot could not reach {provider}."),
@@ -961,6 +953,9 @@ async fn test_model_connection(
     let root = stack::root_from(&root);
     let credential = model.into_credential(&root)?;
     match credential {
+        openbot_env::ModelCredential::None => {
+            Err("Choose a model connection before testing it.".into())
+        }
         openbot_env::ModelCredential::OpenAi { api_key } => {
             if api_key.trim().is_empty() {
                 return Err("Enter an OpenAI API key before testing it.".into());
@@ -1240,12 +1235,8 @@ async fn start_stack_inner<R: tauri::Runtime>(
             .as_ref()
             .filter(|pending| pending.root == root)
             .map(|pending| pending.key.clone());
-        let api_key = intelligence_key_for_start(
-            &root,
-            api_key,
-            pending_intelligence_key,
-            saved_secret,
-        )?;
+        let api_key =
+            intelligence_key_for_start(&root, api_key, pending_intelligence_key, saved_secret)?;
         let existing_secrets = openbot_desktop_lib::vault::already_given_no_ui(
             &root,
             &root.join(".env"),
@@ -2241,10 +2232,7 @@ fn show_openbot_on<R: tauri::Runtime>(
     show_openbot_route_on(app, ports, None)
 }
 
-fn openbot_route_url(
-    base: &str,
-    route: Option<(&str, &str)>,
-) -> Result<tauri::Url, String> {
+fn openbot_route_url(base: &str, route: Option<(&str, &str)>) -> Result<tauri::Url, String> {
     let mut url: tauri::Url = base
         .parse()
         .map_err(|error| format!("{base} is not a URL: {error}"))?;
@@ -2668,11 +2656,8 @@ fn already_configured<R: tauri::Runtime>(
 ) -> AlreadyConfigured {
     let requested_root = stack::root_from(&root);
     {
-        let mut pending = app
-            .state::<Shell>()
-            .pending_intelligence_key
-            .lock()
-            .unwrap();
+        let shell = app.state::<Shell>();
+        let mut pending = shell.pending_intelligence_key.lock().unwrap();
         if pending
             .as_ref()
             .is_some_and(|pending| pending.root != requested_root)
@@ -2925,8 +2910,10 @@ async fn intelligence_key_for(
         openbot_desktop_lib::problem::Problem::plain(format!("A key could not be created: {error}"))
     })??;
     *app.state::<Shell>().intelligence_credential.lock().unwrap() = None;
-    *app.state::<Shell>().pending_intelligence_key.lock().unwrap() =
-        Some(PendingIntelligenceKey { root, key });
+    *app.state::<Shell>()
+        .pending_intelligence_key
+        .lock()
+        .unwrap() = Some(PendingIntelligenceKey { root, key });
     Ok(())
 }
 
@@ -3257,7 +3244,7 @@ fn check_for_updates(app: tauri::AppHandle) {
                     ))
                     .title("OpenBot update available")
                     .kind(MessageDialogKind::Info)
-                    .show();
+                    .show(|_| {});
                 if let Err(error) = app.opener().open_url(info.release_url, None::<&str>) {
                     app.dialog()
                         .message(format!(
@@ -3265,7 +3252,7 @@ fn check_for_updates(app: tauri::AppHandle) {
                         ))
                         .title("Could not open the update")
                         .kind(MessageDialogKind::Error)
-                        .show();
+                        .show(|_| {});
                 }
             }
             Ok(info) => {
@@ -3276,7 +3263,7 @@ fn check_for_updates(app: tauri::AppHandle) {
                     ))
                     .title("OpenBot is up to date")
                     .kind(MessageDialogKind::Info)
-                    .show();
+                    .show(|_| {});
             }
             Err(error) => {
                 app.dialog()
@@ -3285,7 +3272,7 @@ fn check_for_updates(app: tauri::AppHandle) {
                     ))
                     .title("Update check failed")
                     .kind(MessageDialogKind::Error)
-                    .show();
+                    .show(|_| {});
             }
         }
     });
@@ -4111,35 +4098,29 @@ mod tests {
             .build(tauri::test::mock_context(tauri::test::noop_assets()))
             .unwrap();
 
-        *app.state::<Shell>().pending_intelligence_key.lock().unwrap() =
-            Some(PendingIntelligenceKey {
-                root: root_a.clone(),
-                key: "synthetic-pending-key".into(),
-            });
+        *app.state::<Shell>()
+            .pending_intelligence_key
+            .lock()
+            .unwrap() = Some(PendingIntelligenceKey {
+            root: root_a.clone(),
+            key: "synthetic-pending-key".into(),
+        });
 
-        let _ = already_configured(
-            app.handle().clone(),
-            root_a.to_string_lossy().into_owned(),
-        );
-        assert!(
-            app.state::<Shell>()
-                .pending_intelligence_key
-                .lock()
-                .unwrap()
-                .is_some()
-        );
+        let _ = already_configured(app.handle().clone(), root_a.to_string_lossy().into_owned());
+        assert!(app
+            .state::<Shell>()
+            .pending_intelligence_key
+            .lock()
+            .unwrap()
+            .is_some());
 
-        let _ = already_configured(
-            app.handle().clone(),
-            root_b.to_string_lossy().into_owned(),
-        );
-        assert!(
-            app.state::<Shell>()
-                .pending_intelligence_key
-                .lock()
-                .unwrap()
-                .is_none()
-        );
+        let _ = already_configured(app.handle().clone(), root_b.to_string_lossy().into_owned());
+        assert!(app
+            .state::<Shell>()
+            .pending_intelligence_key
+            .lock()
+            .unwrap()
+            .is_none());
 
         let _ = std::fs::remove_dir_all(root_a);
         let _ = std::fs::remove_dir_all(root_b);
@@ -4760,7 +4741,7 @@ mod tests {
                 .expect_err("a container endpoint URL must be an absolute HTTP(S) URL");
         assert_eq!(
             problem.said,
-            "Enter a valid http:// or https:// address for the container model endpoint."
+            "Enter a valid http:// or https:// address for your container model endpoint."
         );
     }
 
@@ -6128,7 +6109,7 @@ fn main() {
             images.images.insert(
                 name.into(),
                 deployment::Image {
-                    reference: format!("localhost/{name}@sha256:00"),
+                    reference: fixture_release_image_reference(name),
                 },
             );
         }
@@ -6312,7 +6293,7 @@ fn main() {
         } else if let Some(image) = expected_image {
             assert_eq!(
                 settings.get("PICKED_HARNESS_IMAGE"),
-                Some(&format!("localhost/{image}@sha256:00"))
+                Some(&fixture_release_image_reference(image))
             );
             assert_ne!(settings.get("PICKED_HARNESS_URL"), Some(&remote));
         } else {
@@ -7026,6 +7007,20 @@ fn main() {
         let _ = std::fs::remove_dir_all(record.parent().expect("record parent"));
     }
 
+    fn fixture_release_image_reference(published: &str) -> String {
+        let repository =
+            crate::update::release_repository().expect("release repository should be valid");
+        let owner = repository
+            .split_once('/')
+            .expect("release repository should contain an owner and name")
+            .0
+            .to_ascii_lowercase();
+        format!(
+            "ghcr.io/{owner}/openbot-{published}@sha256:{}",
+            "0".repeat(64)
+        )
+    }
+
     fn write_installed_deployment(root: &Path) {
         const DEPLOYMENT_VERSION: &str = "v0.0.8";
         std::fs::create_dir_all(root.join("server")).unwrap();
@@ -7043,31 +7038,31 @@ fn main() {
                 (
                     "server".into(),
                     deployment::Image {
-                        reference: "localhost/openbot-server@sha256:00".into(),
+                        reference: fixture_release_image_reference("server"),
                     },
                 ),
                 (
                     "supervisor".into(),
                     deployment::Image {
-                        reference: "localhost/openbot-supervisor@sha256:00".into(),
+                        reference: fixture_release_image_reference("supervisor"),
                     },
                 ),
                 (
                     "agent-computer".into(),
                     deployment::Image {
-                        reference: "localhost/openbot-agent-computer@sha256:00".into(),
+                        reference: fixture_release_image_reference("agent-computer"),
                     },
                 ),
                 (
                     "agent-bot".into(),
                     deployment::Image {
-                        reference: "localhost/openbot-agent-bot@sha256:00".into(),
+                        reference: fixture_release_image_reference("agent-bot"),
                     },
                 ),
                 (
                     "agent-langgraph".into(),
                     deployment::Image {
-                        reference: "localhost/openbot-agent-langgraph@sha256:00".into(),
+                        reference: fixture_release_image_reference("agent-langgraph"),
                     },
                 ),
             ]),

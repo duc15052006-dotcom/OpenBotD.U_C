@@ -127,9 +127,7 @@ function RouteComponent() {
             className="flex max-w-48 items-center gap-1 rounded-full border border-border bg-muted/50 px-2 py-1 text-xs hover:bg-muted"
             key={recipient.id}
             onClick={() =>
-              setRecipients((current) =>
-                removeRecipient(current, recipient.id),
-              )
+              setRecipients((current) => removeRecipient(current, recipient.id))
             }
             title={
               index === 0 && recipients.length > 1
@@ -153,9 +151,7 @@ function RouteComponent() {
           <div className="min-w-44 flex-1">
             <Combobox
               autoHighlight
-              defaultOpen={
-                !initialChoice && !loadError && !waitingForUrlAgent
-              }
+              defaultOpen={!initialChoice && !loadError && !waitingForUrlAgent}
               items={available}
               isItemEqualToValue={(item: AgentProfile, value: AgentProfile) =>
                 item.id === value.id

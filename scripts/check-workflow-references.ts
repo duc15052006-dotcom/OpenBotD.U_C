@@ -17,7 +17,9 @@ const root = resolve(import.meta.dir, "..");
 const workflows = resolve(root, ".github/workflows");
 const failures: string[] = [];
 
-for (const name of readdirSync(workflows).filter((file) => /\.ya?ml$/.test(file))) {
+for (const name of readdirSync(workflows).filter((file) =>
+  /\.ya?ml$/.test(file),
+)) {
   const path = resolve(workflows, name);
   let parsed: Workflow;
   try {
@@ -87,7 +89,11 @@ for (const name of readdirSync(workflows).filter((file) => /\.ya?ml$/.test(file)
 
     // External reusable workflows are owner/repo/.github/workflows/file.yml@ref. They are not
     // filesystem references in this repository and are outside this check.
-    if (uses.includes("@") && !uses.startsWith("./") && !uses.startsWith("$/")) {
+    if (
+      uses.includes("@") &&
+      !uses.startsWith("./") &&
+      !uses.startsWith("$/")
+    ) {
       continue;
     }
 
@@ -125,7 +131,7 @@ for (const name of readdirSync(workflows).filter((file) => /\.ya?ml$/.test(file)
     const callable =
       trigger &&
       typeof trigger === "object" &&
-      Object.prototype.hasOwnProperty.call(trigger, "workflow_call");
+      Object.hasOwn(trigger, "workflow_call");
     if (!callable) {
       failures.push(
         `${name} job ${jobName}: ${uses} is referenced as reusable but has no on.workflow_call trigger`,
@@ -133,7 +139,7 @@ for (const name of readdirSync(workflows).filter((file) => /\.ya?ml$/.test(file)
       continue;
     }
 
-    const workflowCall = (trigger as Record<string, unknown>)["workflow_call"];
+    const workflowCall = (trigger as Record<string, unknown>).workflow_call;
     const declaredInputs =
       workflowCall && typeof workflowCall === "object"
         ? ((workflowCall as Record<string, unknown>).inputs as

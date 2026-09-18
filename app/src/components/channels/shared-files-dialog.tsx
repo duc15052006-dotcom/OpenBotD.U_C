@@ -29,8 +29,8 @@ export function SharedFilesDialog({
         <DialogHeader>
           <DialogTitle>Shared files</DialogTitle>
           <DialogDescription>
-            Files that have already been sent in this conversation. Unsent drafts
-            never appear here.
+            Files that have already been sent in this conversation. Unsent
+            drafts never appear here.
           </DialogDescription>
         </DialogHeader>
 
@@ -60,7 +60,9 @@ export function SharedFilesDialog({
                 target="_blank"
               >
                 <span className="min-w-0">
-                  <span className="block truncate font-medium">{file.name}</span>
+                  <span className="block truncate font-medium">
+                    {file.name}
+                  </span>
                   <span className="block truncate text-muted-foreground text-xs">
                     {file.mimeType} · {formatBytes(file.sizeBytes)}
                   </span>

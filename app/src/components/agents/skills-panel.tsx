@@ -59,7 +59,7 @@ export function SkillsPanel({ agentId }: { agentId: string }) {
               <ItemContent>
                 <ItemTitle>{skill.title}</ItemTitle>
                 <ItemDescription>
-                  {skill.summary || "/" + skill.slug}
+                  {skill.summary || `/${skill.slug}`}
                 </ItemDescription>
               </ItemContent>
               <ItemActions>

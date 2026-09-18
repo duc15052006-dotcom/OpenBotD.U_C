@@ -272,7 +272,10 @@ function coordinatorAgentId(override: unknown): string | null {
 function coordinatorFirst(agentIds: string[], override: unknown): string[] {
   const coordinator = coordinatorAgentId(override);
   if (!coordinator || !agentIds.includes(coordinator)) return agentIds;
-  return [coordinator, ...agentIds.filter((agentId) => agentId !== coordinator)];
+  return [
+    coordinator,
+    ...agentIds.filter((agentId) => agentId !== coordinator),
+  ];
 }
 
 /** Reduce a message to the one line a roster draws. See `oneLine` for why it is shared. */
@@ -874,7 +877,10 @@ export function createChannelStore(
         .innerJoin(
           channelMemberships,
           and(
-            eq(channelMemberships.channelId, intelligenceChannelMappings.channelId),
+            eq(
+              channelMemberships.channelId,
+              intelligenceChannelMappings.channelId,
+            ),
             eq(channelMemberships.userId, actor.id),
           ),
         )

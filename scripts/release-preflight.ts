@@ -47,10 +47,7 @@ function fail(message: string): void {
 }
 
 function hasWorkflowCall(flow: Workflow): boolean {
-  return (
-    object(flow.on) &&
-    Object.prototype.hasOwnProperty.call(flow.on, "workflow_call")
-  );
+  return object(flow.on) && Object.hasOwn(flow.on, "workflow_call");
 }
 
 function jobNeeds(job: WorkflowJob | undefined, dependency: string): boolean {
@@ -58,9 +55,7 @@ function jobNeeds(job: WorkflowJob | undefined, dependency: string): boolean {
 }
 
 function steps(job: WorkflowJob | undefined): Array<Record<string, unknown>> {
-  return Array.isArray(job?.steps)
-    ? job.steps.filter(object)
-    : [];
+  return Array.isArray(job?.steps) ? job.steps.filter(object) : [];
 }
 
 function stepNamed(
@@ -101,7 +96,11 @@ function checkDesktopBoundary(): void {
     }
   }
   const http = csp.match(/http:\/\/[^\s;]+/g) ?? [];
-  if (http.some((source) => source !== "http://ipc.localhost")) {
+  const allowedTauriHttpOrigins = new Set([
+    "http://ipc.localhost",
+    "http://asset.localhost",
+  ]);
+  if (http.some((source) => !allowedTauriHttpOrigins.has(source))) {
     fail("desktop: production CSP opens a remote HTTP origin");
   }
   if (security.dangerousDisableAssetCspModification === true) {
@@ -155,7 +154,7 @@ function checkReleaseWiring(): void {
     "package.json version must be a stable numeric SemVer",
     "Number.isSafeInteger",
     "next.every(Number.isSafeInteger)",
-    'refs/tags/v$version',
+    "refs/tags/v$version",
     "Refusing to create a release PR for an existing version",
   ]) {
     if (!releaseProposalSource.includes(evidence)) {
@@ -187,17 +186,21 @@ function checkReleaseWiring(): void {
   }
 
   if (releaseSource.includes("ghcr.io/copilotkit/")) {
-    fail("release: container publishing is still hard-coded to the upstream GHCR namespace");
+    fail(
+      "release: container publishing is still hard-coded to the upstream GHCR namespace",
+    );
   }
   const releaseDocs = read("docs/releasing.md");
   if (releaseDocs.includes("ghcr.io/copilotkit/")) {
-    fail("release: release documentation still points at the upstream GHCR namespace");
+    fail(
+      "release: release documentation still points at the upstream GHCR namespace",
+    );
   }
   for (const evidence of [
-    "registry_owner: ${{ steps.release.outputs.registry_owner }}",
-    "REGISTRY_OWNER: ${{ github.repository_owner }}",
+    `registry_owner: \${{ steps.release.outputs.registry_owner }}`,
+    `REGISTRY_OWNER: \${{ github.repository_owner }}`,
     "registry_owner=$registry_owner",
-    "ghcr.io/${{ needs.metadata.outputs.registry_owner }}/openbot",
+    `ghcr.io/\${{ needs.metadata.outputs.registry_owner }}/openbot`,
   ]) {
     if (!releaseSource.includes(evidence)) {
       fail(`release: repository-owned GHCR publishing is missing ${evidence}`);
@@ -246,7 +249,9 @@ function checkReleaseWiring(): void {
 
   const signJob = signing.jobs?.sign;
   if (signJob?.environment !== "windows-signing") {
-    fail("signing: sign job is not protected by the windows-signing environment");
+    fail(
+      "signing: sign job is not protected by the windows-signing environment",
+    );
   }
   const signPermissions = object(signJob?.permissions)
     ? signJob?.permissions
@@ -255,9 +260,14 @@ function checkReleaseWiring(): void {
     fail("signing: sign job does not request OIDC id-token: write");
   }
 
-  const stageReleaseArtifact = stepNamed(signJob, "Stage verified release artifact");
+  const stageReleaseArtifact = stepNamed(
+    signJob,
+    "Stage verified release artifact",
+  );
   const stageReleaseRun =
-    typeof stageReleaseArtifact?.run === "string" ? stageReleaseArtifact.run : "";
+    typeof stageReleaseArtifact?.run === "string"
+      ? stageReleaseArtifact.run
+      : "";
   for (const evidence of [
     "desktop/release-artifact",
     "desktop/signed-app/openbot-desktop.exe",
@@ -274,7 +284,9 @@ function checkReleaseWiring(): void {
   const signedUploadWith =
     signedUpload && object(signedUpload.with) ? signedUpload.with : {};
   if (signedUploadWith["if-no-files-found"] !== "error") {
-    fail("signing: signed Windows artifact upload must fail when files are missing");
+    fail(
+      "signing: signed Windows artifact upload must fail when files are missing",
+    );
   }
   if (signedUploadWith.path !== "desktop/release-artifact/") {
     fail(
@@ -286,10 +298,14 @@ function checkReleaseWiring(): void {
   const evidenceUploadWith =
     evidenceUpload && object(evidenceUpload.with) ? evidenceUpload.with : {};
   if (evidenceUploadWith["if-no-files-found"] !== "error") {
-    fail("signing: signature evidence upload must fail when evidence is missing");
+    fail(
+      "signing: signature evidence upload must fail when evidence is missing",
+    );
   }
   if (evidenceUploadWith.path !== "desktop/signing-evidence/") {
-    fail("signing: signature evidence upload path drifted from desktop/signing-evidence/");
+    fail(
+      "signing: signature evidence upload path drifted from desktop/signing-evidence/",
+    );
   }
 
   const signedInstallerAcceptance = stepNamed(
@@ -396,11 +412,13 @@ function checkReleaseWiring(): void {
     "does not point directly at release commit",
   ]) {
     if (!publishRun.includes(evidence)) {
-      fail(`release: existing version-tag identity gate is missing ${evidence}`);
+      fail(
+        `release: existing version-tag identity gate is missing ${evidence}`,
+      );
     }
   }
   for (const evidence of [
-    'releases/tags/$VERSION',
+    "releases/tags/$VERSION",
     "draft or prerelease record",
     "unexpected existing assets",
     '"container-images.json"',
@@ -408,7 +426,9 @@ function checkReleaseWiring(): void {
     '"signatures.json"',
   ]) {
     if (!publishRun.includes(evidence)) {
-      fail(`release: existing GitHub Release state gate is missing ${evidence}`);
+      fail(
+        `release: existing GitHub Release state gate is missing ${evidence}`,
+      );
     }
   }
 
@@ -444,10 +464,14 @@ function checkDesktopUpdatePath(): void {
     ["deployment release resolver", deploymentRelease],
   ] as const) {
     if (source.includes("CopilotKit/OpenBot")) {
-      fail(`desktop: ${name} still downloads release artifacts from the upstream repository`);
+      fail(
+        `desktop: ${name} still downloads release artifacts from the upstream repository`,
+      );
     }
     if (!source.includes("crate::update::release_repository()")) {
-      fail(`desktop: ${name} is not bound to the desktop build release repository`);
+      fail(
+        `desktop: ${name} is not bound to the desktop build release repository`,
+      );
     }
   }
 
@@ -483,13 +507,14 @@ function checkDesktopUpdatePath(): void {
     }
   }
 
-  const sourceShaExpression =
-    "${{ github.event.pull_request.head.sha || github.sha }}";
+  const sourceShaExpression = `\${{ github.event.pull_request.head.sha || github.sha }}`;
   for (const [name, source] of [
     ["Desktop", desktopWorkflow],
     ["Windows signing", signingWorkflow],
   ] as const) {
-    if (!source.includes("OPENBOT_RELEASE_REPOSITORY: ${{ github.repository }}")) {
+    if (
+      !source.includes(`OPENBOT_RELEASE_REPOSITORY: \${{ github.repository }}`)
+    ) {
       fail(
         `desktop: ${name} build does not bind update checks to the repository that built the artifact`,
       );
@@ -583,7 +608,9 @@ function checkDesktopCredentialBoundary(): void {
       native,
     )
   ) {
-    fail("desktop: Start no longer resolves the root-bound pending Intelligence key");
+    fail(
+      "desktop: Start no longer resolves the root-bound pending Intelligence key",
+    );
   }
 
   const keyCommand = native
@@ -594,7 +621,9 @@ function checkDesktopCredentialBoundary(): void {
       "-> Result<(), openbot_desktop_lib::problem::Problem>",
     )
   ) {
-    fail("desktop: provisioned Intelligence key can cross the WebView response");
+    fail(
+      "desktop: provisioned Intelligence key can cross the WebView response",
+    );
   }
 }
 
@@ -615,7 +644,9 @@ function checkProviderConnectionTest(): void {
 
   const app = read("desktop/src/App.tsx");
   if (!app.includes("requireConnectionTest")) {
-    fail("desktop: first-run model setup no longer requires a successful connection proof");
+    fail(
+      "desktop: first-run model setup no longer requires a successful connection proof",
+    );
   }
 
   for (const evidence of [
@@ -645,10 +676,7 @@ function checkFirstCoworkerHandoff(): void {
   const agents = read("app/src/routes/_authed/_app/agents/index.tsx");
   const agentDialog = read("app/src/components/agents/agent-dialog.tsx");
 
-  for (const evidence of [
-    'invoke("show_agent_creator")',
-    'onCreateCoworker',
-  ]) {
+  for (const evidence of ['invoke("show_agent_creator")', "onCreateCoworker"]) {
     if (!app.includes(evidence)) {
       fail(`desktop: completed setup no longer hands off through ${evidence}`);
     }
@@ -665,12 +693,11 @@ function checkFirstCoworkerHandoff(): void {
       fail(`desktop: fixed coworker route is missing ${evidence}`);
     }
   }
-  for (const evidence of [
-    "new: z.boolean().optional()",
-    "open={showCreate}",
-  ]) {
+  for (const evidence of ["new: z.boolean().optional()", "open={showCreate}"]) {
     if (!agents.includes(evidence)) {
-      fail(`app: /agents?new=true no longer opens the coworker creator (${evidence})`);
+      fail(
+        `app: /agents?new=true no longer opens the coworker creator (${evidence})`,
+      );
     }
   }
 
@@ -682,7 +709,9 @@ function checkFirstCoworkerHandoff(): void {
     "profile.builtIn ?",
   ]) {
     if (!agentDialog.includes(evidence)) {
-      fail(`app: new coworker profile lost computer quickstart evidence ${evidence}`);
+      fail(
+        `app: new coworker profile lost computer quickstart evidence ${evidence}`,
+      );
     }
   }
 }

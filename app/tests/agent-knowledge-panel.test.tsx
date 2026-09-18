@@ -85,11 +85,10 @@ test("read-only viewers can inspect metadata but cannot mutate it", () => {
     (view.getByLabelText("Upload knowledge file") as HTMLInputElement).disabled,
   ).toBe(true);
   expect(
-    (view.getByRole("button", { name: "Remove" }) as HTMLButtonElement).disabled,
+    (view.getByRole("button", { name: "Remove" }) as HTMLButtonElement)
+      .disabled,
   ).toBe(true);
-  expect(
-    view.getByText(/you cannot change them/i),
-  ).toBeTruthy();
+  expect(view.getByText(/you cannot change them/i)).toBeTruthy();
 });
 
 test("uploads the original bytes as bounded base64 JSON", async () => {

@@ -709,7 +709,9 @@ export function createComputerGateway(
         if (!verdict.allowed) return undefined;
 
         try {
-          const body = await transport.call<{ metrics?: ComputerResourceMetrics }>(
+          const body = await transport.call<{
+            metrics?: ComputerResourceMetrics;
+          }>(
             verdict.url,
             computer.botId,
             "/metrics",
@@ -780,7 +782,8 @@ export function createComputerGateway(
       await writeControlEvent(auditStore, "computer.restarted", {
         botId,
         actor,
-        reason: "the computer was stopped and started again without clearing its saved profile",
+        reason:
+          "the computer was stopped and started again without clearing its saved profile",
       });
       return { restarted: true, url };
     },
@@ -1278,6 +1281,8 @@ async function writeControlEvent(
     | "computer.control_released"
     | "computer.secret_requested"
     | "computer.secret_supplied"
+    | "computer.started"
+    | "computer.restarted"
     | "computer.stopped"
     | "computer.reset",
   entry: {

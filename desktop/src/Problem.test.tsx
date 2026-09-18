@@ -91,7 +91,9 @@ test("diagnostics_reads_only_safe_status_commands_after_the_person_asks", async 
     view.getByText(/Release repository: duc15052006-dotcom\/OpenBotD\.U_C/),
   ).toBeTruthy();
   expect(view.getByText(/Stack running: true/)).toBeTruthy();
-  expect(view.getByText(/Last failure: Previous startup stopped\./)).toBeTruthy();
+  expect(
+    view.getByText(/Last failure: Previous startup stopped\./),
+  ).toBeTruthy();
 
   expect(invokeCalls).toEqual([
     { command: "desktop_build_identity", args: undefined },

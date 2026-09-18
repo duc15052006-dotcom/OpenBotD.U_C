@@ -1,8 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  cpuCapacityFromMax,
-  cpuUsageUsecFromStat,
-} from "../src/metrics";
+import { cpuCapacityFromMax, cpuUsageUsecFromStat } from "../src/metrics";
 
 describe("computer metrics parsing", () => {
   test("reads cgroup v2 CPU usage without confusing the other counters", () => {

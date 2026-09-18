@@ -88,8 +88,17 @@ function DiagnosticsPanel({ compact = false }: { compact?: boolean }) {
 
   return (
     <div className={compact ? "diagnostics compact" : "diagnostics"}>
-      <button className="quiet" disabled={busy} onClick={() => void run()} type="button">
-        {busy ? "Checking…" : report ? "Refresh diagnostics" : "Run diagnostics"}
+      <button
+        className="quiet"
+        disabled={busy}
+        onClick={() => void run()}
+        type="button"
+      >
+        {busy
+          ? "Checking…"
+          : report
+            ? "Refresh diagnostics"
+            : "Run diagnostics"}
       </button>
       {problem ? <p className="caution">{problem}</p> : null}
       {report ? (

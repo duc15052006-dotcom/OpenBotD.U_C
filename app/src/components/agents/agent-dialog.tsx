@@ -281,11 +281,15 @@ function GeneralSection({
     setComputerStatus(null);
     try {
       await computer.mutateAsync({ botId: agentId, action: "start" });
-      setComputerStatus("Computer ready. Browser profile and workspace are preserved.");
+      setComputerStatus(
+        "Computer ready. Browser profile and workspace are preserved.",
+      );
       if (openFiles) setFilesOpen(true);
     } catch (error) {
       setComputerStatus(
-        error instanceof Error ? error.message : "The computer could not be started.",
+        error instanceof Error
+          ? error.message
+          : "The computer could not be started.",
       );
     }
   };
@@ -362,7 +366,8 @@ function GeneralSection({
           <ItemContent>
             <ItemTitle>Computer</ItemTitle>
             <ItemDescription>
-              Start or wake this coworker&apos;s persistent browser and workspace.
+              Start or wake this coworker&apos;s persistent browser and
+              workspace.
               {computerStatus ? (
                 <span className="mt-1 block">{computerStatus}</span>
               ) : null}
@@ -392,7 +397,8 @@ function GeneralSection({
         <ItemContent>
           <ItemTitle>Start channel</ItemTitle>
           <ItemDescription>
-            Open a channel to ask this coworker to use its browser, files and tools.
+            Open a channel to ask this coworker to use its browser, files and
+            tools.
           </ItemDescription>
         </ItemContent>
         <ItemActions>

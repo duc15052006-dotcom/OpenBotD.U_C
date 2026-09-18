@@ -29,7 +29,9 @@ mock.module("@tauri-apps/api/core", () => ({
   invoke: (command: string, args?: unknown) => {
     invokeCalls.push({ command, args });
     if (command === "test_model_connection") {
-      return Promise.resolve({ detail: "Synthetic model connection accepted." });
+      return Promise.resolve({
+        detail: "Synthetic model connection accepted.",
+      });
     }
     return invokeHandler(command, args);
   },
@@ -79,9 +81,7 @@ async function renderApp(strictMode = false) {
   return view;
 }
 
-async function continueSetup(
-  view: Awaited<ReturnType<typeof renderApp>>,
-) {
+async function continueSetup(view: Awaited<ReturnType<typeof renderApp>>) {
   const continueButton = view.getByRole("button", { name: "Continue" });
   const testConnection = view.queryByRole("button", {
     name: "Test connection",
@@ -2365,9 +2365,7 @@ test("a successful setup hands directly into the first coworker creator", async 
   );
 
   expect(invokeCalls).toContainEqual({ command: "show_agent_creator" });
-  expect(
-    view.getByRole("button", { name: "Open OpenBot" }),
-  ).toBeTruthy();
+  expect(view.getByRole("button", { name: "Open OpenBot" })).toBeTruthy();
 });
 
 test("the Enter that finishes a composed character does not ask the Bot", async () => {

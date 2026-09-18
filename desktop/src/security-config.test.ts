@@ -17,7 +17,10 @@ type TauriConfig = {
 
 function config(): TauriConfig {
   return JSON.parse(
-    readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"),
+    readFileSync(
+      new URL("../src-tauri/tauri.conf.json", import.meta.url),
+      "utf8",
+    ),
   ) as TauriConfig;
 }
 
@@ -57,11 +60,12 @@ describe("desktop CSP", () => {
     expect(policy).toContain("connect-src");
     expect(policy).toContain("ipc:");
     expect(policy).toContain("http://ipc.localhost");
+    expect(policy).toContain("http://asset.localhost");
     expect(policy).toContain("object-src");
     expect(policy).toContain("'none'");
     expect(policy).not.toContain("*");
     expect(policy).not.toContain("'unsafe-eval'");
-    expect(policy).not.toMatch(/https?:\/\/(?!ipc\.localhost)/);
+    expect(policy).not.toMatch(/https?:\/\/(?!(?:ipc|asset)\.localhost\b)/);
     expect(policy).not.toMatch(/wss?:\/\//);
   });
 
