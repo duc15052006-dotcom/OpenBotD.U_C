@@ -15,6 +15,7 @@ import type { ZodType } from "zod";
 import { AbstractAvatar } from "@/components/agents/abstract-avatar";
 import { CallbackTokenPanel } from "@/components/agents/callback-token-panel";
 import { HandoffPanel } from "@/components/agents/handoff-panel";
+import { InstructionsPanel } from "@/components/agents/instructions-panel";
 import { ModelSettingsPanel } from "@/components/agents/model-settings-panel";
 import { RoutinesList } from "@/components/routines/routines-list";
 import { Button } from "@/components/ui/button";
@@ -111,6 +112,7 @@ export function AgentDialog({
 const SECTIONS = [
   { id: "general", name: "General", icon: IconUser },
   { id: "model", name: "Model & API", icon: IconCpu },
+  { id: "instructions", name: "Instructions", icon: IconPencil },
   { id: "access", name: "Access", icon: IconPuzzle },
   { id: "connection", name: "Connection", icon: IconPlugConnected },
   { id: "handoff", name: "Handoff", icon: IconArrowsExchange },
@@ -226,6 +228,8 @@ function AgentDialogBody({ agentId }: { agentId: string }) {
               <GeneralSection agentId={agentId} profile={profile} />
             ) : section === "model" ? (
               <ModelSettingsPanel agentId={agentId} builtIn={profile.builtIn} />
+            ) : section === "instructions" ? (
+              <InstructionsPanel agentId={agentId} />
             ) : section === "access" ? (
               <AccessSection agentId={agentId} />
             ) : section === "connection" ? (

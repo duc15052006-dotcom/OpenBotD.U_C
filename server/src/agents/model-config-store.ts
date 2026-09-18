@@ -11,7 +11,7 @@ import {
   storedAgentModelConfigFromOverride,
   withStoredAgentModelConfig,
 } from "./model-config";
-import { canManageAgent } from "./profile-policy";
+import { canManageAgentRuntimeSettings } from "./profile-policy";
 import {
   AgentNotFoundError,
   AgentNotManageableError,
@@ -61,17 +61,6 @@ function credentialKey(agentId: string) {
   return `agent:${agentId}`;
 }
 
-function canManageModel(
-  actor: AgentActor,
-  profile: Awaited<ReturnType<AgentProfileStore["get"]>>,
-) {
-  if (!profile) return false;
-  // Package-owned agents intentionally cannot have their identity/profile edited, but their runtime
-  // model is an administrator override. This exception is narrow to model configuration.
-  if (profile.systemOwned) return actor.role === "admin";
-  return canManageAgent(actor, profile);
-}
-
 function storedFromInput(
   input: Extract<AgentModelConfigInput, { mode: "custom" }>,
   credentialId?: string,
@@ -107,7 +96,7 @@ export function createAgentModelConfigStore(
 
   async function manageable(actor: AgentActor, agentId: string) {
     const profile = await readable(actor, agentId);
-    if (!canManageModel(actor, profile)) {
+    if (!canManageAgentRuntimeSettings(actor, profile)) {
       throw new AgentNotManageableError(agentId);
     }
     return profile;

@@ -67,6 +67,16 @@ export const agentKeys = {
   handoff: (agentId: string) => ["agents", "handoff", agentId] as const,
   capabilities: () => ["agents", "capabilities"] as const,
   model: (agentId: string) => ["agents", "model", agentId] as const,
+  instructions: (agentId: string) =>
+    ["agents", "instructions", agentId] as const,
+};
+
+/** Keep the browser counter aligned with the server-enforced prompt limit. */
+export const AGENT_INSTRUCTIONS_LIMIT = 8_000;
+
+export type AgentInstructionsSettings = {
+  instructions: string;
+  canManage: boolean;
 };
 
 export type AgentModelProvider = "openai" | "anthropic" | "google";
@@ -171,6 +181,16 @@ export function agentModelQueryOptions(agentId: string) {
     queryFn: (): Promise<AgentModelSettings> =>
       client(`${agentApiPath(agentId)}/model`, "model", {
         fallback: "Could not load model settings",
+      }),
+  });
+}
+
+export function agentInstructionsQueryOptions(agentId: string) {
+  return queryOptions({
+    queryKey: agentKeys.instructions(agentId),
+    queryFn: (): Promise<AgentInstructionsSettings> =>
+      client(`${agentApiPath(agentId)}/instructions`, "instructions", {
+        fallback: "Could not load Agent instructions",
       }),
   });
 }

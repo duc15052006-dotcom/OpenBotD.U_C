@@ -16,6 +16,7 @@ import { createHandoffDelivery } from "./agents/handoff-delivery";
 import { createHandoffRunner } from "./agents/handoff-runner";
 import { signHandoffDeliveryRun } from "./agents/handoff-signing";
 import { handoffTool } from "./agents/handoff-tool";
+import { createAgentInstructionsStore } from "./agents/instructions-store";
 import { createAgentModelConfigStore } from "./agents/model-config-store";
 import { createAgentModelConnectionService } from "./agents/model-connection-service";
 import { createAgentProfileStore } from "./agents/profile-store";
@@ -197,6 +198,10 @@ const agentModelStore = createAgentModelConfigStore(
   database,
   agentProfileStore,
   agentVault,
+);
+const agentInstructionsStore = createAgentInstructionsStore(
+  database,
+  agentProfileStore,
 );
 // Read here rather than beside the synchronise below, because the package names the deployment and
 // the channel store needs that name before it can mint a thread id.
@@ -1356,6 +1361,7 @@ const app = createApp(
   composio ? { broker: composio.broker } : undefined,
   agentModelStore,
   agentModelConnections,
+  agentInstructionsStore,
 );
 
 /**
