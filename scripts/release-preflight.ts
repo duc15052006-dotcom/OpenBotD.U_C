@@ -245,7 +245,9 @@ function checkComputerSandboxBoundary(): void {
     "await ensureOwnedVolume(names, volume)",
   ]) {
     if (!supervisor.includes(evidence)) {
-      fail(`computer: owned-volume fail-closed lifecycle is missing ${evidence}`);
+      fail(
+        `computer: owned-volume fail-closed lifecycle is missing ${evidence}`,
+      );
     }
   }
 
