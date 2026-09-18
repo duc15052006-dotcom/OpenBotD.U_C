@@ -260,7 +260,6 @@ export type WriteFileResult = {
   appended: boolean;
 };
 
-
 /** Metadata about one browser download still isolated from the host and ordinary workspace. */
 export type QuarantineEntry = {
   id: string;
