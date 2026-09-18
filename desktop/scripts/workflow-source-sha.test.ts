@@ -6,7 +6,7 @@ const SOURCE_SHA_EXPRESSION =
   "${{ github.event.pull_request.head.sha || github.sha }}";
 
 function workflow(name: string): string {
-  return readFileSync(resolve(import.meta.dir, "../..", ".github/workflows", name), "utf8");
+  return readFileSync(\n    resolve(import.meta.dir, "../..", ".github/workflows", name),\n    "utf8",\n  );
 }
 
 for (const name of ["desktop.yml", "desktop-signing.yml"]) {
