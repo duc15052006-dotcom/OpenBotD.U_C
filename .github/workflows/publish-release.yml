@@ -122,11 +122,25 @@ jobs:
     permissions:
       contents: read
 
+  # A public Windows release is not the unsigned CI bundle. Sign and verify the exact release commit
+  # through the protected Key Vault environment before any image or GitHub Release is published.
+  # Environment review remains the human approval boundary around the publisher certificate.
+  windows-signing:
+    needs: [metadata, verify, checks, desktop-checks]
+    if: needs.metadata.outputs.is_release == 'true'
+    uses: ./.github/workflows/desktop-signing.yml
+    with:
+      signing-mode: keyvault
+      release-build: true
+    permissions:
+      contents: read
+      id-token: write
+
   # One image, built once. Everything downstream refers to it by digest, so what was tested is what
   # is deployed and there is no second build to disagree with the first.
   image:
     name: image
-    needs: [metadata, verify, checks, desktop-checks]
+    needs: [metadata, verify, checks, desktop-checks, windows-signing]
     if: needs.metadata.outputs.is_release == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -185,7 +199,7 @@ jobs:
   # would be the slower and less reliable option at no saving.
   component-images:
     name: ${{ matrix.image }} ${{ matrix.platform.arch }}
-    needs: [metadata, verify, checks, desktop-checks]
+    needs: [metadata, verify, checks, desktop-checks, windows-signing]
     if: needs.metadata.outputs.is_release == 'true'
     runs-on: ${{ matrix.platform.runner }}
     permissions:
@@ -356,7 +370,7 @@ jobs:
   # tag somebody could move.
   github-release:
     name: tag and release
-    needs: [metadata, verify, checks, image, component-manifests]
+    needs: [metadata, verify, checks, desktop-checks, windows-signing, image, component-manifests]
     if: needs.metadata.outputs.is_release == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -373,6 +387,47 @@ jobs:
           pattern: manifest-*
           path: manifests
           merge-multiple: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: openbot-windows-signed
+          path: windows-release
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: openbot-windows-signatures
+          path: windows-signatures
+      - name: Verify signed Windows release identity
+        env:
+          VERSION: ${{ needs.metadata.outputs.version }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          release="${VERSION#v}"
+          build="windows-release/build-version.json"
+          evidence="windows-signatures/signatures.json"
+
+          test "$(jq -r .version "$build")" = "$release"
+          test "$(jq -r .releaseVersion "$build")" = "$release"
+          test "$(jq -r .channel "$build")" = "release"
+          test "$(jq -r .sourceSha "$build")" = "$COMMIT"
+          test "$(jq -r .expectedVersion "$evidence")" = "$release"
+          test "$(jq -r .sourceSha "$evidence")" = "$COMMIT"
+          test "$(jq -r '.files | length' "$evidence")" = "2"
+          test "$(jq -r '[.files[] | select(.status == "Valid" and .publisher == "Tawkit, Inc." and (.timestampSubject | length > 0))] | length' "$evidence")" = "2"
+
+          mapfile -t installers < <(find windows-release -maxdepth 1 -type f -name '*-setup.exe')
+          if [ "${#installers[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one signed Windows setup executable."
+            exit 1
+          fi
+          installer="${installers[0]}"
+          name="$(basename "$installer")"
+          actual="$(sha256sum "$installer" | awk '{print $1}')"
+          recorded="$(jq -r --arg name "$name" '.files[] | select(.file == $name) | .sha256' "$evidence" | tr '[:upper:]' '[:lower:]')"
+          if [ -z "$recorded" ] || [ "$actual" != "$recorded" ]; then
+            echo "::error::Signed installer hash does not match signature evidence."
+            exit 1
+          fi
+
       - name: Write the image manifest
         env:
           VERSION: ${{ needs.metadata.outputs.version }}
@@ -440,8 +495,8 @@ jobs:
 
           if gh release view "$VERSION" >/dev/null 2>&1; then
             gh release edit "$VERSION" --title "$VERSION" --notes-file notes.md
-            gh release upload "$VERSION" container-images.json --clobber
+            gh release upload "$VERSION" container-images.json windows-release/*-setup.exe windows-release/build-version.json windows-signatures/signatures.json --clobber
           else
-            gh release create "$VERSION" container-images.json \
+            gh release create "$VERSION" container-images.json windows-release/*-setup.exe windows-release/build-version.json windows-signatures/signatures.json \
               --title "$VERSION" --notes-file notes.md
           fi
