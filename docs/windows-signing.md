@@ -71,8 +71,10 @@ az ad app federated-credential create \
 ```
 
 Check existing credentials first; do not duplicate or replace another repository's
-credential. The subject in the checked-in JSON is OpenBot's verified immutable
-subject, including owner and repository IDs, scoped to this environment. An
+credential. This repository's immutable GitHub OIDC subject is pinned in the checked-in JSON as
+`repo:duc15052006-dotcom@270219086/OpenBotD.U_C@1374258280:environment:windows-signing`.
+Both the account ID and repository ID are part of the trust boundary, so copying the upstream
+CopilotKit/OpenBot subject here will make Azure reject this repository's token. An
 `Insufficient privileges` response requires an authorized app owner/administrator
 to run the command; GitHub environment approval does not grant Entra permissions.
 
