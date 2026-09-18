@@ -108,6 +108,9 @@ jobs:
         working-directory: desktop
         env:
           APPLE_SIGNING_IDENTITY: ${{ matrix.platform.name == 'macos' && '-' || '' }}
+          # The native updater checks the repository that produced this exact artifact. Fork builds
+          # therefore check their own releases instead of silently pointing back at another project.
+          OPENBOT_RELEASE_REPOSITORY: ${{ github.repository }}
       - name: Verify packaged Mac version and ad-hoc signature
         if: matrix.platform.name == 'macos'
         run: |

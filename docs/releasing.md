@@ -46,6 +46,13 @@ Ad-hoc signed Mac builds require the first-open exception described in
 [Apple's instructions](https://support.apple.com/en-us/102445). They are for internal testing
 and are not Apple-notarized. See [Windows signing](windows-signing.md) for signed NSIS builds.
 
+The installed desktop app keeps **Check for updates** in both its tray and window menu, even after
+the WebView has navigated from setup to the local OpenBot app. The check asks GitHub only for the
+latest stable release of the repository that built that artifact. A newer release opens only a
+validated `https://github.com/<that-repository>/releases/...` page in the default browser; arbitrary
+URLs returned by the API are refused. CI and protected signing inject `github.repository` at build
+time so fork artifacts do not silently check another project's releases.
+
 ## What merging does
 
 `publish-release.yml` runs on every push to `main` and starts by deciding whether the commit is a
