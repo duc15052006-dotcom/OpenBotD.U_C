@@ -750,6 +750,32 @@ mod tests {
     }
 
     #[test]
+    fn a_legacy_stamp_without_source_commit_is_repaired_instead_of_trusted() {
+        let dir = std::env::temp_dir().join(format!(
+            "openbot-dep-legacy-stamp-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(stamp_path(&dir), r#"{"version":"v0.0.7"}"#).unwrap();
+
+        assert!(installed(&dir).is_none());
+        assert!(needs_fetch(&dir, "v0.0.7"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_noncanonical_commit_is_never_written_to_the_deployment_stamp() {
+        let dir = std::env::temp_dir().join(format!(
+            "openbot-dep-invalid-commit-{}",
+            std::process::id()
+        ));
+        assert!(record(&dir, "v0.0.7", "not-a-commit").is_err());
+        assert!(installed(&dir).is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn unreadable_stamp_is_treated_as_absent_rather_than_fatal() {
         let dir = std::env::temp_dir().join(format!("openbot-dep-bad-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
