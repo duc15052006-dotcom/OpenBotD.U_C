@@ -143,6 +143,70 @@ test("a completed plan sign-in enables and submits only its issuing provider", a
   expect(choices).toEqual([]);
 });
 
+test("Test connection checks the exact current API-key choice without saving it", async () => {
+  invokeHandler = async (command, args) => {
+    if (command === "providers") return providers;
+    if (command === "test_model_connection") {
+      expect(args).toEqual({
+        root: "/tmp/openbot-provider-root",
+        model: {
+          provider: "openai",
+          login: "api-key",
+          apiKey: "sk-synthetic-connection-test",
+        },
+      });
+      return { detail: "OpenAI accepted this API key." };
+    }
+    throw new Error(`unexpected command ${command}`);
+  };
+
+  const view = await renderPicker();
+  await userEvent.click(await view.findByRole("radio", { name: /OpenAI/ }));
+  await userEvent.click(view.getByRole("tab", { name: "Use an API key" }));
+  await userEvent.type(
+    view.getByLabelText("OpenAI API key"),
+    "  sk-synthetic-connection-test  ",
+  );
+
+  await userEvent.click(
+    view.getByRole("button", { name: "Test connection" }),
+  );
+
+  await waitFor(() =>
+    expect(view.getByText(/OpenAI accepted this API key/)).toBeTruthy(),
+  );
+  expect(view.getByText(/sk-synthetic-connection-test/)).toBeNull();
+  expect(
+    invokeCalls.filter((call) => call.command === "test_model_connection"),
+  ).toHaveLength(1);
+});
+
+test("changing provider fields makes the previous connection result stale", async () => {
+  invokeHandler = async (command) => {
+    if (command === "providers") return providers;
+    if (command === "test_model_connection") {
+      return { detail: "OpenAI accepted this API key." };
+    }
+    throw new Error(`unexpected command ${command}`);
+  };
+
+  const view = await renderPicker();
+  await userEvent.click(await view.findByRole("radio", { name: /OpenAI/ }));
+  await userEvent.click(view.getByRole("tab", { name: "Use an API key" }));
+  const field = view.getByLabelText("OpenAI API key");
+  await userEvent.type(field, "first-key");
+  await userEvent.click(
+    view.getByRole("button", { name: "Test connection" }),
+  );
+  await view.findByText(/OpenAI accepted this API key/);
+
+  await userEvent.type(field, "-changed");
+
+  expect(
+    view.getByText(/Connection settings changed\. Test the current connection again/),
+  ).toBeTruthy();
+});
+
 test("a pending plan sign-in completion is ignored after switching provider rows", async () => {
   const chatgpt = deferred<string>();
   const choices: unknown[] = [];
