@@ -222,6 +222,12 @@ export interface ComputerGateway {
     botId: string,
     actor: ActionActor,
   ): Promise<{ wasRunning: boolean }>;
+  stopAllComputers(actor: ActionActor): Promise<{
+    attempted: number;
+    stopped: string[];
+    alreadyStopped: string[];
+    failed: { botId: string; error: string }[];
+  }>;
   resetComputer(
     botId: string,
     actor: ActionActor,
@@ -806,6 +812,69 @@ export function createComputerGateway(
           : "the computer was already stopped",
       });
       return result;
+    },
+
+    /**
+     * Emergency stop for every Computer this deployment owns.
+     *
+     * Best effort, not fail-fast: one broken container must not prevent the others from stopping.
+     * Persistent volumes are untouched, so this is safe to press under pressure and every Bot can
+     * resume later.
+     */
+    async stopAllComputers(actor: ActionActor) {
+      const computers = await provider.list();
+      const botIds = [...new Set(computers.map((computer) => computer.botId))];
+      const outcomes = await Promise.all(
+        botIds.map(async (botId) => {
+          try {
+            const result = await provider.stop(botId);
+            await writeControlEvent(auditStore, "computer.stopped", {
+              botId,
+              actor,
+              reason: result.wasRunning
+                ? "the computer was stopped by Kill All Computers"
+                : "Kill All Computers found the computer already stopped",
+            });
+            return { botId, wasRunning: result.wasRunning } as const;
+          } catch (error) {
+            return {
+              botId,
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "The computer could not be stopped.",
+            } as const;
+          }
+        }),
+      );
+
+      return {
+        attempted: botIds.length,
+        stopped: outcomes
+          .filter(
+            (
+              outcome,
+            ): outcome is { botId: string; wasRunning: true } =>
+              "wasRunning" in outcome && outcome.wasRunning,
+          )
+          .map((outcome) => outcome.botId),
+        alreadyStopped: outcomes
+          .filter(
+            (
+              outcome,
+            ): outcome is { botId: string; wasRunning: false } =>
+              "wasRunning" in outcome && !outcome.wasRunning,
+          )
+          .map((outcome) => outcome.botId),
+        failed: outcomes
+          .filter(
+            (
+              outcome,
+            ): outcome is { botId: string; error: string } =>
+              "error" in outcome,
+          )
+          .map(({ botId, error }) => ({ botId, error })),
+      };
     },
 
     /**
