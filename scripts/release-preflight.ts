@@ -205,6 +205,17 @@ function checkReleaseWiring(): void {
     fail("signing: sign job does not request OIDC id-token: write");
   }
 
+  const evidenceUpload = stepNamed(signJob, "Retain verification evidence");
+  const evidenceUploadWith = object(evidenceUpload?.with)
+    ? evidenceUpload.with
+    : {};
+  if (evidenceUploadWith["if-no-files-found"] !== "error") {
+    fail("signing: signature evidence upload must fail when evidence is missing");
+  }
+  if (evidenceUploadWith.path !== "desktop/signing-evidence/") {
+    fail("signing: signature evidence upload path drifted from desktop/signing-evidence/");
+  }
+
   const signedInstallerAcceptance = stepNamed(
     signJob,
     "Signed installer standard-user acceptance",
