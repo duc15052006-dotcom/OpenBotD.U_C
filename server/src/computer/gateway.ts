@@ -721,6 +721,9 @@ export function createComputerGateway(
       }));
       const url = await locate(botId);
       const started = before.state !== "ready";
+      // Refs belong to the browser run that produced them. Waking a stopped computer may replace
+      // that run, so never let an old accessibility ref survive into the new process.
+      if (started) await snapshots.clear(botId);
       await writeControlEvent(auditStore, "computer.started", {
         botId,
         actor,
@@ -740,6 +743,8 @@ export function createComputerGateway(
     async restartComputer(botId: string, actor: ActionActor) {
       await provider.stop(botId);
       const url = await locate(botId);
+      // A restarted browser has a new accessibility tree even when its profile is preserved.
+      await snapshots.clear(botId);
       await writeControlEvent(auditStore, "computer.restarted", {
         botId,
         actor,
