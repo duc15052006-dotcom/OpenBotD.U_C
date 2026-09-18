@@ -152,6 +152,56 @@ jobs:
           $windowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
           & $windowsPowerShell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ../scripts/test-windows-standard-user.ps1 -TestExecutable $executables[0]
           if ($LASTEXITCODE -ne 0) { throw 'The native standard-user setup test failed.' }
+      # Building the NSIS executable is not the acceptance test people experience. Install the
+      # exact artifact into a fresh temporary directory, prove an app binary was laid down, then run
+      # the generated uninstaller. This catches installer-script/resource failures that a successful
+      # Tauri bundle can still leave until somebody double-clicks the release on Windows.
+      - name: Windows installer install/uninstall smoke
+        if: matrix.platform.name == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installers = @(Get-ChildItem 'desktop/src-tauri/target/release/bundle/nsis' -Filter '*.exe' -File)
+          if ($installers.Count -ne 1) {
+            throw "Expected exactly one NSIS installer, found $($installers.Count)."
+          }
+
+          $target = Join-Path $env:RUNNER_TEMP 'openbot-clean-install'
+          Remove-Item $target -Recurse -Force -ErrorAction SilentlyContinue
+
+          $installed = Start-Process -FilePath $installers[0].FullName -ArgumentList @('/S', "/D=$target") -Wait -PassThru
+          if ($installed.ExitCode -ne 0) {
+            throw "NSIS installer exited with $($installed.ExitCode)."
+          }
+
+          $appBinaries = @(
+            Get-ChildItem $target -Recurse -Filter '*.exe' -File |
+              Where-Object { $_.Name -notmatch '^uninstall' }
+          )
+          if ($appBinaries.Count -lt 1) {
+            throw "The installer reported success but no application executable exists under $target."
+          }
+          Write-Host "Installed application: $($appBinaries[0].FullName)"
+
+          $uninstallers = @(
+            Get-ChildItem $target -Recurse -Filter 'uninstall*.exe' -File
+          )
+          if ($uninstallers.Count -ne 1) {
+            throw "Expected exactly one generated uninstaller, found $($uninstallers.Count)."
+          }
+
+          $removed = Start-Process -FilePath $uninstallers[0].FullName -ArgumentList '/S' -Wait -PassThru
+          if ($removed.ExitCode -ne 0) {
+            throw "NSIS uninstaller exited with $($removed.ExitCode)."
+          }
+
+          for ($attempt = 0; $attempt -lt 30 -and (Test-Path $appBinaries[0].FullName); $attempt++) {
+            Start-Sleep -Milliseconds 500
+          }
+          if (Test-Path $appBinaries[0].FullName) {
+            throw "The uninstaller reported success but the installed application still exists."
+          }
+
       # Keep what was built. Without this the only way to try an installer is to build one on
       # the machine you are trying it on, which is not what anybody installs.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
