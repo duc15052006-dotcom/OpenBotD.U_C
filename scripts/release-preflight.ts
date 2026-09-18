@@ -550,6 +550,8 @@ function checkProviderConnectionTest(): void {
     "https://api.openai.com/v1/models",
     "https://api.anthropic.com/v1/models?limit=1",
     "models_probe_url",
+    "model_endpoint_url",
+    "must not contain credentials",
     "model_probe_never_allowed_host",
     "metadata.google.internal",
     "169, 254, 169, 254",
