@@ -19,6 +19,14 @@ export type ComputerFleet = {
   isolation?: ComputerIsolation;
 };
 
+export type ComputerState = "ready" | "starting" | "absent" | "unreachable";
+
+export type ComputerStatus = {
+  botId: string;
+  state: ComputerState;
+  reason?: string;
+};
+
 /**
  * Whether the boundary acts on its verdict.
  *
@@ -37,6 +45,7 @@ export type ActionPolicy = {
 export const computerKeys = {
   all: ["computers"] as const,
   fleet: () => ["computers", "fleet"] as const,
+  status: (botId: string) => ["computers", "status", botId] as const,
   policy: () => ["computers", "policy"] as const,
 };
 
@@ -57,6 +66,19 @@ export function computerFleetQueryOptions() {
       const response = await client(FLEET_PATH, {
         fallback: "The computers could not be listed.",
       });
+      return response.json();
+    },
+  });
+}
+
+export function computerStatusQueryOptions(botId: string) {
+  return queryOptions({
+    queryKey: computerKeys.status(botId),
+    queryFn: async (): Promise<ComputerStatus> => {
+      const response = await client(
+        `/api/computers/${encodeURIComponent(botId)}/status`,
+        { fallback: "The computer status could not be read." },
+      );
       return response.json();
     },
   });
