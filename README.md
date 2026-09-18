@@ -73,7 +73,7 @@ Developers running the source tree additionally need [Bun](https://bun.sh) 1.3+.
 2. Run it as your normal Windows account.
 3. Open **OpenBot** from the desktop shortcut.
 4. Finish first-run setup.
-5. Configure your model/provider and create or edit coworkers in the app.
+5. Configure your model/provider, use **Test connection**, then create or edit coworkers in the app.
 
 The desktop shell starts the local services, applies database migrations before serving the app,
 keeps the selected installation root, and exposes retry/repair/diagnostics when startup fails. See
