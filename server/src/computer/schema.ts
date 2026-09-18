@@ -369,3 +369,38 @@ export type ComputerResourceMetrics = {
   /** Whether Chromium is resident. Absent on older Computer images. */
   browserRunning?: boolean;
 };
+
+
+/** Malware-scanning lifecycle for an untrusted browser download. */
+export type QuarantineStatus =
+  | "pending"
+  | "clean"
+  | "blocked"
+  | "scan_failed"
+  | "approved"
+  | "released";
+
+export type QuarantineScan = {
+  status: "clean" | "blocked" | "scan_failed";
+  scanner: "clamav";
+  detail: string;
+  scannedAt: string;
+};
+
+export type QuarantineRecord = {
+  version: 2;
+  status: QuarantineStatus;
+  id: string;
+  botId: string;
+  originalName: string;
+  sourceUrl: string;
+  savedAt: string;
+  sizeBytes: number;
+  scan?: QuarantineScan;
+  approvedAt?: string;
+  releasedAt?: string;
+};
+
+export type QuarantineListResult = {
+  downloads: QuarantineRecord[];
+};
