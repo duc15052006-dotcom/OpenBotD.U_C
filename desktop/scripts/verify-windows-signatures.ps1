@@ -6,12 +6,16 @@ param(
     [string]$EvidenceDirectory = "$PSScriptRoot/../signing-evidence",
     [string]$SignToolPath,
     [string]$SourceSha = $env:SIGNING_SOURCE_SHA,
-    [string]$ExpectedVersion
+    [string]$ExpectedVersion,
+    [string]$ExpectedPublisher = $env:CODE_SIGNING_PUBLISHER
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+if ([string]::IsNullOrWhiteSpace($ExpectedPublisher)) {
+    throw 'Expected Windows code-signing publisher is not configured. Set CODE_SIGNING_PUBLISHER.'
+}
 if (-not (Test-Path -LiteralPath $AppPath -PathType Leaf)) {
     throw "Application executable is missing: $AppPath"
 }
@@ -46,8 +50,8 @@ foreach ($file in @((Get-Item -LiteralPath $AppPath), $installers[0])) {
     }
     $publisher = $signature.SignerCertificate.GetNameInfo(
         [System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
-    if ($publisher -cne 'Tawkit, Inc.') {
-        throw "Unexpected publisher on $($file.Name): $publisher"
+    if ($publisher -cne $ExpectedPublisher) {
+        throw "Unexpected publisher on $($file.Name): $publisher (expected $ExpectedPublisher)"
     }
     if ($null -eq $signature.TimeStamperCertificate) {
         throw "Missing timestamp on $($file.Name)."
@@ -80,6 +84,7 @@ foreach ($file in @((Get-Item -LiteralPath $AppPath), $installers[0])) {
 [ordered]@{
     sourceSha = $SourceSha
     expectedVersion = $ExpectedVersion
+    expectedPublisher = $ExpectedPublisher
     verifiedAtUtc = [DateTime]::UtcNow.ToString('o')
     files = $records
 } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'signatures.json')
