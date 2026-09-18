@@ -78,6 +78,19 @@ export type ChannelActivity = {
   at: Date;
 };
 
+/** One Bot-to-Bot delegation connected to a conversation the caller belongs to. */
+export type ChannelDelegation = {
+  key: string;
+  fromBotId: string;
+  toBotId: string;
+  task: string;
+  state: "queued" | "working" | "delivered" | "failed";
+  attempts: number;
+  lastError: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 /** One page of somebody's channels, newest activity first. */
 export type ChannelPage = {
   channels: ChannelSummary[];
@@ -220,6 +233,16 @@ export type ChannelStore = {
     channelId: string,
     busy: boolean,
   ): Promise<void>;
+  /**
+   * Recent Bot-to-Bot handoffs whose originating run belongs to this channel.
+   *
+   * Membership is checked before the queue is read, so work-item payloads never become a side
+   * channel for discovering conversations or Bots the caller cannot reach.
+   */
+  listDelegations(
+    actor: AgentActor,
+    channelId: string,
+  ): Promise<ChannelDelegation[]>;
 };
 
 const PRIVATE_AGENT_CHANNEL_DESCRIPTION = "Private agent channel.";
