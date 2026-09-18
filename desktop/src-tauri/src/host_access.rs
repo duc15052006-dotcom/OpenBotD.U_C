@@ -16,6 +16,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::engine::{Address, Engine};
 use crate::quiet::said as command_said;
@@ -141,6 +142,7 @@ pub type HostAccessResult<T> = Result<T, HostAccessError>;
 
 pub trait HostApprovalUi: Send + Sync + 'static {
     fn choose_folder(&self, request: &ChooseFolderPrompt) -> HostAccessResult<ApprovedFolder>;
+    fn choose_quarantine_export(&self, request: &QuarantineExportPrompt) -> HostAccessResult<PathBuf>;
     fn confirm_write(&self, request: &WritePrompt) -> HostAccessResult<()>;
     fn confirm_command(&self, request: &CommandPrompt) -> HostAccessResult<()>;
 }
@@ -151,6 +153,12 @@ impl HostApprovalUi for DenyAllApprovalUi {
     fn choose_folder(&self, _: &ChooseFolderPrompt) -> HostAccessResult<ApprovedFolder> {
         Err(HostAccessError::Denied(
             "Native folder approval is not wired.".into(),
+        ))
+    }
+
+    fn choose_quarantine_export(&self, _: &QuarantineExportPrompt) -> HostAccessResult<PathBuf> {
+        Err(HostAccessError::Denied(
+            "Native quarantine export approval is not wired.".into(),
         ))
     }
 
@@ -179,6 +187,16 @@ pub struct ChooseFolderPrompt {
 #[derive(Clone, Debug)]
 pub struct ApprovedFolder {
     pub root: PathBuf,
+}
+
+#[derive(Clone, Debug)]
+pub struct QuarantineExportPrompt {
+    pub operation_id: String,
+    pub bot_id: String,
+    pub suggested_name: String,
+    pub sha256: String,
+    pub size_bytes: u64,
+    pub dangerous: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -217,6 +235,11 @@ struct DesktopOperation {
     content: Option<String>,
     command: Option<String>,
     writable: Option<bool>,
+    quarantine_id: Option<String>,
+    suggested_name: Option<String>,
+    sha256: Option<String>,
+    size_bytes: Option<u64>,
+    dangerous: Option<bool>,
     expires_at: Option<u64>,
     #[serde(skip, default = "now_millis")]
     received_at_ms: u128,
@@ -230,6 +253,7 @@ enum HostOperationKind {
     ReadFile,
     WriteFile,
     RunCommand,
+    ExportQuarantine,
     Cancel,
     Stop,
 }
@@ -629,6 +653,7 @@ impl Inner {
             HostOperationKind::ReadFile => self.read_file(operation),
             HostOperationKind::WriteFile => self.write_file(operation),
             HostOperationKind::RunCommand => self.run_command(operation),
+            HostOperationKind::ExportQuarantine => self.export_quarantine(operation),
             HostOperationKind::Cancel | HostOperationKind::Stop => unreachable!(),
         }
     }
@@ -751,6 +776,142 @@ impl Inner {
         )?;
         Ok(OperationSuccess::output(format!(
             "Wrote file. Backup, if the file existed, is .openbot-backups/{backup_name}"
+        )))
+    }
+
+    fn export_quarantine(&self, operation: &DesktopOperation) -> HostAccessResult<OperationSuccess> {
+        let quarantine_id = operation
+            .quarantine_id
+            .as_deref()
+            .ok_or_else(|| HostAccessError::Denied("Quarantine export is missing its download id.".into()))?;
+        let suggested_name = operation
+            .suggested_name
+            .as_deref()
+            .ok_or_else(|| HostAccessError::Denied("Quarantine export is missing its filename.".into()))?;
+        let expected_sha = operation
+            .sha256
+            .as_deref()
+            .ok_or_else(|| HostAccessError::Denied("Quarantine export is missing its digest.".into()))?;
+        let expected_size = operation
+            .size_bytes
+            .ok_or_else(|| HostAccessError::Denied("Quarantine export is missing its byte size.".into()))?;
+
+        let destination = self.approval.choose_quarantine_export(&QuarantineExportPrompt {
+            operation_id: operation.operation_id.clone(),
+            bot_id: operation.bot_id.clone(),
+            suggested_name: suggested_name.into(),
+            sha256: expected_sha.into(),
+            size_bytes: expected_size,
+            dangerous: operation.dangerous == Some(true),
+        })?;
+        self.ensure_operation_fresh(operation)?;
+        if self.operation_was_canceled(&operation.operation_id) {
+            return Err(HostAccessError::Denied(
+                "Quarantine export was canceled before bytes were written.".into(),
+            ));
+        }
+        if destination.exists() {
+            return Err(HostAccessError::Denied(
+                "The selected export destination already exists. Choose a new filename.".into(),
+            ));
+        }
+        let parent = destination.parent().ok_or_else(|| {
+            HostAccessError::Denied("The selected export destination has no parent folder.".into())
+        })?;
+        if !parent.is_dir() {
+            return Err(HostAccessError::Denied(
+                "The selected export folder is not available.".into(),
+            ));
+        }
+
+        let url = format!(
+            "{}/api/host-access/desktop/quarantine/{}",
+            self.config.base_url.trim_end_matches('/'),
+            operation.operation_id
+        );
+        let mut response = Client::builder()
+            .timeout(self.config.operation_timeout)
+            .build()
+            .map_err(|error| HostAccessError::Http(error.to_string()))?
+            .get(url)
+            .bearer_auth(&self.config.token)
+            .send()
+            .map_err(|error| HostAccessError::Http(error.to_string()))?;
+        if !response.status().is_success() {
+            return Err(HostAccessError::Denied(
+                "OpenBot refused the quarantine byte stream.".into(),
+            ));
+        }
+
+        let temporary = destination.with_file_name(format!(
+            ".{}.{}.openbot-part",
+            destination
+                .file_name()
+                .and_then(OsStr::to_str)
+                .unwrap_or("download"),
+            fresh_id("export")
+        ));
+        let mut file = fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary)
+            .map_err(|error| HostAccessError::Io(error.to_string()))?;
+        let mut hasher = Sha256::new();
+        let mut written = 0_u64;
+        let mut buffer = [0_u8; 64 * 1024];
+        let result = (|| -> HostAccessResult<()> {
+            loop {
+                let read = response
+                    .read(&mut buffer)
+                    .map_err(|error| HostAccessError::Http(error.to_string()))?;
+                if read == 0 {
+                    break;
+                }
+                written = written
+                    .checked_add(read as u64)
+                    .ok_or_else(|| HostAccessError::Denied("Quarantine export size overflowed.".into()))?;
+                if written > expected_size {
+                    return Err(HostAccessError::Denied(
+                        "Quarantine export was larger than the approved file.".into(),
+                    ));
+                }
+                hasher.update(&buffer[..read]);
+                file.write_all(&buffer[..read])
+                    .map_err(|error| HostAccessError::Io(error.to_string()))?;
+            }
+            if written != expected_size {
+                return Err(HostAccessError::Denied(
+                    "Quarantine export size changed after approval.".into(),
+                ));
+            }
+            let actual_sha = format!("{:x}", hasher.finalize());
+            if !actual_sha.eq_ignore_ascii_case(expected_sha) {
+                return Err(HostAccessError::Denied(
+                    "Quarantine export digest changed after approval.".into(),
+                ));
+            }
+            file.sync_all()
+                .map_err(|error| HostAccessError::Io(error.to_string()))?;
+            Ok(())
+        })();
+        drop(file);
+        if let Err(error) = result {
+            let _ = fs::remove_file(&temporary);
+            return Err(error);
+        }
+        self.ensure_operation_fresh(operation)?;
+        if self.operation_was_canceled(&operation.operation_id) {
+            let _ = fs::remove_file(&temporary);
+            return Err(HostAccessError::Denied(
+                "Quarantine export was canceled before commit.".into(),
+            ));
+        }
+        fs::rename(&temporary, &destination).map_err(|error| {
+            let _ = fs::remove_file(&temporary);
+            HostAccessError::Io(error.to_string())
+        })?;
+        Ok(OperationSuccess::output(format!(
+            "Exported quarantine download {quarantine_id} after SHA-256 verification; file was not opened."
         )))
     }
 
