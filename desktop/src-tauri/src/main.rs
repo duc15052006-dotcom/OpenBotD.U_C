@@ -701,8 +701,11 @@ struct ChosenModel {
 }
 
 fn model_endpoint_url(raw: &str, label: &str) -> Result<reqwest::Url, Problem> {
-    let url = reqwest::Url::parse(raw.trim())
-        .map_err(|_| Problem::plain(format!("Enter a valid http:// or https:// address for your {label}.")))?;
+    let url = reqwest::Url::parse(raw.trim()).map_err(|_| {
+        Problem::plain(format!(
+            "Enter a valid http:// or https:// address for your {label}."
+        ))
+    })?;
     if !matches!(url.scheme(), "http" | "https") || !url.has_host() {
         return Err(
             format!("Enter a valid http:// or https:// address for your {label}.").into(),
