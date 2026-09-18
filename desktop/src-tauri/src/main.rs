@@ -68,6 +68,11 @@ struct Shell {
         Mutex<Option<openbot_desktop_lib::intelligence::SigningInToIntelligence>>,
     /// The credential that sign-in produced, held so a project can be chosen with it.
     intelligence_credential: Mutex<Option<String>>,
+    /// A provisioned Intelligence project key waiting for Start.
+    ///
+    /// It never crosses Tauri IPC. Root-binding keeps a key provisioned for one installation from
+    /// being consumed after the setup screen switches to another folder.
+    pending_intelligence_key: Mutex<Option<PendingIntelligenceKey>>,
     /// A ChatGPT sign-in waiting for the browser redirect to complete it.
     ///
     /// Held for the same reason the Claude one is: a person leaves and comes back in the middle.
@@ -96,6 +101,11 @@ struct ContainerDeployment {
 struct RecoveryRequired {
     root: PathBuf,
     generation: u64,
+}
+
+struct PendingIntelligenceKey {
+    root: PathBuf,
+    key: String,
 }
 
 /// Callers serialize eligibility and any navigation with `startup`. A failed Start may advance
@@ -988,12 +998,15 @@ fn saved_secret(root: &Path, key: &str) -> Result<String, Problem> {
 fn intelligence_key_for_start(
     root: &Path,
     given: String,
+    pending: Option<String>,
     mut resolve: impl FnMut(&Path, &str) -> Result<String, Problem>,
 ) -> Result<String, Problem> {
-    let key = if given.trim().is_empty() {
-        resolve(root, "INTELLIGENCE_API_KEY")?
-    } else {
+    let key = if !given.trim().is_empty() {
         given
+    } else if let Some(pending) = pending {
+        pending
+    } else {
+        resolve(root, "INTELLIGENCE_API_KEY")?
     };
     if key.trim().is_empty() {
         return Err("That saved CopilotKit connection is no longer available. Sign in again or enter a project key.".into());
@@ -1158,7 +1171,19 @@ async fn start_stack_inner<R: tauri::Runtime>(
             return Err(problem.into());
         }
 
-        let api_key = intelligence_key_for_start(&root, api_key, saved_secret)?;
+        let pending_intelligence_key = shell
+            .pending_intelligence_key
+            .lock()
+            .unwrap()
+            .as_ref()
+            .filter(|pending| pending.root == root)
+            .map(|pending| pending.key.clone());
+        let api_key = intelligence_key_for_start(
+            &root,
+            api_key,
+            pending_intelligence_key,
+            saved_secret,
+        )?;
         let existing_secrets = openbot_desktop_lib::vault::already_given_no_ui(
             &root,
             &root.join(".env"),
@@ -1214,6 +1239,12 @@ async fn start_stack_inner<R: tauri::Runtime>(
             &purge,
             &credential,
         )?;
+        {
+            let mut pending = shell.pending_intelligence_key.lock().unwrap();
+            if pending.as_ref().is_some_and(|pending| pending.root == root) {
+                *pending = None;
+            }
+        }
         report(&app, "env", true, "settings written, credentials stored");
         // Set before Bun imports the runtime, and retained for supervised restarts.
         secrets.extend(desktop_telemetry::runtime_env(&app));
@@ -2563,17 +2594,30 @@ async fn ask_the_bot_with_settings(
 }
 
 /**
-What a previous run already wrote, so the wizard can arrive filled in.
+What a previous run already wrote, so the wizard can resume without exposing credentials.
 
-Returned to the window because that is where the fields are, and it is the same machine and the
-same person: reading their own file back to them is not a disclosure. The key is not logged here or
-anywhere, and only the settings the wizard asks about are read.
+Only non-secret connection metadata crosses to the WebView. Credential presence is represented by
+booleans; Start resolves the actual secret native-side from the selected installation's vault.
 */
 #[tauri::command]
 fn already_configured<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     root: String,
 ) -> AlreadyConfigured {
+    let requested_root = stack::root_from(&root);
+    {
+        let mut pending = app
+            .state::<Shell>()
+            .pending_intelligence_key
+            .lock()
+            .unwrap();
+        if pending
+            .as_ref()
+            .is_some_and(|pending| pending.root != requested_root)
+        {
+            *pending = None;
+        }
+    }
     let mut configured = already_configured_for_root(root);
     if app
         .state::<Shell>()
@@ -2594,14 +2638,6 @@ fn already_configured_for_root(root: String) -> AlreadyConfigured {
             "INTELLIGENCE_API_KEY",
             "INTELLIGENCE_API_URL",
             "INTELLIGENCE_GATEWAY_WS_URL",
-            /*
-             * The model credentials too, so the wizard never asks twice for one of these either.
-             *
-             * A key already in the file is one somebody has already produced, and making them find
-             * it again means opening a dotfile in an editor. Read back for the same reason the
-             * Intelligence key is: it is their own file, on their own machine, and this is the
-             * screen that asks for it.
-             */
             "OPENAI_API_KEY",
             "ANTHROPIC_API_KEY",
             "OPENAI_BASE_URL",
@@ -2611,28 +2647,25 @@ fn already_configured_for_root(root: String) -> AlreadyConfigured {
         ],
     );
 
+    // Secrets are presence-only across IPC. The values themselves stay native-side and are
+    // resolved by Start from the selected root's vault.
+    let intelligence_api_key = values.remove("INTELLIGENCE_API_KEY").is_some();
+    let openai_api_key = values.remove("OPENAI_API_KEY").is_some();
+    let anthropic_api_key = values.remove("ANTHROPIC_API_KEY").is_some();
+    let claude_plan = values.remove("CLAUDE_CODE_OAUTH_TOKEN").is_some();
+
     use openbot_desktop_lib::saved_intent::{Category, SavedIntent};
     let intent = SavedIntent::read(&root);
     let hint = |category, file_present| {
         (file_present || intent.categories.contains(&category)).then_some(true)
     };
-    let claude_plan = values.remove("CLAUDE_CODE_OAUTH_TOKEN").is_some();
     AlreadyConfigured {
         launch: preparation::launch(&root),
         saved: SavedConfiguration {
-            intelligence_api_key: hint(
-                Category::Intelligence,
-                values.contains_key("INTELLIGENCE_API_KEY"),
-            ),
+            intelligence_api_key: hint(Category::Intelligence, intelligence_api_key),
             model_api_keys: SavedModelApiKeys {
-                openai: hint(
-                    Category::OpenAiApiKey,
-                    values.contains_key("OPENAI_API_KEY"),
-                ),
-                anthropic: hint(
-                    Category::AnthropicApiKey,
-                    values.contains_key("ANTHROPIC_API_KEY"),
-                ),
+                openai: hint(Category::OpenAiApiKey, openai_api_key),
+                anthropic: hint(Category::AnthropicApiKey, anthropic_api_key),
                 compatible: values
                     .get("OPENAI_BASE_URL")
                     .is_some_and(|url| intent.has_compatible_key_for(url))
@@ -2805,12 +2838,14 @@ async fn finish_intelligence_sign_in(
     Ok(projects)
 }
 
-/// Create a key for the project somebody chose, and hand it back for the field.
+/// Create a key for the project somebody chose and keep it native-side until Start.
 #[tauri::command]
 async fn intelligence_key_for(
     app: tauri::AppHandle,
+    root: String,
     project: String,
-) -> Result<String, openbot_desktop_lib::problem::Problem> {
+) -> Result<(), openbot_desktop_lib::problem::Problem> {
+    let root = stack::root_from(&root);
     let credential = app
         .state::<Shell>()
         .intelligence_credential
@@ -2820,13 +2855,17 @@ async fn intelligence_key_for(
         .ok_or_else(|| {
             openbot_desktop_lib::problem::Problem::plain("Sign in to CopilotKit first.")
         })?;
-    tauri::async_runtime::spawn_blocking(move || {
+    let key = tauri::async_runtime::spawn_blocking(move || {
         openbot_desktop_lib::intelligence::provision_key(&credential, &project)
     })
     .await
     .map_err(|error| {
         openbot_desktop_lib::problem::Problem::plain(format!("A key could not be created: {error}"))
-    })?
+    })??;
+    *app.state::<Shell>().intelligence_credential.lock().unwrap() = None;
+    *app.state::<Shell>().pending_intelligence_key.lock().unwrap() =
+        Some(PendingIntelligenceKey { root, key });
+    Ok(())
 }
 
 /// The model screen's rows. Independent of the picker above, and required to stay that way: no
@@ -3815,7 +3854,17 @@ mod tests {
                 std::fs::write(root.join(".env"), format!("INTELLIGENCE_API_URL=https://synthetic.example\n{legacy}")).unwrap();
                 let configured = already_configured_for_root(root.to_string_lossy().into_owned());
                 assert_eq!(configured.values["INTELLIGENCE_API_URL"], "https://synthetic.example");
-                assert!(!configured.values.contains_key("CLAUDE_CODE_OAUTH_TOKEN"));
+                for secret in [
+                    "INTELLIGENCE_API_KEY",
+                    "OPENAI_API_KEY",
+                    "ANTHROPIC_API_KEY",
+                    "CLAUDE_CODE_OAUTH_TOKEN",
+                ] {
+                    assert!(
+                        !configured.values.contains_key(secret),
+                        "{secret} crossed the public setup boundary"
+                    );
+                }
             }
         }
         std::fs::remove_dir_all(root).unwrap();
@@ -3954,7 +4003,7 @@ mod tests {
     }
 
     #[test]
-    fn already_configured_returns_file_values_and_saved_indicators() {
+    fn already_configured_returns_public_values_and_saved_indicators_only() {
         let root = temp_root("openbot-already-configured");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(
@@ -3972,18 +4021,66 @@ mod tests {
         let configured = already_configured_for_root(root.to_string_lossy().into_owned());
 
         assert_eq!(
-            configured.values.get("INTELLIGENCE_API_KEY"),
-            Some(&"file-cpk".to_string())
+            configured.values.get("OPENAI_BASE_URL"),
+            Some(&"https://models.example/v1".to_string())
         );
-        assert_eq!(
-            configured.values.get("OPENAI_API_KEY"),
-            Some(&"file-openai".to_string())
-        );
+        assert!(!configured.values.contains_key("INTELLIGENCE_API_KEY"));
+        assert!(!configured.values.contains_key("OPENAI_API_KEY"));
+        assert!(!configured.values.contains_key("ANTHROPIC_API_KEY"));
+        assert!(!configured.values.contains_key("CLAUDE_CODE_OAUTH_TOKEN"));
         assert_eq!(configured.saved.intelligence_api_key, Some(true));
         assert_eq!(configured.saved.model_api_keys.openai, Some(true));
         assert_eq!(configured.saved.model_sessions.openai, Some(true));
         assert_eq!(configured.saved.model_sessions.anthropic, None);
+        let serialized = serde_json::to_string(&configured).unwrap();
+        assert!(!serialized.contains("file-cpk"));
+        assert!(!serialized.contains("file-openai"));
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn already_configured_retires_pending_intelligence_key_for_another_root() {
+        let root_a = temp_root("pending-intelligence-root-a");
+        let root_b = temp_root("pending-intelligence-root-b");
+        std::fs::create_dir_all(&root_a).unwrap();
+        std::fs::create_dir_all(&root_b).unwrap();
+        let app = tauri::test::mock_builder()
+            .manage(Shell::default())
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+
+        *app.state::<Shell>().pending_intelligence_key.lock().unwrap() =
+            Some(PendingIntelligenceKey {
+                root: root_a.clone(),
+                key: "synthetic-pending-key".into(),
+            });
+
+        let _ = already_configured(
+            app.handle().clone(),
+            root_a.to_string_lossy().into_owned(),
+        );
+        assert!(
+            app.state::<Shell>()
+                .pending_intelligence_key
+                .lock()
+                .unwrap()
+                .is_some()
+        );
+
+        let _ = already_configured(
+            app.handle().clone(),
+            root_b.to_string_lossy().into_owned(),
+        );
+        assert!(
+            app.state::<Shell>()
+                .pending_intelligence_key
+                .lock()
+                .unwrap()
+                .is_none()
+        );
+
+        let _ = std::fs::remove_dir_all(root_a);
+        let _ = std::fs::remove_dir_all(root_b);
     }
 
     #[test]
@@ -4117,7 +4214,7 @@ mod tests {
             }
         }
         for denied in [false, true] {
-            let result = intelligence_key_for_start(&root, String::new(), |_, key| {
+            let result = intelligence_key_for_start(&root, String::new(), None, |_, key| {
                 assert_eq!(key, "INTELLIGENCE_API_KEY");
                 if denied {
                     Err(Problem::plain("synthetic access denied"))
@@ -4127,6 +4224,24 @@ mod tests {
             });
             assert!(result.is_err());
         }
+        let pending = intelligence_key_for_start(
+            &root,
+            String::new(),
+            Some("synthetic-pending-intelligence".into()),
+            |_, _| panic!("a pending native key must win over saved-secret lookup"),
+        )
+        .unwrap();
+        assert_eq!(pending, "synthetic-pending-intelligence");
+
+        let typed = intelligence_key_for_start(
+            &root,
+            "synthetic-explicit-intelligence".into(),
+            Some("synthetic-pending-intelligence".into()),
+            |_, _| panic!("an explicit key must not read a saved secret"),
+        )
+        .unwrap();
+        assert_eq!(typed, "synthetic-explicit-intelligence");
+
         // A missing or unreadable ChatGPT file is an action error; no API-key resolver is called.
         std::fs::create_dir_all(&root).unwrap();
         for unreadable in [false, true] {
