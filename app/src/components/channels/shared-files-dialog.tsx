@@ -45,13 +45,13 @@ export function SharedFilesDialog({
           <p className="py-6 text-center text-muted-foreground text-sm">
             Loading…
           </p>
-        ) : files.data.length === 0 ? (
+        ) : files.data.attachments.length === 0 ? (
           <p className="py-6 text-center text-muted-foreground text-sm">
             No files have been shared in this conversation yet.
           </p>
         ) : (
           <div className="max-h-[55svh] overflow-y-auto rounded-md border border-border">
-            {files.data.map((file) => (
+            {files.data.attachments.map((file) => (
               <a
                 className="flex items-center justify-between gap-4 px-3 py-2.5 text-sm hover:bg-muted/60"
                 href={attachmentUrl(file.id)}
@@ -72,6 +72,11 @@ export function SharedFilesDialog({
             ))}
           </div>
         )}
+        {!files.isPending && !files.isError && files.data?.truncated ? (
+          <p className="text-muted-foreground text-xs">
+            Showing the 100 most recently shared files.
+          </p>
+        ) : null}
       </DialogContent>
     </Dialog>
   );
