@@ -246,8 +246,8 @@ describe("destructive Reset", () => {
       image: IMAGE,
       environment: [],
     });
-    await withDocker().docker
-      .getContainer(names.container)
+    await withDocker()
+      .docker.getContainer(names.container)
       .remove({ force: true, v: false });
 
     expect(await withDocker().supervisor.reset(names)).toBe(true);
@@ -256,7 +256,9 @@ describe("destructive Reset", () => {
       names.workspaceVolume,
       names.quarantineVolume,
     ]) {
-      await expect(withDocker().docker.getVolume(volume).inspect()).rejects.toMatchObject({
+      await expect(
+        withDocker().docker.getVolume(volume).inspect(),
+      ).rejects.toMatchObject({
         statusCode: 404,
       });
     }
@@ -275,9 +277,13 @@ describe("destructive Reset", () => {
       withDocker().supervisor.ensure(names, { image: IMAGE, environment: [] }),
     ).rejects.toBeInstanceOf(withDocker().supervisor.NameHeldError);
 
-    const volume = await withDocker().docker.getVolume(names.workspaceVolume).inspect();
+    const volume = await withDocker()
+      .docker.getVolume(names.workspaceVolume)
+      .inspect();
     expect(volume.Labels?.["someone.else"]).toBe("true");
-    await expect(withDocker().docker.getContainer(names.container).inspect()).rejects.toMatchObject({
+    await expect(
+      withDocker().docker.getContainer(names.container).inspect(),
+    ).rejects.toMatchObject({
       statusCode: 404,
     });
   }, 90_000);
@@ -314,8 +320,7 @@ describe("a computer built from an older image", () => {
     // safe, and it is the whole reason this fix is allowed to be automatic.
     const volumes = await Promise.all(
       [names.profileVolume, names.workspaceVolume, names.quarantineVolume].map(
-        (volume) =>
-        withDocker().docker.getVolume(volume).inspect(),
+        (volume) => withDocker().docker.getVolume(volume).inspect(),
       ),
     );
 
