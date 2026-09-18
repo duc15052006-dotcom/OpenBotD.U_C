@@ -953,6 +953,9 @@ async fn test_model_connection(
     let root = stack::root_from(&root);
     let credential = model.into_credential(&root)?;
     match credential {
+        openbot_env::ModelCredential::None => {
+            Err("Choose a model connection before testing it.".into())
+        }
         openbot_env::ModelCredential::OpenAi { api_key } => {
             if api_key.trim().is_empty() {
                 return Err("Enter an OpenAI API key before testing it.".into());
@@ -2653,11 +2656,8 @@ fn already_configured<R: tauri::Runtime>(
 ) -> AlreadyConfigured {
     let requested_root = stack::root_from(&root);
     {
-        let mut pending = app
-            .state::<Shell>()
-            .pending_intelligence_key
-            .lock()
-            .unwrap();
+        let shell = app.state::<Shell>();
+        let mut pending = shell.pending_intelligence_key.lock().unwrap();
         if pending
             .as_ref()
             .is_some_and(|pending| pending.root != requested_root)
@@ -3244,7 +3244,7 @@ fn check_for_updates(app: tauri::AppHandle) {
                     ))
                     .title("OpenBot update available")
                     .kind(MessageDialogKind::Info)
-                    .show();
+                    .show(|_| {});
                 if let Err(error) = app.opener().open_url(info.release_url, None::<&str>) {
                     app.dialog()
                         .message(format!(
@@ -3252,7 +3252,7 @@ fn check_for_updates(app: tauri::AppHandle) {
                         ))
                         .title("Could not open the update")
                         .kind(MessageDialogKind::Error)
-                        .show();
+                        .show(|_| {});
                 }
             }
             Ok(info) => {
@@ -3263,7 +3263,7 @@ fn check_for_updates(app: tauri::AppHandle) {
                     ))
                     .title("OpenBot is up to date")
                     .kind(MessageDialogKind::Info)
-                    .show();
+                    .show(|_| {});
             }
             Err(error) => {
                 app.dialog()
@@ -3272,7 +3272,7 @@ fn check_for_updates(app: tauri::AppHandle) {
                     ))
                     .title("Update check failed")
                     .kind(MessageDialogKind::Error)
-                    .show();
+                    .show(|_| {});
             }
         }
     });

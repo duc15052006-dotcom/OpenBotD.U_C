@@ -693,12 +693,11 @@ function checkFirstCoworkerHandoff(): void {
       fail(`desktop: fixed coworker route is missing ${evidence}`);
     }
   }
-  for (const evidence of [
-    "new: z.boolean().optional()",
-    "open={showCreate}",
-  ]) {
+  for (const evidence of ["new: z.boolean().optional()", "open={showCreate}"]) {
     if (!agents.includes(evidence)) {
-      fail(`app: /agents?new=true no longer opens the coworker creator (${evidence})`);
+      fail(
+        `app: /agents?new=true no longer opens the coworker creator (${evidence})`,
+      );
     }
   }
 
@@ -710,7 +709,9 @@ function checkFirstCoworkerHandoff(): void {
     "profile.builtIn ?",
   ]) {
     if (!agentDialog.includes(evidence)) {
-      fail(`app: new coworker profile lost computer quickstart evidence ${evidence}`);
+      fail(
+        `app: new coworker profile lost computer quickstart evidence ${evidence}`,
+      );
     }
   }
 }
