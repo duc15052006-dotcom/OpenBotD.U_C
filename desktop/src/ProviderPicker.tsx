@@ -329,9 +329,9 @@ export function ProviderPicker({
   }
 
   const choice = currentChoice();
-  // The fingerprint never leaves this component. Including the in-memory key makes changing even
-  // one credential byte invalidate a previous green test, without rendering or persisting the key.
-  const choiceFingerprint = choice ? JSON.stringify(choice) : null;
+  // Keep only a small change detector, not a second copy of the credential. The original key already
+  // has to exist in the input state until Continue; the test marker itself must not retain it.
+  const choiceFingerprint = choice ? connectionFingerprint(choice) : null;
   const connectionIsCurrent =
     choiceFingerprint !== null &&
     connectionCheck?.fingerprint === choiceFingerprint;
@@ -339,7 +339,7 @@ export function ProviderPicker({
   async function testConnection() {
     const candidate = currentChoice();
     if (!candidate) return;
-    const fingerprint = JSON.stringify(candidate);
+    const fingerprint = connectionFingerprint(candidate);
     setTestingConnection(true);
     setFailure(null);
     try {
@@ -710,4 +710,16 @@ export function ProviderPicker({
       </div>
     </div>
   );
+}
+
+function connectionFingerprint(choice: ModelChoice): string {
+  const source = JSON.stringify(choice);
+  // FNV-1a is a change detector here, not a security primitive. Its only job is making a successful
+  // test stale when any field changes, without storing the credential again in component state.
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < source.length; index += 1) {
+    hash ^= source.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `${choice.provider}:${choice.login}:${(hash >>> 0).toString(16)}`;
 }
