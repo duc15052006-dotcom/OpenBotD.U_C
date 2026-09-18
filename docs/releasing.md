@@ -59,7 +59,8 @@ Then, in order:
   checked for a section with that number
 - the normal CI workflow **and the Desktop workflow** run again against the release commit; desktop
   packaging must pass on macOS/Linux and the Windows NSIS artifact must build, install, launch, and
-  uninstall
+  uninstall twice: once on the hosted runner and once inside a fresh **Users-only, non-admin**
+  account, so an accidental elevation dependency cannot pass as a clean-machine success
 - the protected Windows signing workflow signs and verifies the app plus NSIS installer from that
   same release commit; its `windows-signing` environment approval is the publisher-certificate
   boundary, and nothing is published before it succeeds

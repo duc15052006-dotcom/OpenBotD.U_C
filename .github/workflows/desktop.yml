@@ -221,6 +221,24 @@ jobs:
             throw "The uninstaller reported success but the installed application still exists."
           }
 
+      # Hosted Windows runners are administrators, so the smoke above can still hide an accidental
+      # elevation dependency. Repeat the exact install → first launch → uninstall flow inside a fresh
+      # Users-only account and fail unless its token is non-admin.
+      - name: Windows standard-user installer acceptance
+        if: matrix.platform.name == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installers = @(Get-ChildItem 'desktop/src-tauri/target/release/bundle/nsis' -Filter '*.exe' -File)
+          if ($installers.Count -ne 1) {
+            throw "Expected exactly one NSIS installer, found $($installers.Count)."
+          }
+          $windowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          & $windowsPowerShell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File desktop/scripts/test-windows-installer-standard-user.ps1 -InstallerPath $installers[0].FullName
+          if ($LASTEXITCODE -ne 0) {
+            throw 'The standard-user installer acceptance failed.'
+          }
+
       # Keep what was built. Without this the only way to try an installer is to build one on
       # the machine you are trying it on, which is not what anybody installs.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

@@ -203,6 +203,40 @@ function checkReleaseWiring(): void {
     }
   }
 
+  const standardUserInstaller = stepNamed(
+    desktopApp,
+    "Windows standard-user installer acceptance",
+  );
+  const standardUserRun =
+    typeof standardUserInstaller?.run === "string"
+      ? standardUserInstaller.run
+      : "";
+  if (
+    !standardUserRun.includes(
+      "desktop/scripts/test-windows-installer-standard-user.ps1",
+    )
+  ) {
+    fail(
+      "desktop: release acceptance no longer runs the standard-user installer test",
+    );
+  }
+  const standardUserScript = read(
+    "desktop/scripts/test-windows-installer-standard-user.ps1",
+  );
+  for (const evidence of [
+    "Users group",
+    "IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)",
+    "Start-Process -FilePath $Installer",
+    "Start-Process -FilePath $apps[0].FullName",
+    "Start-Process -FilePath $uninstallers[0].FullName",
+  ]) {
+    if (!standardUserScript.includes(evidence)) {
+      fail(
+        `desktop: standard-user installer acceptance is missing ${evidence}`,
+      );
+    }
+  }
+
   const releaseJob = jobs["github-release"];
   const releaseSteps = steps(releaseJob);
   const downloadNames = releaseSteps
