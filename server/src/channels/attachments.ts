@@ -1,5 +1,6 @@
 import {
   and,
+  desc,
   eq,
   exists,
   inArray,
@@ -731,6 +732,75 @@ export function createChannelAttachmentRoutes(
   requireUser: MiddlewareHandler<{ Variables: AppVariables }>,
 ): Hono<{ Variables: AppVariables }> {
   const routes = new Hono<{ Variables: AppVariables }>();
+
+  /**
+   * Files already sent in this conversation, newest first.
+   *
+   * Metadata only. The blob stays behind GET /api/attachments/:id, which repeats the live-channel
+   * membership check before serving bytes. Staged rows are intentionally absent: a file sitting in
+   * somebody's unsent composer is still theirs alone and is not shared merely because it has a
+   * channel id.
+   */
+  routes.get("/:channelId/attachments", requireUser, async (context) => {
+    const actor = context.var.actor;
+    const channelId = context.req.param("channelId");
+
+    const rows = await database
+      .select({
+        id: attachments.id,
+        name: attachments.name,
+        mimeType: attachments.mimeType,
+        sizeBytes: attachments.sizeBytes,
+        uploadedBy: attachments.uploadedBy,
+        attachedAt: attachments.attachedAt,
+      })
+      .from(attachments)
+      .innerJoin(
+        channels,
+        and(
+          eq(channels.id, attachments.channelId),
+          isNull(channels.deletedAt),
+        ),
+      )
+      .innerJoin(
+        channelMemberships,
+        and(
+          eq(channelMemberships.channelId, attachments.channelId),
+          eq(channelMemberships.userId, actor.id),
+        ),
+      )
+      .where(
+        and(
+          eq(attachments.channelId, channelId),
+          isNotNull(attachments.attachedAt),
+        ),
+      )
+      .orderBy(desc(attachments.attachedAt), desc(attachments.createdAt))
+      .limit(100)
+      .catch((error: unknown) => {
+        console.error(
+          `Could not list shared attachments in ${channelId} for ${actor.id}.`,
+          error,
+        );
+        return null;
+      });
+
+    if (rows === null) {
+      return context.json(
+        { error: "Shared files could not be loaded just now. Try again." },
+        503,
+      );
+    }
+
+    // The membership join deliberately makes an unknown channel and somebody else's channel both
+    // look like an empty list. It reveals no channel existence and matches the attachment fetch.
+    return context.json({
+      attachments: rows.map((row) => ({
+        ...row,
+        attachedAt: row.attachedAt?.toISOString() ?? null,
+      })),
+    });
+  });
 
   routes.post("/:channelId/attachments", requireUser, async (context) => {
     const actor = context.var.actor;
