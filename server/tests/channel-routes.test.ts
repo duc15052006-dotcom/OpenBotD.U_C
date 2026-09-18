@@ -172,7 +172,7 @@ describe("channel input parser", () => {
         active: false,
       }),
     ).toEqual({ ok: true, value: { agentIds: ["agent-2", "agent-1"] } });
-  })
+  });
 
   test("refuses groups above the eight-coworker server cap", () => {
     const agentIds = Array.from({ length: 9 }, (_, index) => `agent-${index}`);
@@ -180,7 +180,7 @@ describe("channel input parser", () => {
       ok: false,
       error: "A channel may have at most 8 agents.",
     });
-  });;
+  });
 });
 
 describe("channel list limit", () => {
