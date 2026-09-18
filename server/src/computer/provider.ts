@@ -75,6 +75,10 @@ export interface ComputerProvider {
   locate(botId: string): Promise<string>;
   /** Return the lifecycle state of the computer for this Bot. */
   status(botId: string): Promise<ComputerStatus>;
+  /** Explicitly start or wake the computer while preserving all saved state. */
+  start(botId: string): Promise<{ wasRunning: boolean }>;
+  /** Restart the runtime/browser while preserving its profile and workspace. */
+  restart(botId: string): Promise<{ wasRunning: boolean }>;
   /** Stop the computer for this Bot if it exists. */
   stop(botId: string): Promise<{ wasRunning: boolean }>;
   /** Remove the computer state for this Bot if it exists. */
@@ -179,6 +183,20 @@ export function createSharedComputerProvider(
               : "Unknown failure.",
         };
       }
+    },
+
+    async start(botId: string): Promise<{ wasRunning: boolean }> {
+      const body = (await call("/computers/start", "POST", botId)) as {
+        wasRunning?: boolean;
+      } | null;
+      return { wasRunning: body?.wasRunning === true };
+    },
+
+    async restart(botId: string): Promise<{ wasRunning: boolean }> {
+      const body = (await call("/computers/restart", "POST", botId)) as {
+        wasRunning?: boolean;
+      } | null;
+      return { wasRunning: body?.wasRunning === true };
     },
 
     async stop(botId: string): Promise<{ wasRunning: boolean }> {
@@ -294,6 +312,8 @@ function createLazySandboxProvider(
     isolation: "per-bot",
     locate: async (botId) => (await provider()).locate(botId),
     status: async (botId) => (await provider()).status(botId),
+    start: async (botId) => (await provider()).start(botId),
+    restart: async (botId) => (await provider()).restart(botId),
     stop: async (botId) => (await provider()).stop(botId),
     reset: async (botId) => (await provider()).reset(botId),
     list: async () => (await provider()).list(),
