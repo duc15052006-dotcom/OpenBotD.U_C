@@ -83,6 +83,12 @@ jobs:
         working-directory: desktop
       - run: bun run typecheck
         working-directory: desktop
+      # Run the webview/setup tests on every desktop OS. The root CI discovers these on Linux, but
+      # path handling, mocked Tauri command boundaries and packaged-config regressions are precisely
+      # the class of desktop bugs that should not wait for another platform's build to expose them.
+      - name: Desktop frontend regressions
+        run: bun test src
+        working-directory: desktop
       - name: Desktop version regressions
         run: bun test scripts/desktop-version.test.ts
         working-directory: desktop
