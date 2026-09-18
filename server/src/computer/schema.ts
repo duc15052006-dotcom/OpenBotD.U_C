@@ -260,6 +260,26 @@ export type WriteFileResult = {
   appended: boolean;
 };
 
+
+/** Metadata about one browser download still isolated from the host and ordinary workspace. */
+export type QuarantineEntry = {
+  id: string;
+  status: "quarantined";
+  originalName: string;
+  sourceUrl: string;
+  savedAt: string;
+  bytes: number;
+  sha256: string;
+};
+
+export type QuarantineListResult = {
+  downloads: QuarantineEntry[];
+};
+
+export type QuarantineDeleteResult = {
+  deleted: boolean;
+};
+
 /**
  * Who is driving the computer.
  *
