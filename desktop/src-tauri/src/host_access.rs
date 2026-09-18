@@ -142,7 +142,10 @@ pub type HostAccessResult<T> = Result<T, HostAccessError>;
 
 pub trait HostApprovalUi: Send + Sync + 'static {
     fn choose_folder(&self, request: &ChooseFolderPrompt) -> HostAccessResult<ApprovedFolder>;
-    fn choose_quarantine_export(&self, request: &QuarantineExportPrompt) -> HostAccessResult<PathBuf>;
+    fn choose_quarantine_export(
+        &self,
+        request: &QuarantineExportPrompt,
+    ) -> HostAccessResult<PathBuf>;
     fn confirm_write(&self, request: &WritePrompt) -> HostAccessResult<()>;
     fn confirm_command(&self, request: &CommandPrompt) -> HostAccessResult<()>;
 }
@@ -779,31 +782,33 @@ impl Inner {
         )))
     }
 
-    fn export_quarantine(&self, operation: &DesktopOperation) -> HostAccessResult<OperationSuccess> {
-        let quarantine_id = operation
-            .quarantine_id
-            .as_deref()
-            .ok_or_else(|| HostAccessError::Denied("Quarantine export is missing its download id.".into()))?;
-        let suggested_name = operation
-            .suggested_name
-            .as_deref()
-            .ok_or_else(|| HostAccessError::Denied("Quarantine export is missing its filename.".into()))?;
-        let expected_sha = operation
-            .sha256
-            .as_deref()
-            .ok_or_else(|| HostAccessError::Denied("Quarantine export is missing its digest.".into()))?;
-        let expected_size = operation
-            .size_bytes
-            .ok_or_else(|| HostAccessError::Denied("Quarantine export is missing its byte size.".into()))?;
-
-        let destination = self.approval.choose_quarantine_export(&QuarantineExportPrompt {
-            operation_id: operation.operation_id.clone(),
-            bot_id: operation.bot_id.clone(),
-            suggested_name: suggested_name.into(),
-            sha256: expected_sha.into(),
-            size_bytes: expected_size,
-            dangerous: operation.dangerous == Some(true),
+    fn export_quarantine(
+        &self,
+        operation: &DesktopOperation,
+    ) -> HostAccessResult<OperationSuccess> {
+        let quarantine_id = operation.quarantine_id.as_deref().ok_or_else(|| {
+            HostAccessError::Denied("Quarantine export is missing its download id.".into())
         })?;
+        let suggested_name = operation.suggested_name.as_deref().ok_or_else(|| {
+            HostAccessError::Denied("Quarantine export is missing its filename.".into())
+        })?;
+        let expected_sha = operation.sha256.as_deref().ok_or_else(|| {
+            HostAccessError::Denied("Quarantine export is missing its digest.".into())
+        })?;
+        let expected_size = operation.size_bytes.ok_or_else(|| {
+            HostAccessError::Denied("Quarantine export is missing its byte size.".into())
+        })?;
+
+        let destination = self
+            .approval
+            .choose_quarantine_export(&QuarantineExportPrompt {
+                operation_id: operation.operation_id.clone(),
+                bot_id: operation.bot_id.clone(),
+                suggested_name: suggested_name.into(),
+                sha256: expected_sha.into(),
+                size_bytes: expected_size,
+                dangerous: operation.dangerous == Some(true),
+            })?;
         self.ensure_operation_fresh(operation)?;
         if self.operation_was_canceled(&operation.operation_id) {
             return Err(HostAccessError::Denied(
@@ -867,9 +872,9 @@ impl Inner {
                 if read == 0 {
                     break;
                 }
-                written = written
-                    .checked_add(read as u64)
-                    .ok_or_else(|| HostAccessError::Denied("Quarantine export size overflowed.".into()))?;
+                written = written.checked_add(read as u64).ok_or_else(|| {
+                    HostAccessError::Denied("Quarantine export size overflowed.".into())
+                })?;
                 if written > expected_size {
                     return Err(HostAccessError::Denied(
                         "Quarantine export was larger than the approved file.".into(),
@@ -1787,6 +1792,13 @@ mod tests {
             })
         }
 
+        fn choose_quarantine_export(
+            &self,
+            _: &QuarantineExportPrompt,
+        ) -> HostAccessResult<PathBuf> {
+            unreachable!("choose_folder regression must not ask for quarantine export approval")
+        }
+
         fn confirm_write(&self, _: &WritePrompt) -> HostAccessResult<()> {
             unreachable!("choose_folder regression must not ask for write approval")
         }
@@ -2215,6 +2227,11 @@ mod tests {
                 content: None,
                 command: None,
                 writable: Some(false),
+                quarantine_id: None,
+                suggested_name: None,
+                sha256: None,
+                size_bytes: None,
+                dangerous: None,
                 expires_at: None,
                 received_at_ms: now_millis(),
             }
@@ -2288,6 +2305,11 @@ mod tests {
             content: None,
             command: None,
             writable: None,
+            quarantine_id: None,
+            suggested_name: None,
+            sha256: None,
+            size_bytes: None,
+            dangerous: None,
             expires_at: None,
             received_at_ms: now_millis(),
         };
