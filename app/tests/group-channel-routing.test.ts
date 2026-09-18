@@ -88,7 +88,6 @@ describe("group channel mention routing", () => {
   });
 });
 
-
 describe("group channel coordinator routing", () => {
   test("gives the coordinator a bounded peer roster and selective delegation rules", () => {
     const instruction = groupCoordinatorInstruction({
@@ -115,7 +114,9 @@ describe("group channel coordinator routing", () => {
     expect(instruction).toContain('"id":"risk-analyst"');
     expect(instruction).toContain('"id":"researcher"');
     expect(instruction).toContain("minimum useful set of peer tasks");
-    expect(instruction).toContain("Do not broadcast the same task to everybody");
+    expect(instruction).toContain(
+      "Do not broadcast the same task to everybody",
+    );
     expect(instruction).toContain("no more than three peer handoffs");
     expect(instruction).toContain("A handoff is asynchronous");
   });
