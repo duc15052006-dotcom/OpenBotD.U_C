@@ -6,7 +6,6 @@ export type ChannelSharedFile = {
   name: string;
   mimeType: string;
   sizeBytes: number;
-  uploadedBy: string;
   attachedAt: string;
 };
 
