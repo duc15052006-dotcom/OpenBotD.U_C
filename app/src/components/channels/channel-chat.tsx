@@ -18,6 +18,7 @@ import {
 } from "@/components/channels/transcript-messages";
 import { agentListQueryOptions } from "@/lib/agents/queries";
 import { attachmentUrl } from "@/lib/channels/attachments";
+import { groupMentionInstruction } from "@/lib/channels/group-routing";
 import {
   recordChannelActivityMutationOptions,
   setChannelBusy,
@@ -220,10 +221,11 @@ function describeAttachments(attachments: readonly Attachment[]): string {
 }
 
 /**
- * One channel's conversation with one coworker.
+ * One channel's conversation, owned by one coordinator runtime Bot.
  *
- * The local agent id is channel-scoped so two channels with the same coworker keep separate
- * durable threads.
+ * Direct channels have only that Bot. Group channels keep the same single Intelligence thread and
+ * route explicit peer mentions through durable handoffs, so two channels with the same coordinator
+ * still keep separate durable threads and group membership never leaks between them.
  */
 export function ChannelChat({
   channel,
@@ -848,14 +850,27 @@ export function ChannelChat({
             // typed. Resolved against the same list the menu was built from, so a chip left over from
             // a skill that has since been revoked resolves to nothing rather than to a stale
             // instruction — the menu is refetched, and this reads from it.
-            const skillInstructions = draft.commandIds
-              .map(
+            const mentioned =
+              draft.agentId && draft.agentId !== runtimeAgentId
+                ? agentProfiles?.find((profile) => profile.id === draft.agentId)
+                : undefined;
+            const routingInstruction = mentioned
+              ? groupMentionInstruction({
+                  coordinatorId: runtimeAgentId,
+                  targetId: mentioned.id,
+                  targetName: mentioned.name,
+                })
+              : null;
+
+            const skillInstructions = [
+              routingInstruction,
+              ...draft.commandIds.map(
                 (id) =>
                   skillCommands.find((command) => command.id === id)?.prompt,
-              )
-              .filter((instruction): instruction is string =>
-                Boolean(instruction),
-              );
+              ),
+            ].filter((instruction): instruction is string =>
+              Boolean(instruction),
+            );
 
             await say(draft.text, skillInstructions, draft.attachments);
           }}

@@ -5,7 +5,7 @@ import {
   IntelligenceAgentRunner,
 } from "@copilotkit/runtime/v2";
 import { serve } from "bun";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { COMPUTER_GUIDANCE } from "../../shared/bot-prompt";
 import { workOwner } from "../../shared/work-owner";
 import { mintRunAssertion, readRunAssertion } from "./agents/callback-token";
@@ -89,7 +89,12 @@ import {
   resolveModelApiKey,
 } from "./credentials";
 import { createDatabase } from "./db/client";
-import { intelligenceChannelMappings } from "./db/schema";
+import {
+  channelAgents,
+  channelMemberships,
+  channels,
+  intelligenceChannelMappings,
+} from "./db/schema";
 import { createHostAccessBroker } from "./host-access/broker";
 import { hostAccessTools } from "./host-access/tools";
 import { createOnboardingStore } from "./people/onboarding";
@@ -408,6 +413,57 @@ const routineStore = createRoutineStore(database);
 useRoutineTools(routineStore);
 
 /**
+ * Other Bots this person deliberately put in the same live channel as this Bot.
+ *
+ * Group membership is a conversation-scoped permission, not a durable grant: it lets the coordinator
+ * hand one message to a peer while this run is in this thread and nowhere else. The actor membership
+ * join prevents a thread id from becoming a way to borrow somebody else's group.
+ */
+const groupPeersFor = async ({
+  actorId,
+  threadId,
+  botId,
+}: {
+  actorId: string;
+  threadId?: string;
+  botId: string;
+}): Promise<string[]> => {
+  if (!threadId) return [];
+
+  const rows = await database
+    .select({ agentId: channelAgents.agentId })
+    .from(intelligenceChannelMappings)
+    .innerJoin(
+      channelMemberships,
+      and(
+        eq(
+          channelMemberships.channelId,
+          intelligenceChannelMappings.channelId,
+        ),
+        eq(channelMemberships.userId, actorId),
+      ),
+    )
+    .innerJoin(
+      channels,
+      and(
+        eq(channels.id, intelligenceChannelMappings.channelId),
+        isNull(channels.deletedAt),
+      ),
+    )
+    .innerJoin(
+      channelAgents,
+      eq(channelAgents.channelId, intelligenceChannelMappings.channelId),
+    )
+    .where(eq(intelligenceChannelMappings.threadId, threadId));
+
+  const ids = rows.map((row) => row.agentId);
+  // The run must itself belong to this group. Without this guard a stale/mismatched run assertion
+  // carrying a valid thread could borrow that channel's peer list.
+  if (!ids.includes(botId)) return [];
+  return ids.filter((agentId) => agentId !== botId);
+};
+
+/**
  * Where a Bot handing work to another gets decided.
  *
  * The queue is the one #216 shipped, shared with the idle-computer culler and with routines: durable
@@ -418,16 +474,24 @@ useRoutineTools(routineStore);
 const handoffDesk = createHandoffDesk({
   queue: createWorkQueue(database),
   profiles: agentProfileStore,
-  // Read per hop and never held, so revoking a grant applies to the next hop rather than after a
-  // restart.
-  mayAddress: async (fromBotId, toBotId) =>
-    (
-      await pluginStore
-        .botsReachableFrom(fromBotId)
-        // A grant that cannot be read is not a grant. Failing closed here costs a hop; failing open
-        // would let a Bot address one nobody gave it because the database blinked.
-        .catch(() => [] as string[])
-    ).includes(toBotId),
+  // Durable grants and same-group peers are the two ways one Bot may address another.
+  // Both are read per hop so a revoked grant or a changed channel applies immediately.
+  mayAddress: async (fromBotId, toBotId, context) => {
+    const granted = await pluginStore
+      .botsReachableFrom(fromBotId)
+      // A grant that cannot be read is not a grant. Failing closed here costs a hop; failing open
+      // would let a Bot address one nobody gave it because the database blinked.
+      .catch(() => [] as string[]);
+    if (granted.includes(toBotId)) return true;
+
+    return (
+      await groupPeersFor({
+        actorId: context.actorId,
+        threadId: context.threadId,
+        botId: fromBotId,
+      }).catch(() => [])
+    ).includes(toBotId);
+  },
   /*
    * Deferred rather than passed directly, because `actorFor` is defined further down with the rest
    * of the run-building collaborators. It is only ever called during a hop, long after this module
@@ -996,6 +1060,19 @@ const copilotRuntime = mountCopilotRuntime(
       config.handoff.maxPerRun > 0 &&
       run.depth < config.handoff.maxDepth;
 
+    const [grantedPeers, channelPeers] = couldHandOn
+      ? await Promise.all([
+          pluginStore
+            .botsReachableFrom(botId)
+            .catch(() => [] as string[]),
+          groupPeersFor({
+            actorId,
+            threadId: input.threadId,
+            botId,
+          }).catch(() => [] as string[]),
+        ])
+      : [[], []];
+
     const passing = couldHandOn
       ? handoffTool({
           desk: handoffDesk,
@@ -1009,14 +1086,11 @@ const copilotRuntime = mountCopilotRuntime(
            * wrong Bot's grants.
            */
           from: run,
-          // Read now rather than at boot, so a grant made a minute ago counts and one revoked a
-          // minute ago stops counting.
+          // A durable grant OR a peer deliberately put in this group means the tool is worth
+          // offering. The desk re-checks the exact target at call time; this only decides whether
+          // the model sees the tool at all.
           hasSomebodyToAsk:
-            (
-              await pluginStore
-                .botsReachableFrom(botId)
-                .catch(() => [] as string[])
-            ).length > 0,
+            grantedPeers.length > 0 || channelPeers.length > 0,
           maxDepth: config.handoff.maxDepth,
           maxPerRun: config.handoff.maxPerRun,
         })

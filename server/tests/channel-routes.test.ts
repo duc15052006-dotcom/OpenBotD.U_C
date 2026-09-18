@@ -162,7 +162,7 @@ describe("channel input parser", () => {
     expect(parseChannelInput({ agentIds })).toEqual({ ok: false, error });
   });
 
-  test("trims, sorts, and whitelists channel input", () => {
+  test("trims, preserves coordinator order, and whitelists channel input", () => {
     expect(
       parseChannelInput({
         agentIds: [" agent-2 ", "agent-1"],
@@ -171,7 +171,15 @@ describe("channel input parser", () => {
         threadId: "forged-thread",
         active: false,
       }),
-    ).toEqual({ ok: true, value: { agentIds: ["agent-1", "agent-2"] } });
+    ).toEqual({ ok: true, value: { agentIds: ["agent-2", "agent-1"] } });
+  });
+
+  test("refuses groups above the eight-coworker server cap", () => {
+    const agentIds = Array.from({ length: 9 }, (_, index) => `agent-${index}`);
+    expect(parseChannelInput({ agentIds })).toEqual({
+      ok: false,
+      error: "A channel may have at most 8 agents.",
+    });
   });
 });
 
@@ -982,28 +990,32 @@ describe("channel store integration", () => {
     expect(await json(response)).toEqual({ error: "Channel not found." });
   });
 
-  test("reads linked agent IDs in lexicographic order", async () => {
+  test("keeps the chosen group coordinator first after a database round trip", async () => {
     const actor = await createPersistentUser();
     const agentIdBase = persistentId("ordered-agent");
-    const laterAgentId = await createPersistentAgent({
+    const coordinatorId = await createPersistentAgent({
       id: `${agentIdBase}-zulu`,
       name: "Zulu",
       owner: actor,
     });
-    const earlierAgentId = await createPersistentAgent({
+    const peerId = await createPersistentAgent({
       id: `${agentIdBase}-alpha`,
       name: "Alpha",
       owner: actor,
     });
     const created = await persistentStore.create(actor, [
-      laterAgentId,
-      earlierAgentId,
+      coordinatorId,
+      peerId,
     ]);
     createdChannelIds.push(created.id);
 
-    expect((await persistentStore.get(actor, created.id))?.agentIds).toEqual(
-      [earlierAgentId, laterAgentId].sort(),
-    );
+    expect((await persistentStore.get(actor, created.id))?.agentIds).toEqual([
+      coordinatorId,
+      peerId,
+    ]);
+    expect((await persistedChannel(created.id)).channelRow?.override).toEqual({
+      group: { version: 1, coordinatorAgentId: coordinatorId },
+    });
   });
 
   test("keeps a historical channel readable but inactive after a linked profile is deleted", async () => {
@@ -1103,35 +1115,38 @@ describe("channel store integration", () => {
     }
   });
 
-  test("persists every canonical agent and derives its name in canonical order", async () => {
+  test("persists every selected group agent and coordinator order", async () => {
     const actor = await createPersistentUser();
-    const firstId = await createPersistentAgent({
-      id: persistentId("agent-a"),
+    const coordinatorId = await createPersistentAgent({
+      id: persistentId("agent-z"),
       name: "Zulu",
       owner: actor,
     });
-    const secondId = await createPersistentAgent({
-      id: persistentId("agent-b"),
+    const peerId = await createPersistentAgent({
+      id: persistentId("agent-a"),
       name: "Alpha",
       owner: actor,
     });
-    const canonicalAgentIds = [firstId, secondId].sort();
+    const selectedAgentIds = [coordinatorId, peerId];
 
-    const created = await persistentStore.create(actor, canonicalAgentIds);
+    const created = await persistentStore.create(actor, selectedAgentIds);
     createdChannelIds.push(created.id);
 
     expect(created).toEqual({
       id: created.id,
       name: "Zulu, Alpha",
-      agentIds: canonicalAgentIds,
+      agentIds: selectedAgentIds,
       threadId: created.threadId,
       active: true,
       lastMessageAt: null,
     });
     const persisted = await persistedChannel(created.id);
     expect(persisted.channelRow?.name).toBe("Zulu, Alpha");
+    expect(persisted.channelRow?.override).toEqual({
+      group: { version: 1, coordinatorAgentId: coordinatorId },
+    });
     expect(persisted.linkedAgents.map(({ agentId }) => agentId).sort()).toEqual(
-      canonicalAgentIds,
+      [...selectedAgentIds].sort(),
     );
   });
 
