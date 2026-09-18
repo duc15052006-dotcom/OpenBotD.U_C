@@ -30,6 +30,13 @@ export type ComputerIsolation = "per-bot" | "shared";
 export type ComputerFleet = {
   computers: ComputerProfile[];
   isolation?: ComputerIsolation;
+  capacity?: {
+    memoryBytes: number | null;
+    logicalCpus: number | null;
+    maxActiveComputers: number | null;
+    defaultComputerMemoryBytes: number | null;
+    defaultComputerNanoCpus: number | null;
+  };
 };
 
 /**
