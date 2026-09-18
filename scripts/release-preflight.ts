@@ -232,7 +232,9 @@ function checkComputerSandboxBoundary(): void {
     "window.hide()",
   ]) {
     if (!read("desktop/src-tauri/src/main.rs").includes(evidence)) {
-      fail(\n        `desktop: Agent runtime state is no longer explicit through ${evidence}`,\n      );
+      fail(
+        `desktop: Agent runtime state is no longer explicit through ${evidence}`,
+      );
     }
   }
 
@@ -242,7 +244,9 @@ function checkComputerSandboxBoundary(): void {
     "names.quarantineVolume",
   ]) {
     if (!supervisor.includes(evidence)) {
-      fail(\n        `computer: Reset/storage boundary lost persistent volume ${evidence}`,\n      );
+      fail(
+        `computer: Reset/storage boundary lost persistent volume ${evidence}`,
+      );
     }
   }
 
@@ -257,11 +261,15 @@ function checkComputerSandboxBoundary(): void {
       fail(`computer: download quarantine is missing ${evidence}`);
     }
   }
-  if (\n    !profiles.includes("quarantineDownload(QUARANTINE_ROOT, botId, download)")\n  ) {
+  if (
+    !profiles.includes("quarantineDownload(QUARANTINE_ROOT, botId, download)")
+  ) {
     fail("computer: Chromium downloads no longer flow through quarantine");
   }
 
-  const screen = read(\n    "app/src/components/computers/computer-screen-dialog.tsx",\n  );
+  const screen = read(
+    "app/src/components/computers/computer-screen-dialog.tsx",
+  );
   for (const evidence of [
     "Take control",
     "Return control",
