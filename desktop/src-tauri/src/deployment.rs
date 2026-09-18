@@ -78,10 +78,7 @@ pub const IMAGE_VARIABLES: [(&str, &str); 5] = [
     ("agent-langgraph", "LANGGRAPH_IMAGE"),
 ];
 
-/// Read the manifest laid down beside the deployment and turn it into Compose variables.
-///
-/// Digests, not tags. A tag can be moved to point at a different image after the version that was
-/// tested; a digest is the image that was tested.
+/// A stored manifest must describe the exact deployment version stamped beside it.
 fn expected_manifest_version(root: &Path, manifest: &Images) -> Result<(), String> {
     let installed = installed(root)
         .ok_or_else(|| format!("{IMAGES} exists but this deployment has no recorded version."))?;
@@ -139,6 +136,10 @@ fn validated_reference(manifest: &Images, published: &str) -> Result<String, Str
     Ok(image.reference.clone())
 }
 
+/// Read the manifest laid down beside the deployment and turn it into Compose variables.
+///
+/// Digests, not tags. A tag can be moved to point at a different image after the version that was
+/// tested; a digest is the image that was tested.
 pub fn image_variables(root: &Path) -> Result<Vec<(String, String)>, String> {
     let text = std::fs::read_to_string(images_path(root))
         .map_err(|error| format!("could not read {}: {error}", images_path(root).display()))?;
