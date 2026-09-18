@@ -95,6 +95,7 @@ export function ProviderPicker({
   root,
   onChoose,
   onBack,
+  requireConnectionTest = false,
 }: {
   chosen: ModelChoice | null;
   /**
@@ -107,6 +108,7 @@ export function ProviderPicker({
   root: string;
   onChoose: (choice: ModelChoice) => void;
   onBack: () => void;
+  requireConnectionTest?: boolean;
 }) {
   const initialChoice = chosen ?? recordedModel(held);
   const [reuse, setReuse] = useState(
@@ -355,7 +357,7 @@ export function ProviderPicker({
 
   function continueWithChoice() {
     const candidate = currentChoice();
-    if (!candidate) return;
+    if (!candidate || (requireConnectionTest && !connectionIsCurrent)) return;
     onChoose(candidate);
   }
 
@@ -694,7 +696,12 @@ export function ProviderPicker({
         </button>
         <button
           type="button"
-          disabled={!choice || busy || testingConnection}
+          disabled={
+            !choice ||
+            busy ||
+            testingConnection ||
+            (requireConnectionTest && !connectionIsCurrent)
+          }
           onClick={continueWithChoice}
         >
           Continue
