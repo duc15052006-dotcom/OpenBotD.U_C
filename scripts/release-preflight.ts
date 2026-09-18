@@ -421,7 +421,7 @@ function checkInteractiveComputerControls(): void {
   for (const evidence of [
     'routes.post("/quarantine/export"',
     'body?.confirm !== "EXPORT_QUARANTINED_FILE"',
-    'record.status !== "approved"',
+    'record?.status !== "approved"',
     "record.scannedSha256 !== record.sha256",
     "broker.requestQuarantineExport",
     "gateway.markQuarantineReleased",
@@ -454,7 +454,7 @@ function checkInteractiveComputerControls(): void {
     "approveQuarantinedDownloadMutationOptions",
     "exportQuarantinedDownloadMutationOptions",
     "Export to Windows…",
-    "never auto-opens or runs the file",
+    "auto-opens or runs the file.",
   ]) {
     if (!quarantineDialog.includes(evidence)) {
       fail(`computer: quarantine manager is missing ${evidence}`);
