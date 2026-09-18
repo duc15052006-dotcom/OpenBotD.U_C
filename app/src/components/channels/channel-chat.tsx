@@ -18,6 +18,7 @@ import {
 } from "@/components/channels/transcript-messages";
 import { agentListQueryOptions } from "@/lib/agents/queries";
 import { attachmentUrl } from "@/lib/channels/attachments";
+import { groupMentionInstruction } from "@/lib/channels/group-routing";
 import {
   recordChannelActivityMutationOptions,
   setChannelBusy,
@@ -217,28 +218,6 @@ function describeAttachments(attachments: readonly Attachment[]): string {
     return filename ? `Sent ${filename}` : "Sent an attachment";
   }
   return `Sent ${attachments.length} attachments`;
-}
-
-/**
- * System instruction used when a group-channel message explicitly @mentions a peer Bot.
- *
- * The Intelligence thread itself still has one runtime agent, so that Bot is the coordinator. The
- * addressed peer runs through the durable handoff queue and its answer is relayed back into this
- * thread. Keeping the routing instruction separate from the person's words preserves the transcript.
- */
-export function groupMentionInstruction(input: {
-  coordinatorId: string;
-  targetId: string;
-  targetName: string;
-}): string {
-  return [
-    "GROUP CHANNEL ROUTING:",
-    `The person explicitly addressed ${input.targetName} (Bot id: ${input.targetId}), not you (${input.coordinatorId}).`,
-    `Use the message_bot tool exactly once with target "${input.targetId}".`,
-    "Put the person's request into the handoff task faithfully. Preserve constraints and requested output format.",
-    "Do not solve the task yourself and do not choose a different Bot.",
-    `After the handoff is accepted, only tell the person that ${input.targetName} is working on it. The final answer will be relayed back into this conversation.`,
-  ].join("\n");
 }
 
 /**
