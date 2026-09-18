@@ -1403,3 +1403,59 @@ describe("acting on a ref the server cannot resolve", () => {
     expect(calls).toEqual(["scroll"]);
   });
 });
+
+
+describe("computer lifecycle invalidates page refs", () => {
+  function lifecycleGateway(snapshots: SnapshotStore) {
+    const { provider, fetchImpl, calls } = fakeComputer();
+    const { store, rows } = fakeAudit();
+    return {
+      gateway: createComputerGateway({
+        provider,
+        fetchImpl,
+        auditStore: store,
+        policy: () => PERMISSIVE,
+        snapshots,
+      }),
+      calls,
+      rows,
+    };
+  }
+
+  test("stop clears the last snapshot because the browser run has ended", async () => {
+    const snapshots = createInMemorySnapshotStore();
+    const { gateway, rows } = lifecycleGateway(snapshots);
+
+    await gateway.snapshot("bot-1");
+    expect(await snapshots.load("bot-1")).toBeDefined();
+
+    await gateway.stopComputer("bot-1", ACTOR);
+
+    expect(await snapshots.load("bot-1")).toBeUndefined();
+    expect(rows.at(-1)?.eventType).toBe("computer.stopped");
+  });
+
+  test("explicit start clears refs left by a previous run and is audited", async () => {
+    const snapshots = createInMemorySnapshotStore();
+    const { gateway, rows } = lifecycleGateway(snapshots);
+
+    await gateway.snapshot("bot-1");
+    await gateway.startComputer("bot-1", ACTOR);
+
+    expect(await snapshots.load("bot-1")).toBeUndefined();
+    expect(rows.at(-1)?.eventType).toBe("computer.started");
+  });
+
+  test("restart preserves durable state but retires page refs and is audited", async () => {
+    const snapshots = createInMemorySnapshotStore();
+    const { gateway, calls, rows } = lifecycleGateway(snapshots);
+
+    await gateway.snapshot("bot-1");
+    await gateway.restartComputer("bot-1", ACTOR);
+
+    expect(await snapshots.load("bot-1")).toBeUndefined();
+    // The test provider predates restart(), so the compatibility path is stop + locate.
+    expect(calls).toContain("stop:bot-1");
+    expect(rows.at(-1)?.eventType).toBe("computer.restarted");
+  });
+});
