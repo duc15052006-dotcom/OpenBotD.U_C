@@ -417,5 +417,4 @@ describe("host access broker", () => {
     await expect(pending).rejects.toThrow("denied");
     expect(broker.quarantineExportSource(operation!.operationId)).toBeNull();
   });
-
 });
