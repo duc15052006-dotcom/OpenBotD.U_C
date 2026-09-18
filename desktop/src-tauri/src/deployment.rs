@@ -177,7 +177,10 @@ pub fn reference(root: &Path, published: &str) -> Result<String, String> {
 pub fn pin(manifest: &Images) -> Result<Vec<(String, String)>, String> {
     let mut pinned = Vec::new();
     for (published, variable) in IMAGE_VARIABLES {
-        pinned.push((variable.to_string(), validated_reference(manifest, published)?));
+        pinned.push((
+            variable.to_string(),
+            validated_reference(manifest, published)?,
+        ));
     }
     Ok(pinned)
 }
@@ -458,14 +461,8 @@ mod tests {
         assert!(pin(&mutable).is_err());
 
         let mut cross_repository = manifest(&names);
-        cross_repository
-            .images
-            .get_mut("server")
-            .unwrap()
-            .reference = format!(
-            "ghcr.io/other/openbot-server@sha256:{}",
-            "b".repeat(64)
-        );
+        cross_repository.images.get_mut("server").unwrap().reference =
+            format!("ghcr.io/other/openbot-server@sha256:{}", "b".repeat(64));
         assert!(pin(&cross_repository).is_err());
 
         let mut short_digest = manifest(&names);
