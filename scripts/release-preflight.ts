@@ -376,6 +376,15 @@ function checkReleaseWiring(): void {
       fail(`release: GitHub Release does not publish ${asset}`);
     }
   }
+  for (const evidence of [
+    'existing_tag="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$VERSION"',
+    '"commit $GITHUB_SHA"',
+    "does not point directly at release commit",
+  ]) {
+    if (!publishRun.includes(evidence)) {
+      fail(`release: existing version-tag identity gate is missing ${evidence}`);
+    }
+  }
 
   const identity = stepNamed(
     releaseJob,
