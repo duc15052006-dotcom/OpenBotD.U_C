@@ -224,6 +224,30 @@ async function gatewayWith(
 }
 
 describe("the computer gateway", () => {
+  test("restarts a computer without resetting its saved profile", async () => {
+    const { gateway, calls, rows, addressedAs } = await gatewayWith(PERMISSIVE);
+
+    const result = await gateway.restartComputer("bot-1", ACTOR);
+
+    expect(result.restarted).toBe(true);
+    expect(result.url).toBe("http://agent-computer:4100");
+    expect(calls).toContain("stop:bot-1");
+    expect(calls.some((call) => call.startsWith("reset:"))).toBe(false);
+    // One locate happened for the setup snapshot and one for the restart wake.
+    expect(addressedAs.filter((botId) => botId === "bot-1").length).toBeGreaterThanOrEqual(2);
+    expect(rows.at(-1)?.eventType).toBe("computer.restarted");
+  });
+
+  test("starting an already-ready computer is idempotent and audited", async () => {
+    const { gateway, calls, rows } = await gatewayWith(PERMISSIVE);
+
+    const result = await gateway.startComputer("bot-1", ACTOR);
+
+    expect(result.started).toBe(false);
+    expect(calls.some((call) => call.startsWith("reset:"))).toBe(false);
+    expect(rows.at(-1)?.eventType).toBe("computer.started");
+  });
+
   test("carries out an allowed action and records it", async () => {
     const { gateway, calls, rows } = await gatewayWith(PERMISSIVE);
     await gateway.click("bot-1", ACTOR, {
