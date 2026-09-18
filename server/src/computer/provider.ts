@@ -76,9 +76,9 @@ export interface ComputerProvider {
   /** Return the lifecycle state of the computer for this Bot. */
   status(botId: string): Promise<ComputerStatus>;
   /** Explicitly start or wake the computer while preserving all saved state. */
-  start(botId: string): Promise<{ wasRunning: boolean }>;
+  start?(botId: string): Promise<{ wasRunning: boolean }>;
   /** Restart the runtime/browser while preserving its profile and workspace. */
-  restart(botId: string): Promise<{ wasRunning: boolean }>;
+  restart?(botId: string): Promise<{ wasRunning: boolean }>;
   /** Stop the computer for this Bot if it exists. */
   stop(botId: string): Promise<{ wasRunning: boolean }>;
   /** Remove the computer state for this Bot if it exists. */
