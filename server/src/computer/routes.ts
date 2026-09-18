@@ -125,7 +125,10 @@ export function createComputerRoutes(
       id?: unknown;
     } | null;
     if (typeof body?.id !== "string" || !body.id) {
-      return context.json({ error: "A quarantine download id is required." }, 400);
+      return context.json(
+        { error: "A quarantine download id is required." },
+        400,
+      );
     }
     const record = context.var.actor;
     try {
