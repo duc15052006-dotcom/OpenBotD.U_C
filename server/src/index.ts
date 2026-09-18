@@ -1060,6 +1060,19 @@ const copilotRuntime = mountCopilotRuntime(
       config.handoff.maxPerRun > 0 &&
       run.depth < config.handoff.maxDepth;
 
+    const [grantedPeers, channelPeers] = couldHandOn
+      ? await Promise.all([
+          pluginStore
+            .botsReachableFrom(botId)
+            .catch(() => [] as string[]),
+          groupPeersFor({
+            actorId,
+            threadId: input.threadId,
+            botId,
+          }).catch(() => [] as string[]),
+        ])
+      : [[], []];
+
     const passing = couldHandOn
       ? handoffTool({
           desk: handoffDesk,
@@ -1073,14 +1086,11 @@ const copilotRuntime = mountCopilotRuntime(
            * wrong Bot's grants.
            */
           from: run,
-          // Read now rather than at boot, so a grant made a minute ago counts and one revoked a
-          // minute ago stops counting.
+          // A durable grant OR a peer deliberately put in this group means the tool is worth
+          // offering. The desk re-checks the exact target at call time; this only decides whether
+          // the model sees the tool at all.
           hasSomebodyToAsk:
-            (
-              await pluginStore
-                .botsReachableFrom(botId)
-                .catch(() => [] as string[])
-            ).length > 0,
+            grantedPeers.length > 0 || channelPeers.length > 0,
           maxDepth: config.handoff.maxDepth,
           maxPerRun: config.handoff.maxPerRun,
         })
