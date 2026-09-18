@@ -1,9 +1,15 @@
 import type { Message } from "@ag-ui/core";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChannelAvatar } from "@/components/channels/avatar";
-import { canSend, type Recipient } from "@/components/channels/compose-state";
+import {
+  addRecipient,
+  canSend,
+  MAX_RECIPIENTS,
+  type Recipient,
+  removeRecipient,
+} from "@/components/channels/compose-state";
 import { ConversationView } from "@/components/channels/conversation-view";
 import { seedMessage } from "@/components/channels/transcript-messages";
 import { SidebarToggle } from "@/components/layout/sidebar-toggle";
@@ -26,8 +32,11 @@ import { useSkillCommands } from "@/lib/plugins/skill-commands";
 import { newId } from "../../../../lib/new-id";
 
 /**
- * Creates the channel on first send. The selected coworker stays in the URL so profile links and
- * reloads preserve the pending recipient without creating an empty channel.
+ * Creates a direct or group channel on first send.
+ *
+ * `?agent=` still preselects a coworker from a profile/card link. Additional coworkers live in local
+ * compose state until the first message creates the channel, so backing out never leaves an empty
+ * group behind.
  */
 export const Route = createFileRoute("/_authed/_app/channel/new")({
   validateSearch: (search: Record<string, unknown>): { agent?: string } => ({
@@ -38,13 +47,14 @@ export const Route = createFileRoute("/_authed/_app/channel/new")({
 
 function RouteComponent() {
   const { agent } = Route.useSearch();
-  const navigate = Route.useNavigate();
-  const { startChosen, pending } = useStartChannel();
+  const { startChosenMany, pending } = useStartChannel();
   const { data: profiles, isError: rosterError } = useQuery(
     agentListQueryOptions(),
   );
 
   const [error, setError] = useState<string | null>(null);
+  const [recipients, setRecipients] = useState<Recipient[]>([]);
+  const initialised = useRef(false);
   // Optimistic seed shown before the first channel record exists.
   const [sent, setSent] = useState<Message | null>(null);
 
@@ -63,7 +73,7 @@ function RouteComponent() {
     enabled: Boolean(agent) && profiles !== undefined && !listed,
     retry: false,
   });
-  const chosen =
+  const initialChoice =
     listed ??
     (fetched?.id === agent ? fetched : undefined) ??
     (agent ? undefined : defaultAgentProfile(profiles));
@@ -78,68 +88,124 @@ function RouteComponent() {
       : urlAgentDetailFailed
         ? "Coworker couldn't be loaded."
         : null;
-  const recipients: Recipient[] = chosen
-    ? [{ id: chosen.id, name: chosen.name }]
-    : [];
-  const skillCommands = useSkillCommands(chosen?.id ?? "");
+
+  /*
+   * Apply the URL/default choice once.
+   *
+   * A separate flag rather than `recipients.length === 0`: after somebody deliberately removes the
+   * last chip we must not immediately put the default Bot back.
+   */
+  useEffect(() => {
+    if (initialised.current || profiles === undefined || waitingForUrlAgent) {
+      return;
+    }
+    initialised.current = true;
+    if (initialChoice) {
+      setRecipients([{ id: initialChoice.id, name: initialChoice.name }]);
+    }
+  }, [initialChoice, profiles, waitingForUrlAgent]);
+
+  const selectedIds = new Set(recipients.map((recipient) => recipient.id));
+  const available = (profiles ?? []).filter(
+    (profile) => !selectedIds.has(profile.id),
+  );
+  // The first selected Bot owns the Intelligence thread. Peers are reached with @mentions.
+  const coordinator = recipients[0];
+  const skillCommands = useSkillCommands(coordinator?.id ?? "");
 
   if (profiles === undefined && !rosterError) return null;
 
   return (
     <div className="flex h-full flex-col">
-      <div className="h-12 border-b border-border sticky top-0 flex flex-row px-2 items-center">
+      <div className="min-h-12 border-b border-border sticky top-0 z-10 flex flex-wrap items-center gap-1.5 bg-background px-2 py-1.5">
         <SidebarToggle className="mr-1" />
         <span className="text-sm text-muted-foreground">To:</span>
-        <Combobox
-          // Do not auto-open when the recipient came from the URL; the field is already answered.
-          defaultOpen={!chosen && !loadError && !waitingForUrlAgent}
-          autoHighlight
-          items={profiles ?? []}
-          isItemEqualToValue={(item: AgentProfile, value: AgentProfile) =>
-            item.id === value.id
-          }
-          itemToStringLabel={(item: AgentProfile) => item.name}
-          itemToStringValue={(item: AgentProfile) => item.id}
-          onValueChange={(next) => {
-            // Recipient changes are not separate navigation history entries.
-            void navigate({
-              replace: true,
-              search: next ? { agent: next.id } : {},
-            });
-          }}
-          value={chosen ?? null}
-        >
-          <ComboboxInput
-            // The popup opening is not enough on its own: typing filters through this input, so
-            // the caret starts here whenever the recipient question is still open. Same condition
-            // as `defaultOpen` — a recipient from the URL means the composer takes focus instead.
-            autoFocus={!chosen}
-            placeholder="Choose a coworker…"
-            // InputGroup owns focus rings via `has-[…:focus-visible]`; disable that wrapper ring here.
-            className="border-none w-full bg-transparent! text-sm has-[[data-slot=input-group-control]:focus-visible]:ring-0"
-          />
-          {/* Allow max-w to constrain the popup even though its anchor is full-width. */}
-          <ComboboxContent className="min-w-0 max-w-lg" sideOffset={12}>
-            <ComboboxEmpty>No agents found.</ComboboxEmpty>
-            <ComboboxList>
-              {(item: AgentProfile) => (
-                <ComboboxItem key={item.id} value={item} className="h-10">
-                  <ChannelAvatar participantIds={[item.id]} size={24} />
-                  {item.name}
-                  <span className="truncate text-muted-foreground ml-1">
-                    {item.title}
-                  </span>
-                </ComboboxItem>
-              )}
-            </ComboboxList>
-          </ComboboxContent>
-        </Combobox>
+
+        {recipients.map((recipient, index) => (
+          <button
+            aria-label={`Remove ${recipient.name}`}
+            className="flex max-w-48 items-center gap-1 rounded-full border border-border bg-muted/50 px-2 py-1 text-xs hover:bg-muted"
+            key={recipient.id}
+            onClick={() =>
+              setRecipients((current) =>
+                removeRecipient(current, recipient.id),
+              )
+            }
+            title={
+              index === 0 && recipients.length > 1
+                ? `${recipient.name} coordinates this group`
+                : `Remove ${recipient.name}`
+            }
+            type="button"
+          >
+            <ChannelAvatar participantIds={[recipient.id]} size={18} />
+            <span className="truncate">{recipient.name}</span>
+            {index === 0 && recipients.length > 1 ? (
+              <span className="text-muted-foreground">· coordinator</span>
+            ) : null}
+            <span aria-hidden className="text-muted-foreground">
+              ×
+            </span>
+          </button>
+        ))}
+
+        {recipients.length < MAX_RECIPIENTS ? (
+          <div className="min-w-44 flex-1">
+            <Combobox
+              autoHighlight
+              defaultOpen={
+                !initialChoice && !loadError && !waitingForUrlAgent
+              }
+              items={available}
+              isItemEqualToValue={(item: AgentProfile, value: AgentProfile) =>
+                item.id === value.id
+              }
+              itemToStringLabel={(item: AgentProfile) => item.name}
+              itemToStringValue={(item: AgentProfile) => item.id}
+              onValueChange={(next) => {
+                if (!next) return;
+                setRecipients((current) =>
+                  addRecipient(current, { id: next.id, name: next.name }),
+                );
+              }}
+              value={null}
+            >
+              <ComboboxInput
+                autoFocus={recipients.length === 0}
+                placeholder={
+                  recipients.length === 0
+                    ? "Choose a coworker…"
+                    : "Add coworker…"
+                }
+                className="border-none w-full bg-transparent! text-sm has-[[data-slot=input-group-control]:focus-visible]:ring-0"
+              />
+              <ComboboxContent className="min-w-0 max-w-lg" sideOffset={12}>
+                <ComboboxEmpty>No more agents available.</ComboboxEmpty>
+                <ComboboxList>
+                  {(item: AgentProfile) => (
+                    <ComboboxItem key={item.id} value={item} className="h-10">
+                      <ChannelAvatar participantIds={[item.id]} size={24} />
+                      {item.name}
+                      <span className="truncate text-muted-foreground ml-1">
+                        {item.title}
+                      </span>
+                    </ComboboxItem>
+                  )}
+                </ComboboxList>
+              </ComboboxContent>
+            </Combobox>
+          </div>
+        ) : (
+          <span className="text-xs text-muted-foreground">
+            Group limit: {MAX_RECIPIENTS}
+          </span>
+        )}
       </div>
+
       <ConversationView
-        // Choosing a coworker answers the "To:" field, so the message is what remains: the caret
-        // lands in the composer the moment a recipient exists, whether picked here or in the URL.
+        // Once at least one Bot is chosen, the remaining task is the message.
         autoFocus
-        // Commands must be loaded before the first channel message is sent.
+        // The first Bot is the coordinator, so its skills apply to the first message.
         commands={skillCommands}
         disabled={
           Boolean(loadError) || waitingForUrlAgent || recipients.length === 0
@@ -150,19 +216,24 @@ function RouteComponent() {
             <p className="pb-2 text-sm text-destructive" role="alert">
               {loadError ?? error}
             </p>
+          ) : recipients.length > 1 ? (
+            <p className="pb-2 text-sm text-muted-foreground" role="status">
+              {coordinator?.name} coordinates this group. After it opens, use{" "}
+              @mentions to send a message to a specific coworker.
+            </p>
           ) : null
         }
         onSubmit={async (draft) => {
-          const recipient = recipients[0];
-          if (!recipient || !canSend(recipients, draft.text)) return;
+          if (!canSend(recipients, draft.text)) return;
 
           setError(null);
           setSent(seedMessage(draft.text, newId()));
 
           try {
-            // Recorded, then started: a coworker picked here is as much a choice as an `@` on the
-            // home screen, and the trail has to say so for both.
-            await startChosen(recipient.id, draft.text);
+            await startChosenMany(
+              recipients.map((recipient) => recipient.id),
+              draft.text,
+            );
           } catch (caught) {
             // Preserve the unsent draft when channel creation fails.
             setSent(null);
