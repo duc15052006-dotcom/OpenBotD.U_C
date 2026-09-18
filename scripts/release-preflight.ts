@@ -383,6 +383,8 @@ function checkReleaseWiring(): void {
     "package.json version must be a stable numeric SemVer",
     "Number.isSafeInteger",
     "next.every(Number.isSafeInteger)",
+    'current_tag="refs/tags/v$current"',
+    'git merge-base --is-ancestor "$current_tag" HEAD',
     "refs/tags/v$version",
     "Refusing to create a release PR for an existing version",
   ]) {
@@ -412,6 +414,17 @@ function checkReleaseWiring(): void {
       JSON.stringify(["api://AzureADTokenExchange"])
   ) {
     fail("signing: Azure federation issuer or audience drifted");
+  }
+
+  for (const evidence of [
+    "trustedCandidates = pulls.filter",
+    "trustedCandidates.length !== 1",
+    "pull.merge_commit_sha !== context.sha",
+    "Release PRs must use Create a merge commit",
+  ]) {
+    if (!releaseSource.includes(evidence)) {
+      fail(`release: trusted release classification is missing ${evidence}`);
+    }
   }
 
   if (releaseSource.includes("ghcr.io/copilotkit/")) {

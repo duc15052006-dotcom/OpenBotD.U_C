@@ -65,14 +65,19 @@ jobs:
           set -euo pipefail
           current=$(bun -e 'console.log(require("./package.json").version)')
 
-          # The version in package.json must be one that was actually released, or the bump is
-          # computed from a number nobody published. The exception is the first release, where there
-          # is no tag to find yet.
-          if [ -n "$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --merged HEAD)" ]; then
-            git rev-parse --verify "refs/tags/v$current" >/dev/null 2>&1 || {
-              echo "::error::package.json says $current but v$current was never tagged."
+          # The version in package.json must name the release this branch actually descends from.
+          # A tag with the right text on another history is not evidence that this HEAD follows that
+          # release, and bumping from it would fork the release line silently.
+          current_tag="refs/tags/v$current"
+          if git rev-parse --verify "$current_tag" >/dev/null 2>&1; then
+            if ! git merge-base --is-ancestor "$current_tag" HEAD; then
+              echo "::error::package.json says $current, but v$current is not an ancestor of HEAD."
               exit 1
-            }
+            fi
+          elif [ -n "$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --merged HEAD)" ]; then
+            # Once this history has a release tag, package.json cannot point at an untagged version.
+            echo "::error::package.json says $current but v$current was never tagged."
+            exit 1
           fi
 
           # CHANGELOG.md is written by hand, for the person deciding whether to upgrade. This

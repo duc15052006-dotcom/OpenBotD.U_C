@@ -34,26 +34,46 @@ jobs:
               await github.rest.repos.listPullRequestsAssociatedWithCommit({
                 owner, repo, commit_sha: context.sha,
               });
-            const pull = pulls.find((candidate) =>
+            // First identify a release PR by facts an ordinary push cannot forge: it is a merged PR
+            // to main, its head branch lives in this repository, it uses the release branch shape,
+            // and a writer applied the release label. Do NOT use merge_commit_sha to decide whether
+            // such a PR exists, because GitHub's merge method changes commit topology.
+            const trustedCandidates = pulls.filter((candidate) =>
               candidate.base.ref === "main" &&
               candidate.merged_at !== null &&
-              candidate.merge_commit_sha === context.sha
+              /^release\/publish\/v\d+\.\d+\.\d+$/.test(candidate.head.ref) &&
+              candidate.head.repo?.full_name === `${owner}/${repo}` &&
+              candidate.labels.some((label) => label.name === "release")
             );
-            if (!pull) {
-              // Not a merge commit of a reviewed PR. That is most pushes; it is not an error.
+            if (trustedCandidates.length === 0) {
+              // Most pushes to main are ordinary work. No trusted release PR means no release.
               core.setOutput("head_ref", "");
               core.setOutput("trusted", "false");
               return;
             }
-            // A release branch name is not enough on its own: a fork can open a PR from a branch
-            // with any name it likes. The branch must be in this repository and the PR must carry
-            // the label, which only somebody with write access can add.
-            const trusted =
-              /^release\/publish\/v\d+\.\d+\.\d+$/.test(pull.head.ref) &&
-              pull.head.repo?.full_name === `${owner}/${repo}` &&
-              pull.labels.some((label) => label.name === "release");
+            if (trustedCandidates.length !== 1) {
+              core.setFailed(
+                `Commit ${context.sha} is associated with multiple trusted release PRs: ${trustedCandidates
+                  .map((pull) => `#${pull.number}`)
+                  .join(", ")}. Refusing to guess which release to publish.`,
+              );
+              return;
+            }
+
+            const pull = trustedCandidates[0];
+            // Release PRs must produce one explicit merge commit. If somebody uses rebase/squash in
+            // a topology where GitHub reports a different merge_commit_sha, fail loudly. Silently
+            // saying "not a release" after a reviewed release PR was merged is worse than stopping:
+            // main would contain a release version that was never tagged or published.
+            if (pull.merge_commit_sha !== context.sha) {
+              core.setFailed(
+                `Trusted release PR #${pull.number} was merged, but pushed commit ${context.sha} does not match GitHub merge_commit_sha ${pull.merge_commit_sha}. Release PRs must use Create a merge commit so publication is unambiguous.`,
+              );
+              return;
+            }
+
             core.setOutput("head_ref", pull.head.ref);
-            core.setOutput("trusted", String(trusted));
+            core.setOutput("trusted", "true");
       - id: release
         name: Decide
         env:
