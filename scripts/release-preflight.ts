@@ -159,6 +159,7 @@ function checkComputerSandboxBoundary(): void {
   for (const evidence of [
     "COMPUTER_MEMORY_BYTES: ${COMPUTER_MEMORY_BYTES:-2147483648}",
     "COMPUTER_NANO_CPUS: ${COMPUTER_NANO_CPUS:-2000000000}",
+    "COMPUTER_MAX_ACTIVE: ${COMPUTER_MAX_ACTIVE:-3}",
   ]) {
     if (!compose.includes(evidence)) {
       fail(`computer: Windows-first resource ceiling is missing ${evidence}`);
@@ -173,6 +174,7 @@ function checkComputerSandboxBoundary(): void {
     "PidsLimit: options.pidsLimit ?? 512",
     "${names.profileVolume}:/profiles",
     "${names.workspaceVolume}:/workspace",
+    "${names.quarantineVolume}:/quarantine",
   ]) {
     if (!supervisor.includes(evidence)) {
       fail(`computer: per-Agent confinement is missing ${evidence}`);
@@ -182,6 +184,7 @@ function checkComputerSandboxBoundary(): void {
   for (const evidence of [
     "computerMemoryBytes(process.env.COMPUTER_MEMORY_BYTES)",
     "computerNanoCpus(process.env.COMPUTER_NANO_CPUS)",
+    "computerMaxActive(process.env.COMPUTER_MAX_ACTIVE)",
   ]) {
     if (!supervisorIndex.includes(evidence)) {
       fail(`computer: strict resource parsing is missing ${evidence}`);
@@ -191,6 +194,7 @@ function checkComputerSandboxBoundary(): void {
   for (const evidence of [
     "profileVolume: `${NAMESPACE}-profile-${botId}`",
     "workspaceVolume: `${NAMESPACE}-workspace-${botId}`",
+    "quarantineVolume: `${NAMESPACE}-quarantine-${botId}`",
   ]) {
     if (!names.includes(evidence)) {
       fail(`computer: per-Agent storage naming is missing ${evidence}`);
@@ -231,12 +235,42 @@ function checkComputerSandboxBoundary(): void {
     }
   }
 
-  if (
-    !supervisor.includes(
-      "for (const volume of [names.profileVolume, names.workspaceVolume])",
-    )
-  ) {
-    fail("computer: Reset no longer clears both browser profile and workspace");
+  for (const evidence of [
+    "names.profileVolume",
+    "names.workspaceVolume",
+    "names.quarantineVolume",
+  ]) {
+    if (!supervisor.includes(evidence)) {
+      fail(`computer: Reset/storage boundary lost persistent volume ${evidence}`);
+    }
+  }
+
+  const downloads = read("agent-computer/src/download-quarantine.ts");
+  const profiles = read("agent-computer/src/profiles.ts");
+  for (const evidence of [
+    'status: "quarantined"',
+    "download.saveAs(file)",
+    "quarantineDirectoryFor(root, botId)",
+  ]) {
+    if (!downloads.includes(evidence)) {
+      fail(`computer: download quarantine is missing ${evidence}`);
+    }
+  }
+  if (!profiles.includes("quarantineDownload(QUARANTINE_ROOT, botId, download)")) {
+    fail("computer: Chromium downloads no longer flow through quarantine");
+  }
+
+  const screen = read("app/src/components/computers/computer-screen-dialog.tsx");
+  for (const evidence of [
+    "Take control",
+    "Return control",
+    "Stop viewing",
+    "releaseControl(botId)",
+    "sendHumanInput",
+  ]) {
+    if (!screen.includes(evidence)) {
+      fail(`computer: human live-screen control is missing ${evidence}`);
+    }
   }
 }
 
