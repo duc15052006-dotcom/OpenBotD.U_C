@@ -700,6 +700,20 @@ struct ChosenModel {
     saved: Option<bool>,
 }
 
+fn model_endpoint_url(raw: &str, label: &str) -> Result<reqwest::Url, Problem> {
+    let url = reqwest::Url::parse(raw.trim())
+        .map_err(|_| Problem::plain(format!("Enter a valid http:// or https:// address for your {label}.")))?;
+    if !matches!(url.scheme(), "http" | "https") || !url.has_host() {
+        return Err(
+            format!("Enter a valid http:// or https:// address for your {label}.").into(),
+        );
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(format!("{label} addresses must not contain credentials.").into());
+    }
+    Ok(url)
+}
+
 impl ChosenModel {
     fn into_credential(self, root: &Path) -> Result<openbot_env::ModelCredential, Problem> {
         self.into_credential_with(root, saved_secret)
@@ -773,21 +787,10 @@ impl ChosenModel {
             }
             ("openai-compatible", "endpoint") => {
                 let base_url = given(self.base_url);
-                if !reqwest::Url::parse(&base_url)
-                    .is_ok_and(|url| matches!(url.scheme(), "http" | "https") && url.has_host())
-                {
-                    return Err(
-                        "Enter a valid http:// or https:// address for your model endpoint.".into(),
-                    );
-                }
+                model_endpoint_url(&base_url, "model endpoint")?;
                 let container_base_url = given(self.container_base_url);
-                if !container_base_url.is_empty()
-                    && !reqwest::Url::parse(&container_base_url)
-                        .is_ok_and(|url| matches!(url.scheme(), "http" | "https") && url.has_host())
-                {
-                    return Err(
-                        "Enter a valid http:// or https:// address for the container model endpoint.".into(),
-                    );
+                if !container_base_url.is_empty() {
+                    model_endpoint_url(&container_base_url, "container model endpoint")?;
                 }
                 let model = given(self.model);
                 if model.is_empty() {
@@ -893,14 +896,7 @@ fn model_probe_never_allowed_host(host: &str) -> bool {
 }
 
 fn models_probe_url(base_url: &str) -> Result<reqwest::Url, Problem> {
-    let mut url = reqwest::Url::parse(base_url.trim()).map_err(|_| {
-        Problem::plain("Enter a valid http:// or https:// model endpoint before testing it.")
-    })?;
-    if !matches!(url.scheme(), "http" | "https") || !url.has_host() {
-        return Err(
-            "Enter a valid http:// or https:// model endpoint before testing it.".into(),
-        );
-    }
+    let mut url = model_endpoint_url(base_url, "model endpoint")?;
     if url.host_str().is_some_and(model_probe_never_allowed_host) {
         return Err(
             "That model endpoint is reserved for cloud instance credentials and cannot be tested."
