@@ -60,6 +60,7 @@ import type {
   ReadFileInput,
   ReadFileResult,
   ReadResult,
+  QuarantineDeleteResult,
   QuarantineListResult,
   QuarantineRecord,
   RunCommandInput,
@@ -145,6 +146,18 @@ export interface ComputerGateway {
     actor: ActionActor,
     id: string,
   ): Promise<QuarantineRecord>;
+  /** Binary stream for the native desktop worker only; never returned to the browser/model. */
+  quarantineExportResponse(botId: string, id: string): Promise<Response>;
+  markQuarantineReleased(
+    botId: string,
+    actor: ActionActor,
+    id: string,
+  ): Promise<QuarantineRecord>;
+  deleteQuarantine(
+    botId: string,
+    actor: ActionActor,
+    id: string,
+  ): Promise<QuarantineDeleteResult>;
   navigate(
     botId: string,
     actor: ActionActor,
@@ -689,6 +702,53 @@ export function createComputerGateway(
         botId,
         actor,
         reason: `${id}: explicitly approved after clean scan`,
+      });
+      return result;
+    },
+
+    async quarantineExportResponse(botId: string, id: string) {
+      return transport.raw(
+        await locate(botId),
+        botId,
+        "/quarantine/export-internal",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id }),
+        },
+        undefined,
+        10 * 60_000,
+      );
+    },
+
+    async markQuarantineReleased(
+      botId: string,
+      actor: ActionActor,
+      id: string,
+    ) {
+      const result = await post<QuarantineRecord>(
+        botId,
+        "/quarantine/released",
+        { id },
+      );
+      await writeControlEvent(auditStore, "computer.quarantine_released", {
+        botId,
+        actor,
+        reason: `${id}: native export completed without auto-open`,
+      });
+      return result;
+    },
+
+    async deleteQuarantine(botId: string, actor: ActionActor, id: string) {
+      const result = await post<QuarantineDeleteResult>(
+        botId,
+        "/quarantine/delete",
+        { id },
+      );
+      await writeControlEvent(auditStore, "computer.quarantine_deleted", {
+        botId,
+        actor,
+        reason: `${id}: ${result.deleted ? "deleted" : "already absent"}`,
       });
       return result;
     },
@@ -1393,7 +1453,9 @@ async function writeControlEvent(
     | "computer.stopped"
     | "computer.reset"
     | "computer.quarantine_scanned"
-    | "computer.quarantine_approved",
+    | "computer.quarantine_approved"
+    | "computer.quarantine_released"
+    | "computer.quarantine_deleted",
   entry: {
     botId: string;
     actor: ActionActor;
