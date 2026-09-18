@@ -288,7 +288,7 @@ struct DesktopGrantResult {
 }
 
 struct OperationSuccess {
-    output: Option<String>,
+    output: Option<serde_json::Value>,
     grant: Option<OperationGrant>,
 }
 
@@ -300,6 +300,13 @@ struct OperationGrant {
 
 impl OperationSuccess {
     fn output(output: String) -> Self {
+        Self {
+            output: Some(serde_json::Value::String(output)),
+            grant: None,
+        }
+    }
+
+    fn json(output: serde_json::Value) -> Self {
         Self {
             output: Some(output),
             grant: None,
@@ -569,7 +576,7 @@ impl Inner {
             Ok(success) => DesktopResult {
                 operation_id: operation.operation_id.clone(),
                 ok: true,
-                result: success.output.map(serde_json::Value::String),
+                result: success.output,
                 grant: success.grant.map(|grant| DesktopGrantResult {
                     grant_id: grant.grant_id,
                     display_name: grant.display_name,
@@ -915,9 +922,11 @@ impl Inner {
             let _ = fs::remove_file(&temporary);
             HostAccessError::Io(error.to_string())
         })?;
-        Ok(OperationSuccess::output(format!(
-            "Exported quarantine download {quarantine_id} after SHA-256 verification; file was not opened."
-        )))
+        Ok(OperationSuccess::json(serde_json::json!({
+            "exported": true,
+            "quarantineId": quarantine_id,
+            "autoOpened": false
+        })))
     }
 
     fn run_command(&self, operation: &DesktopOperation) -> HostAccessResult<OperationSuccess> {
