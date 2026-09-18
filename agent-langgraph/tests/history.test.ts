@@ -7,6 +7,15 @@ import {
 } from "@langchain/core/messages";
 import { NO_ANSWER_CAME, toLangChainMessages } from "../src/history";
 
+test("includes durable Routine behavior in the framework Bot system guidance", () => {
+  const messages = toLangChainMessages(input([]));
+  const system = messages.find((message) => message instanceof SystemMessage);
+  expect(String(system?.content)).toContain("Use create_routine to create it");
+  expect(String(system?.content)).toContain(
+    "Never invent a clock time, cadence or timezone",
+  );
+});
+
 /**
  * A tool call nobody answered does not end the conversation.
  *
