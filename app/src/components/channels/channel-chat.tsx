@@ -13,7 +13,7 @@ import { toAgentOptions } from "@/components/channels/composer";
 import { ConversationView } from "@/components/channels/conversation-view";
 import {
   seedMessage,
-  takeFirstMessage,
+  takeFirstMessageSeed,
   transcriptMessages,
 } from "@/components/channels/transcript-messages";
 import { agentListQueryOptions } from "@/lib/agents/queries";
@@ -260,14 +260,16 @@ export function ChannelChat({
    * First-message seed from the compose screen. It is taken once per mount and retained until the
    * agent has its own messages because joining a fresh thread can temporarily empty the agent.
    */
-  const [seed] = useState<Message | null>(() => {
-    const pending = takeFirstMessage(channel.id);
-    return pending ? seedMessage(pending, newId()) : null;
-  });
+  const [initialSeed] = useState(() => takeFirstMessageSeed(channel.id));
+  const [seed] = useState<Message | null>(() =>
+    initialSeed ? seedMessage(initialSeed.text, newId()) : null,
+  );
 
   /** Cleared by the send-on-mount effect without restarting it. */
   const seedRef = useRef(seed);
   seedRef.current = seed;
+  /** The responder selected before this brand-new group channel existed. */
+  const seedTargetAgentId = useRef(initialSeed?.targetAgentId ?? null);
 
   /** Promise gate for ordering the first message after the thread join when possible. */
   const openJoinGate = useRef<() => void>(() => {});
@@ -849,6 +851,9 @@ export function ChannelChat({
       .then(pending.resolve, pending.reject);
   }, [isReady, joinedRuntimeAgentId, runtimeAgentId]);
 
+  const sendToAgentRef = useRef(sendToAgent);
+  sendToAgentRef.current = sendToAgent;
+
   /**
    * Component buttons speak as user turns without forcing every transcript card to re-render.
    *
@@ -875,9 +880,9 @@ export function ChannelChat({
     // Swallowed for the reason `askFromComponent` above records: `say` throws on a failed turn, and
     // the seed has no box to go back into — it was typed on a screen that has already navigated
     // away. The transcript keeps the seeded message and the notice under it says what happened.
-    void sayRef
-      .current(typeof pending.content === "string" ? pending.content : "")
-      .catch(() => undefined);
+    const text = typeof pending.content === "string" ? pending.content : "";
+    const targetId = seedTargetAgentId.current ?? runtimeAgentId;
+    void sendToAgentRef.current(targetId, text, [], []).catch(() => undefined);
 
     // Keep `seed` in state; transcriptMessages gives it up once the agent holds a user turn.
   }, []);
