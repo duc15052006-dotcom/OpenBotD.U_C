@@ -37,7 +37,6 @@ describe("COMPUTER_GUIDANCE", () => {
   });
 });
 
-
 describe("ROUTINE_GUIDANCE", () => {
   test("recognises recurring work without inventing missing schedule details", () => {
     expect(ROUTINE_GUIDANCE).toContain(
