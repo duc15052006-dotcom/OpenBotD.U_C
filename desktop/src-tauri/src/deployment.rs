@@ -431,11 +431,15 @@ pub fn get(url: &str) -> Result<Vec<u8>, String> {
 mod tests {
     use super::*;
 
+    const TEST_COMMIT: &str = "1111111111111111111111111111111111111111";
+    const OTHER_COMMIT: &str = "2222222222222222222222222222222222222222";
+
     fn manifest(names: &[&str]) -> Images {
         let repository = crate::update::release_repository().unwrap();
         let owner = repository.split_once('/').unwrap().0.to_ascii_lowercase();
         Images {
             version: "v0.0.7".into(),
+            commit: TEST_COMMIT.into(),
             images: names
                 .iter()
                 .map(|name| {
@@ -458,14 +462,19 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("openbot-manifest-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let _ = std::fs::remove_file(images_path(&dir));
-        record(&dir, "v0.0.7").unwrap();
+        record(&dir, "v0.0.7", TEST_COMMIT).unwrap();
 
         assert!(
             needs_fetch(&dir, "v0.0.7"),
             "a matching stamp is not enough when the images are not named"
         );
 
-        std::fs::write(images_path(&dir), "{}").unwrap();
+        let names: Vec<&str> = IMAGE_VARIABLES.iter().map(|(name, _)| *name).collect();
+        std::fs::write(
+            images_path(&dir),
+            serde_json::to_string(&manifest(&names)).unwrap(),
+        )
+        .unwrap();
         assert!(!needs_fetch(&dir, "v0.0.7"));
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -687,8 +696,13 @@ mod tests {
     #[test]
     fn a_recorded_version_is_not_fetched_again() {
         let dir = std::env::temp_dir().join(format!("openbot-dep-same-{}", std::process::id()));
-        record(&dir, "v0.0.7").unwrap();
-        std::fs::write(images_path(&dir), "{}").unwrap();
+        record(&dir, "v0.0.7", TEST_COMMIT).unwrap();
+        let names: Vec<&str> = IMAGE_VARIABLES.iter().map(|(name, _)| *name).collect();
+        std::fs::write(
+            images_path(&dir),
+            serde_json::to_string(&manifest(&names)).unwrap(),
+        )
+        .unwrap();
         assert!(!needs_fetch(&dir, "v0.0.7"));
         assert!(
             needs_fetch(&dir, "v0.0.8"),
