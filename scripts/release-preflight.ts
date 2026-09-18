@@ -149,6 +149,19 @@ function checkDesktopBoundary(): void {
 }
 
 function checkReleaseWiring(): void {
+  const releaseProposalSource = read(".github/workflows/release.yml");
+  for (const evidence of [
+    "github.paginate(github.rest.pulls.list",
+    "package.json version must be a stable numeric SemVer",
+    "Number.isSafeInteger",
+    'refs/tags/v$version',
+    "Refusing to create a release PR for an existing version",
+  ]) {
+    if (!releaseProposalSource.includes(evidence)) {
+      fail(`release: Create release PR guard is missing ${evidence}`);
+    }
+  }
+
   const ci = workflow(".github/workflows/ci.yml");
   const desktop = workflow(".github/workflows/desktop.yml");
   const signing = workflow(".github/workflows/desktop-signing.yml");
