@@ -57,11 +57,12 @@ describe("desktop CSP", () => {
     expect(policy).toContain("connect-src");
     expect(policy).toContain("ipc:");
     expect(policy).toContain("http://ipc.localhost");
+    expect(policy).toContain("http://asset.localhost");
     expect(policy).toContain("object-src");
     expect(policy).toContain("'none'");
     expect(policy).not.toContain("*");
     expect(policy).not.toContain("'unsafe-eval'");
-    expect(policy).not.toMatch(/https?:\/\/(?!ipc\.localhost)/);
+    expect(policy).not.toMatch(/https?:\/\/(?!(?:ipc|asset)\.localhost\b)/);
     expect(policy).not.toMatch(/wss?:\/\//);
   });
 
