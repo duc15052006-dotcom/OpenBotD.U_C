@@ -160,6 +160,11 @@ export function ProviderPicker({
   // A problem, not a string: a sign-in failure carries the container's own output, and
   // stringifying it printed "[object Object]" where the diagnosis should have been.
   const [failure, setFailure] = useState<Problem | null>(null);
+  const [testingConnection, setTestingConnection] = useState(false);
+  const [connectionCheck, setConnectionCheck] = useState<{
+    fingerprint: string;
+    detail: string;
+  } | null>(null);
   const openRef = useRef(open);
   const signInRunRef = useRef(0);
 
@@ -296,14 +301,14 @@ export function ProviderPicker({
       containerBaseUrlIsValid &&
       model.trim().length > 0);
 
-  function continueWithChoice() {
-    if (!row || !login || !ready) return;
+  function currentChoice(): ModelChoice | null {
+    if (!row || !login || !ready) return null;
     const trimmedApiKey = apiKey.trim();
     const trimmedToken = token.trim();
     const trimmedBaseUrl = baseUrl.trim();
     const trimmedModel = model.trim();
     const trimmedContainerBaseUrl = containerBaseUrl.trim();
-    onChoose({
+    return {
       provider: row.id,
       login,
       ...((login === "api-key" || login === "endpoint") && trimmedApiKey
@@ -320,7 +325,41 @@ export function ProviderPicker({
         ? { containerBaseUrl: trimmedContainerBaseUrl }
         : {}),
       ...(trimmedModel ? { model: trimmedModel } : {}),
-    });
+    };
+  }
+
+  const choice = currentChoice();
+  // The fingerprint never leaves this component. Including the in-memory key makes changing even
+  // one credential byte invalidate a previous green test, without rendering or persisting the key.
+  const choiceFingerprint = choice ? JSON.stringify(choice) : null;
+  const connectionIsCurrent =
+    choiceFingerprint !== null &&
+    connectionCheck?.fingerprint === choiceFingerprint;
+
+  async function testConnection() {
+    const candidate = currentChoice();
+    if (!candidate) return;
+    const fingerprint = JSON.stringify(candidate);
+    setTestingConnection(true);
+    setFailure(null);
+    try {
+      const result = await invoke<{ detail: string }>("test_model_connection", {
+        root: root.trim(),
+        model: candidate,
+      });
+      setConnectionCheck({ fingerprint, detail: result.detail });
+    } catch (error) {
+      setConnectionCheck(null);
+      setFailure(asProblem(error));
+    } finally {
+      setTestingConnection(false);
+    }
+  }
+
+  function continueWithChoice() {
+    const candidate = currentChoice();
+    if (!candidate) return;
+    onChoose(candidate);
   }
 
   return (
@@ -624,6 +663,16 @@ export function ProviderPicker({
           {/* Said before it happens rather than diagnosed after the Bots stop answering. */}
           {failure && <InlineFailure problem={failure} />}
 
+          {connectionIsCurrent && connectionCheck ? (
+            <p className="lede" role="status">
+              ✓ {connectionCheck.detail}
+            </p>
+          ) : connectionCheck ? (
+            <p className="footnote" role="status">
+              Connection settings changed. Test the current connection again.
+            </p>
+          ) : null}
+
           {row.caution && (
             <p className="caution">
               {row.caution.says}{" "}
@@ -645,7 +694,15 @@ export function ProviderPicker({
         </button>
         <button
           type="button"
-          disabled={!row || !login || !ready}
+          className="quiet"
+          disabled={!choice || busy || testingConnection}
+          onClick={() => void testConnection()}
+        >
+          {testingConnection ? "Testing…" : "Test connection"}
+        </button>
+        <button
+          type="button"
+          disabled={!choice || busy || testingConnection}
           onClick={continueWithChoice}
         >
           Continue
