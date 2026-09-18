@@ -355,3 +355,21 @@ export type ComputerStatus = {
   /** Set when state is "unreachable", in words a person can act on. */
   reason?: string;
 };
+
+export type ComputerResourceMetrics = {
+  cpuPercent: number | null;
+  memoryUsedBytes: number | null;
+  memoryLimitBytes: number | null;
+  workspaceUsedBytes: number | null;
+  workspaceTotalBytes: number | null;
+  measuredAt: string;
+};
+
+export type ComputerResourceReport = {
+  botId: string;
+  state: ComputerState;
+  /** Absent unless the provider said this computer was ready without waking it. */
+  metrics?: ComputerResourceMetrics;
+  /** Set when state is unreachable. */
+  reason?: string;
+};
