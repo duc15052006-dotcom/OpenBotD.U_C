@@ -397,6 +397,8 @@ function checkReleaseWiring(): void {
     "Number.isSafeInteger",
     "next.every(Number.isSafeInteger)",
     "refs/tags/v$version",
+    "git merge-base --is-ancestor \"refs/tags/v$current\" HEAD",
+    "v$current exists but is not an ancestor of HEAD",
     "Refusing to create a release PR for an existing version",
   ]) {
     if (!releaseProposalSource.includes(evidence)) {
