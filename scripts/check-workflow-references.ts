@@ -31,6 +31,12 @@ for (const name of readdirSync(workflows).filter((file) => /\.ya?ml$/.test(file)
       continue;
     }
 
+    // External reusable workflows are owner/repo/.github/workflows/file.yml@ref. They are not
+    // filesystem references in this repository and are outside this check.
+    if (uses.includes("@") && !uses.startsWith("./")) {
+      continue;
+    }
+
     if (!uses.startsWith("./.github/workflows/")) {
       failures.push(
         `${name} job ${jobName}: local reusable workflow must start with ./.github/workflows/, got ${uses}`,
