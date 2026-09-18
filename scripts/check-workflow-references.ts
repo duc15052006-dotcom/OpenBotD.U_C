@@ -2,9 +2,14 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import YAML from "yaml";
 
+type WorkflowJob = {
+  uses?: unknown;
+  needs?: unknown;
+};
+
 type Workflow = {
   on?: unknown;
-  jobs?: Record<string, { uses?: unknown }>;
+  jobs?: Record<string, WorkflowJob>;
 };
 
 const root = resolve(import.meta.dir, "..");
@@ -23,6 +28,39 @@ for (const name of readdirSync(workflows).filter((file) => /\.ya?ml$/.test(file)
       }`,
     );
     continue;
+  }
+
+  if (name === "publish-release.yml") {
+    const jobs = parsed.jobs ?? {};
+    const expectedCalls: Record<string, string> = {
+      checks: "./.github/workflows/ci.yml",
+      "desktop-checks": "./.github/workflows/desktop.yml",
+    };
+    for (const [jobName, expected] of Object.entries(expectedCalls)) {
+      if (jobs[jobName]?.uses !== expected) {
+        failures.push(
+          `${name} job ${jobName}: expected release gate ${expected}, got ${String(
+            jobs[jobName]?.uses,
+          )}`,
+        );
+      }
+    }
+
+    for (const jobName of ["image", "component-images"]) {
+      const raw = jobs[jobName]?.needs;
+      const needs = Array.isArray(raw)
+        ? raw.filter((value): value is string => typeof value === "string")
+        : typeof raw === "string"
+          ? [raw]
+          : [];
+      for (const gate of ["checks", "desktop-checks"]) {
+        if (!needs.includes(gate)) {
+          failures.push(
+            `${name} job ${jobName}: publishing must wait for ${gate}`,
+          );
+        }
+      }
+    }
   }
 
   for (const [jobName, job] of Object.entries(parsed.jobs ?? {})) {
