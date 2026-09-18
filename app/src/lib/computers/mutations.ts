@@ -55,6 +55,28 @@ export function stopAllComputersMutationOptions(queryClient: QueryClient) {
   });
 }
 
+export function deleteQuarantinedDownloadMutationOptions(
+  queryClient: QueryClient,
+) {
+  return mutationOptions({
+    mutationFn: async (variables: { botId: string; id: string }) => {
+      await client("/api/computers/quarantine", {
+        method: "DELETE",
+        body: {
+          botId: variables.botId,
+          id: variables.id,
+          confirm: "DELETE_QUARANTINED_FILE",
+        },
+        fallback: "The quarantined file could not be deleted.",
+      });
+    },
+    onSuccess: (_result, variables) =>
+      queryClient.invalidateQueries({
+        queryKey: computerKeys.quarantine(variables.botId),
+      }),
+  });
+}
+
 /**
  * Replace the whole policy.
  *
