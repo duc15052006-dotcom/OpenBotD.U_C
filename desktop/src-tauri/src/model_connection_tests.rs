@@ -15,6 +15,55 @@ fn compatible_probe_keeps_local_http_available() {
 }
 
 #[test]
+fn compatible_probe_refuses_credentials_embedded_in_the_endpoint_url() {
+    for endpoint in [
+        "https://alice:secret@models.example/v1",
+        "https://alice@models.example/v1",
+        "https://:secret@models.example/v1",
+    ] {
+        let problem = models_probe_url(endpoint).expect_err("URL credentials must be refused");
+        assert!(problem.said.contains("must not contain credentials"));
+        assert!(problem.detail.is_none());
+        assert!(!problem.said.contains("alice"));
+        assert!(!problem.said.contains("secret"));
+    }
+}
+
+#[test]
+fn compatible_setup_refuses_credentials_in_host_and_container_endpoint_urls() {
+    for (base_url, container_base_url) in [
+        (
+            "https://alice:secret@models.example/v1",
+            "https://models.internal/v1",
+        ),
+        (
+            "https://models.example/v1",
+            "https://alice:secret@models.internal/v1",
+        ),
+    ] {
+        let choice = ChosenModel {
+            provider: "openai-compatible".into(),
+            login: "endpoint".into(),
+            api_key: Some("synthetic-api-key".into()),
+            base_url: Some(base_url.into()),
+            container_base_url: Some(container_base_url.into()),
+            model: Some("model-1".into()),
+            token: None,
+            saved: Some(false),
+        };
+        let problem = choice
+            .into_credential_with(std::path::Path::new("."), |_, _| {
+                panic!("typed compatible endpoint must not read a saved secret")
+            })
+            .expect_err("URL credentials must be refused");
+        assert!(problem.said.contains("must not contain credentials"));
+        assert!(problem.detail.is_none());
+        assert!(!problem.said.contains("alice"));
+        assert!(!problem.said.contains("secret"));
+    }
+}
+
+#[test]
 fn compatible_probe_refuses_cloud_metadata_endpoints_even_when_local_http_is_supported() {
     for endpoint in [
         "http://169.254.169.254/latest/meta-data",
