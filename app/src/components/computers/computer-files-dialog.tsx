@@ -47,7 +47,8 @@ export function ComputerFilesDialog({
       .then((listing) => {
         setEntries(
           [...listing.entries].sort((left, right) => {
-            if (left.kind !== right.kind) return left.kind === "folder" ? -1 : 1;
+            if (left.kind !== right.kind)
+              return left.kind === "folder" ? -1 : 1;
             return left.path.localeCompare(right.path);
           }),
         );
@@ -55,7 +56,9 @@ export function ComputerFilesDialog({
       })
       .catch((error: unknown) =>
         setProblem(
-          error instanceof Error ? error.message : "The files could not be loaded.",
+          error instanceof Error
+            ? error.message
+            : "The files could not be loaded.",
         ),
       )
       .finally(() => setLoading(false));
@@ -99,8 +102,8 @@ export function ComputerFilesDialog({
         <DialogHeader>
           <DialogTitle>{botName}&apos;s files</DialogTitle>
           <DialogDescription>
-            Text files inside this Bot&apos;s persistent workspace. Reads and saves still pass through
-            the computer policy and audit boundary.
+            Text files inside this Bot&apos;s persistent workspace. Reads and
+            saves still pass through the computer policy and audit boundary.
           </DialogDescription>
         </DialogHeader>
 
@@ -154,7 +157,8 @@ export function ComputerFilesDialog({
             )}
             {listingTruncated ? (
               <p className="border-t border-border px-3 py-2 text-amber-700 text-xs dark:text-amber-300">
-                The workspace has more entries than this bounded listing can show.
+                The workspace has more entries than this bounded listing can
+                show.
               </p>
             ) : null}
           </div>
@@ -163,7 +167,10 @@ export function ComputerFilesDialog({
             {selectedPath ? (
               <>
                 <div className="flex items-center justify-between gap-3">
-                  <p className="truncate font-medium text-sm" title={selectedPath}>
+                  <p
+                    className="truncate font-medium text-sm"
+                    title={selectedPath}
+                  >
                     {selectedPath}
                   </p>
                   {truncated ? (
@@ -180,8 +187,9 @@ export function ComputerFilesDialog({
                 />
                 {truncated ? (
                   <p className="text-muted-foreground text-xs">
-                    Saving is disabled because only the first part of this file was returned. This
-                    prevents a preview from overwriting the full file.
+                    Saving is disabled because only the first part of this file
+                    was returned. This prevents a preview from overwriting the
+                    full file.
                   </p>
                 ) : null}
               </>

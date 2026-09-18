@@ -78,11 +78,17 @@ function DelegationRow({
         )}
       />
       <span className="min-w-0 flex-1 truncate text-muted-foreground">
-        <span className="font-medium text-foreground" title={delegation.fromBotId}>
+        <span
+          className="font-medium text-foreground"
+          title={delegation.fromBotId}
+        >
           {nameFor(delegation.fromBotId)}
         </span>
         {" → "}
-        <span className="font-medium text-foreground" title={delegation.toBotId}>
+        <span
+          className="font-medium text-foreground"
+          title={delegation.toBotId}
+        >
           {nameFor(delegation.toBotId)}
         </span>
         {" · "}

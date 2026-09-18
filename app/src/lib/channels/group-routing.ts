@@ -24,7 +24,9 @@ export function resolveGroupMention(input: {
   ) {
     return null;
   }
-  return input.agentProfiles?.find((profile) => profile.id === targetId) ?? null;
+  return (
+    input.agentProfiles?.find((profile) => profile.id === targetId) ?? null
+  );
 }
 
 function safeDisplayLabel(value: string): string {
@@ -50,7 +52,9 @@ export function groupMentionInstruction(input: {
   targetId: string;
   targetName: string;
 }): string {
-  const label = JSON.stringify(safeDisplayLabel(input.targetName) || "mentioned Bot");
+  const label = JSON.stringify(
+    safeDisplayLabel(input.targetName) || "mentioned Bot",
+  );
   const target = JSON.stringify(input.targetId);
   const coordinator = JSON.stringify(input.coordinatorId);
   return [

@@ -116,9 +116,13 @@ export function channelDelegationsQueryOptions(channelId: string) {
   return queryOptions({
     queryKey: channelKeys.delegations(channelId),
     queryFn: async (): Promise<ChannelDelegation[]> =>
-      client(`/api/channels/${encodeURIComponent(channelId)}/delegations`, "delegations", {
-        fallback: "Could not load delegation status",
-      }),
+      client(
+        `/api/channels/${encodeURIComponent(channelId)}/delegations`,
+        "delegations",
+        {
+          fallback: "Could not load delegation status",
+        },
+      ),
     // A handoff can move from queued to working to delivered in a few seconds. Poll only while the
     // channel screen owns this query; TanStack Query stops background refetches for hidden tabs.
     refetchInterval: 2_000,

@@ -41,7 +41,12 @@ export function cpuCapacityFromMax(
   if (!quotaRaw || quotaRaw === "max" || !periodRaw) return fallback;
   const quota = Number(quotaRaw);
   const period = Number(periodRaw);
-  if (!Number.isFinite(quota) || !Number.isFinite(period) || quota <= 0 || period <= 0) {
+  if (
+    !Number.isFinite(quota) ||
+    !Number.isFinite(period) ||
+    quota <= 0 ||
+    period <= 0
+  ) {
     return fallback;
   }
   return Math.max(quota / period, 0.01);
@@ -72,7 +77,9 @@ async function processCpuPercent(sampleMs: number): Promise<number> {
   const elapsedUsec = Math.max((performance.now() - started) * 1_000, 1);
   const used = process.cpuUsage(first);
   const capacity = Math.max(1, availableParallelism());
-  return finiteNonNegative(((used.user + used.system) / elapsedUsec / capacity) * 100);
+  return finiteNonNegative(
+    ((used.user + used.system) / elapsedUsec / capacity) * 100,
+  );
 }
 
 async function memoryMetrics(): Promise<{
