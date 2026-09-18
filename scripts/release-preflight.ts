@@ -347,6 +347,8 @@ function checkDesktopUpdatePath(): void {
     }
   }
 
+  const sourceShaExpression =
+    "${{ github.event.pull_request.head.sha || github.sha }}";
   for (const [name, source] of [
     ["Desktop", desktopWorkflow],
     ["Windows signing", signingWorkflow],
@@ -356,9 +358,14 @@ function checkDesktopUpdatePath(): void {
         `desktop: ${name} build does not bind update checks to the repository that built the artifact`,
       );
     }
-    if (!source.includes("OPENBOT_SOURCE_SHA: ${{ github.sha }}")) {
+    if (!source.includes(`ref: ${sourceShaExpression}`)) {
       fail(
-        `desktop: ${name} build does not stamp the source commit into diagnostics`,
+        `desktop: ${name} build checkout is not pinned to the source commit expression`,
+      );
+    }
+    if (!source.includes(`OPENBOT_SOURCE_SHA: ${sourceShaExpression}`)) {
+      fail(
+        `desktop: ${name} build does not stamp the exact checked-out source commit into diagnostics`,
       );
     }
   }

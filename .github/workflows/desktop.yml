@@ -111,7 +111,7 @@ jobs:
           # The native updater checks the repository that produced this exact artifact. Fork builds
           # therefore check their own releases instead of silently pointing back at another project.
           OPENBOT_RELEASE_REPOSITORY: ${{ github.repository }}
-          OPENBOT_SOURCE_SHA: ${{ github.sha }}
+          OPENBOT_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Verify packaged Mac version and ad-hoc signature
         if: matrix.platform.name == 'macos'
         run: |
