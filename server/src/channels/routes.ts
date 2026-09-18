@@ -17,6 +17,7 @@ import {
   AgentNotFoundError,
   type AgentProfileStore,
 } from "../agents/profile-store";
+import { HANDOFF_KIND } from "../agents/handoff";
 import type { AgentActor, AgentProfile } from "../agents/profile-types";
 import { type AuditStore, recordAuditEvent } from "../audit";
 import type { AppVariables } from "../auth/guards";
@@ -809,6 +810,97 @@ export function createChannelStore(
         },
         { isolationLevel: "read committed" },
       );
+    },
+
+    async listDelegations(actor, channelId) {
+      /*
+       * Resolve the thread through the caller's membership first.
+       *
+       * Work items are shared deployment infrastructure and their payload names Bots, tasks and
+       * threads. Querying them by an arbitrary channel id would turn this endpoint into a roster and
+       * conversation oracle, so there is no queue read until membership and non-deletion are proven.
+       */
+      const [mapped] = await database
+        .select({ threadId: intelligenceChannelMappings.threadId })
+        .from(intelligenceChannelMappings)
+        .innerJoin(
+          channelMemberships,
+          and(
+            eq(channelMemberships.channelId, intelligenceChannelMappings.channelId),
+            eq(channelMemberships.userId, actor.id),
+          ),
+        )
+        .innerJoin(
+          channels,
+          and(
+            eq(channels.id, intelligenceChannelMappings.channelId),
+            isNull(channels.deletedAt),
+          ),
+        )
+        .where(eq(intelligenceChannelMappings.channelId, channelId))
+        .limit(1);
+      if (!mapped) throw new ChannelNotFoundError(channelId);
+
+      const rows = await database
+        .select({
+          key: workItems.key,
+          payload: workItems.payload,
+          attempts: workItems.attempts,
+          claimedBy: workItems.claimedBy,
+          leaseUntil: workItems.leaseUntil,
+          finishedAt: workItems.finishedAt,
+          lastError: workItems.lastError,
+          createdAt: workItems.createdAt,
+          updatedAt: workItems.updatedAt,
+        })
+        .from(workItems)
+        .where(
+          and(
+            eq(workItems.kind, HANDOFF_KIND),
+            // Original hops only. Relay/notice rows are implementation details of one delegation
+            // and showing them would make one ask appear as two or three separate jobs.
+            like(workItems.key, "hop:%"),
+            sql`${workItems.payload}->>'threadId' = ${mapped.threadId}`,
+          ),
+        )
+        .orderBy(desc(workItems.createdAt))
+        .limit(20);
+
+      const now = Date.now();
+      return rows.flatMap<ChannelDelegation>((row) => {
+        const payload = (row.payload ?? {}) as Record<string, unknown>;
+        const fromBotId =
+          typeof payload.fromBotId === "string" ? payload.fromBotId : null;
+        const toBotId =
+          typeof payload.toBotId === "string" ? payload.toBotId : null;
+        const task = typeof payload.task === "string" ? payload.task : null;
+        if (!fromBotId || !toBotId || !task) return [];
+
+        const state: ChannelDelegation["state"] =
+          row.finishedAt !== null
+            ? "delivered"
+            : row.attempts >= DEFAULT_MAX_ATTEMPTS
+              ? "failed"
+              : row.claimedBy !== null &&
+                  row.leaseUntil !== null &&
+                  row.leaseUntil.getTime() > now
+                ? "working"
+                : "queued";
+
+        return [
+          {
+            key: row.key,
+            fromBotId,
+            toBotId,
+            task,
+            state,
+            attempts: row.attempts,
+            lastError: row.lastError,
+            createdAt: row.createdAt,
+            updatedAt: row.updatedAt,
+          },
+        ];
+      });
     },
 
     async signalBusy(threadId, busy) {
