@@ -84,7 +84,9 @@ test("read-only viewers can inspect metadata but cannot mutate it", () => {
   expect(
     (view.getByLabelText("Upload knowledge file") as HTMLInputElement).disabled,
   ).toBe(true);
-  expect(view.getByRole("button", { name: "Remove" })).toBeDisabled();
+  expect(
+    (view.getByRole("button", { name: "Remove" }) as HTMLButtonElement).disabled,
+  ).toBe(true);
   expect(
     view.getByText(/you cannot change them/i),
   ).toBeTruthy();
