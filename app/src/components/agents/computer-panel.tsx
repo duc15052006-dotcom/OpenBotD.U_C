@@ -99,7 +99,12 @@ export function ComputerPanel({ agentId }: { agentId: string }) {
           </div>
           <Button
             disabled={status.isFetching || busy}
-            onClick={() => void status.refetch()}
+            onClick={() =>
+              void Promise.all([
+                status.refetch(),
+                ...(state === "ready" ? [metrics.refetch()] : []),
+              ])
+            }
             size="sm"
             variant="ghost"
           >
