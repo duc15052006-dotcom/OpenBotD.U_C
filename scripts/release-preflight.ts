@@ -1478,6 +1478,7 @@ function checkDurableWorkflowState(): void {
   const migration = read("server/drizzle/0043_workflow_state.sql");
   const wake = read("server/src/workflows/wake.ts");
   const server = read("server/src/index.ts");
+  const assetMigration = read("server/drizzle/0044_workflow_assets.sql");
 
   for (const evidence of [
     'workflowRunStatus = pgEnum("workflow_run_status"',
@@ -1518,6 +1519,40 @@ function checkDurableWorkflowState(): void {
   }
   if (!server.includes("sweepWorkflowWaits(workflowWake)")) {
     fail("workflows: durable wake bridge is not running from the server");
+  }
+
+  for (const evidence of [
+    "export const workflowAssets = pgTable(",
+    'workflowAssetDirection = pgEnum("workflow_asset_direction"',
+    'workflowAssetMediaKind = pgEnum("workflow_asset_media_kind"',
+  ]) {
+    if (!schema.includes(evidence)) {
+      fail(`workflows: asset ledger schema is missing ${evidence}`);
+    }
+  }
+  for (const evidence of [
+    "safeAssetRef(",
+    'ref.startsWith("workspace:")',
+    "attachmentVisibleToWorkflow(",
+    "eq(attachments.channelId, run.channelId)",
+    "eq(channelAgents.agentId, identity.agentId)",
+    "addAsset(",
+    "listAssets(",
+    "removeAsset(",
+  ]) {
+    if (!store.includes(evidence)) {
+      fail(`workflows: asset isolation boundary is missing ${evidence}`);
+    }
+  }
+  for (const evidence of [
+    'CREATE TYPE "public"."workflow_asset_direction"',
+    'CREATE TYPE "public"."workflow_asset_media_kind"',
+    'CREATE TABLE "workflow_assets"',
+    "workflow_assets_step_ref_idx",
+  ]) {
+    if (!assetMigration.includes(evidence)) {
+      fail(`workflows: asset migration is missing ${evidence}`);
+    }
   }
 
   for (const evidence of [
