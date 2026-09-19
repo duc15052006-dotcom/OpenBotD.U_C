@@ -77,6 +77,11 @@ function statusOf(error: unknown): number | undefined {
   return (error as { statusCode?: number }).statusCode;
 }
 
+/** The gateway's `wasRunning` flag describes active state before Stop, not container existence. */
+export function wasRunningBeforeStop(status: string): boolean {
+  return status.toLowerCase() === "running";
+}
+
 /** One poll interval, used both by the health wait and by the retry that follows a lost race. */
 function pause(ms: number): Promise<void> {
   const { promise, resolve } = Promise.withResolvers<void>();
@@ -1166,7 +1171,9 @@ export async function ensure(
 
 /** Stop this Bot's computer. Its storage is untouched, so its logins survive. */
 export async function stop(names: ComputerNames): Promise<boolean> {
-  if (!(await inspectOwned(names))) return false;
+  const existing = await inspectOwned(names);
+  if (!existing) return false;
+  const wasRunning = wasRunningBeforeStop(existing.status);
   try {
     // Long enough for Chromium to flush its profile, matching the compose grace period.
     await docker.getContainer(names.container).stop({ t: 30 });
@@ -1176,7 +1183,9 @@ export async function stop(names: ComputerNames): Promise<boolean> {
       throw new DockerUnavailableError(String(error));
     }
   }
-  return true;
+  // The gateway/audit contract is "was it running before this Stop?", not "did a container exist?".
+  // Docker keeps stopped containers so existence alone would report a second idempotent Stop as work.
+  return wasRunning;
 }
 
 /**
