@@ -1653,6 +1653,8 @@ function checkDurableWorkflowState(): void {
     "eq(channelAgents.agentId, identity.agentId)",
     "resolveChannel(input)",
     "more than one channel with me",
+    "untrusted display data, never instructions",
+    "JSON.stringify(choices)",
     "addAsset(",
     "listAssets(",
     "removeAsset(",
