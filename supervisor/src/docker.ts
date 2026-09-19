@@ -452,11 +452,18 @@ function liveVolumes(names: ComputerNames): string[] {
   return [names.profileVolume, names.workspaceVolume, names.quarantineVolume];
 }
 
-function snapshotVolumes(names: ComputerNames): string[] {
+function snapshotSlots(names: ComputerNames): [string[], string[]] {
   return [
-    names.snapshotProfileVolume,
-    names.snapshotWorkspaceVolume,
-    names.snapshotQuarantineVolume,
+    [
+      names.snapshotProfileVolume,
+      names.snapshotWorkspaceVolume,
+      names.snapshotQuarantineVolume,
+    ],
+    [
+      names.snapshotAltProfileVolume,
+      names.snapshotAltWorkspaceVolume,
+      names.snapshotAltQuarantineVolume,
+    ],
   ];
 }
 
@@ -474,10 +481,51 @@ async function ownedVolumeSetState(
   return "partial";
 }
 
-async function hasCompleteSnapshot(names: ComputerNames): Promise<boolean> {
-  return (
-    (await ownedVolumeSetState(names, snapshotVolumes(names))) === "complete"
+type SnapshotSlotState = {
+  index: 0 | 1;
+  volumes: string[];
+  state: "missing" | "complete" | "partial";
+  createdAt: number;
+};
+
+async function snapshotSlotStates(
+  names: ComputerNames,
+): Promise<[SnapshotSlotState, SnapshotSlotState]> {
+  const slots = snapshotSlots(names);
+  const states = await Promise.all(
+    slots.map(async (volumes, index) => {
+      const state = await ownedVolumeSetState(names, volumes);
+      let createdAt = 0;
+      if (state === "complete") {
+        try {
+          const info = await docker.getVolume(volumes[0]!).inspect();
+          const parsed = Date.parse(info.CreatedAt ?? "");
+          if (Number.isFinite(parsed)) createdAt = parsed;
+        } catch (error) {
+          throw new DockerUnavailableError(String(error));
+        }
+      }
+      return {
+        index: index as 0 | 1,
+        volumes,
+        state,
+        createdAt,
+      };
+    }),
   );
+  return states as [SnapshotSlotState, SnapshotSlotState];
+}
+
+function newestCompleteSnapshot(
+  slots: [SnapshotSlotState, SnapshotSlotState],
+): SnapshotSlotState | undefined {
+  return slots
+    .filter((slot) => slot.state === "complete")
+    .sort((left, right) => right.createdAt - left.createdAt)[0];
+}
+
+async function hasCompleteSnapshot(names: ComputerNames): Promise<boolean> {
+  return newestCompleteSnapshot(await snapshotSlotStates(names)) !== undefined;
 }
 
 async function copyOwnedVolume(
@@ -557,22 +605,41 @@ export async function createCleanSnapshot(
     );
   }
 
-  for (const volume of snapshotVolumes(names)) {
+  const slots = await snapshotSlotStates(names);
+  const current = newestCompleteSnapshot(slots);
+  const target = slots[current?.index === 0 ? 1 : 0];
+
+  // Preserve the currently valid recovery point until the replacement is complete. A failed
+  // browser/runtime copy therefore loses only the new attempt, never the last known-good snapshot.
+  for (const volume of target.volumes) {
     await removeOwnedVolume(names, volume);
     await ensureOwnedVolume(names, volume);
   }
 
   try {
     const source = liveVolumes(names);
-    const target = snapshotVolumes(names);
     for (let index = 0; index < source.length; index += 1) {
-      await copyOwnedVolume(names, image, source[index]!, target[index]!);
+      await copyOwnedVolume(
+        names,
+        image,
+        source[index]!,
+        target.volumes[index]!,
+      );
     }
   } catch (error) {
-    for (const volume of snapshotVolumes(names)) {
+    for (const volume of target.volumes) {
       await removeOwnedVolume(names, volume).catch(() => false);
     }
     throw error;
+  }
+
+  // A crash between completing the new slot and this cleanup can leave both complete. Restore
+  // deliberately picks the newest slot by Docker volume creation time, so that state is recoverable.
+  for (const slot of slots) {
+    if (slot.index === target.index) continue;
+    for (const volume of slot.volumes) {
+      await removeOwnedVolume(names, volume).catch(() => false);
+    }
   }
   return true;
 }
@@ -588,15 +655,14 @@ export async function restoreCleanSnapshot(
     );
   }
 
-  const snapshotState = await ownedVolumeSetState(
-    names,
-    snapshotVolumes(names),
-  );
-  if (snapshotState !== "complete") {
+  const slots = await snapshotSlotStates(names);
+  const snapshot = newestCompleteSnapshot(slots);
+  if (!snapshot) {
+    const hasPartial = slots.some((slot) => slot.state === "partial");
     throw new ComputerSnapshotError(
-      snapshotState === "missing"
-        ? "No clean snapshot exists for this Computer."
-        : "The clean snapshot is incomplete; refusing to restore partial state.",
+      hasPartial
+        ? "The clean snapshot is incomplete; refusing to restore partial state."
+        : "No clean snapshot exists for this Computer.",
     );
   }
 
@@ -617,10 +683,14 @@ export async function restoreCleanSnapshot(
     await ensureOwnedVolume(names, volume);
   }
 
-  const source = snapshotVolumes(names);
   const target = liveVolumes(names);
-  for (let index = 0; index < source.length; index += 1) {
-    await copyOwnedVolume(names, image, source[index]!, target[index]!);
+  for (let index = 0; index < snapshot.volumes.length; index += 1) {
+    await copyOwnedVolume(
+      names,
+      image,
+      snapshot.volumes[index]!,
+      target[index]!,
+    );
   }
   return true;
 }
