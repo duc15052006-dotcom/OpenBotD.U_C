@@ -47,6 +47,7 @@ import {
   type PolicyDecision,
 } from "./policy";
 import type { ComputerLocation, ComputerProvider } from "./provider";
+import type { ComputerResourceProfile } from "./resource-profile";
 import type {
   ActionResult,
   ClickInput,
@@ -311,7 +312,11 @@ export function createComputerGateway(
    * Bot may browse and the wrong one here, where loopback is the normal case.
    */
   async function locate(botId: string): Promise<string> {
-    const address = await provider.locate(botId);
+    const resourceProfile = await options.resourceProfile?.(botId);
+    const address = await provider.locate(
+      botId,
+      resourceProfile ? { resourceProfile } : undefined,
+    );
     const verdict = checkComputerAddress(address);
     if (!verdict.allowed) {
       throw new ComputerUnavailableError(verdict.reason);
