@@ -187,6 +187,15 @@ function checkComputerSandboxBoundary(): void {
       "computer: Docker may autorestart an Agent Computer outside the OpenBot app lifecycle",
     );
   }
+  for (const evidence of [
+    'existing.restartPolicyName !== "no"',
+    'RestartPolicy: { Name: "no" }',
+    "restartPolicyName: info.HostConfig.RestartPolicy.Name",
+  ]) {
+    if (!supervisor.includes(evidence)) {
+      fail(`computer: legacy restart-policy migration is missing ${evidence}`);
+    }
+  }
 
   for (const evidence of [
     "computerMemoryBytes(process.env.COMPUTER_MEMORY_BYTES)",
