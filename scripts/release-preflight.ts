@@ -318,6 +318,7 @@ function checkComputerSandboxBoundary(): void {
     "docker.listVolumes",
     "newestCompleteSnapshot",
     "Preserve the currently valid recovery point until the replacement is complete",
+    "Never leave a mixed profile/workspace/quarantine set after a failed restore",
     "Snapshot-only state after Reset",
     "Stop the Computer before creating a clean snapshot.",
     "Stop the Computer before restoring its clean snapshot.",
