@@ -51,14 +51,13 @@ export function createWorkflowRunner(options: {
         agentId: input.agentId,
       };
       const plan = await workflowStore.get(identity, input.workflowId);
-      if (!plan || plan.status !== "active") return;
+      if (plan?.status !== "active") return;
 
       const step = plan.steps.find(
         (candidate) => candidate.key === input.stepKey,
       );
       if (
-        !step ||
-        step.status !== "running" ||
+        step?.status !== "running" ||
         step.attempts !== input.expectedAttempt
       ) {
         return;
