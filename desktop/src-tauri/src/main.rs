@@ -920,6 +920,21 @@ fn forbidden_resolved_probe_ip(ip: std::net::IpAddr) -> bool {
                 || (octets[0] == 100 && (64..=127).contains(&octets[1]))
         }
         std::net::IpAddr::V6(ip) => {
+            // IPv4 can be carried inside IPv6 syntax. Apply the exact same resolved-address
+            // policy to mapped, legacy compatible and well-known NAT64 forms so an AAAA answer
+            // cannot turn a blocked IPv4 destination into an allowed credential-bearing probe.
+            let bytes = ip.octets();
+            let mapped =
+                bytes[..10].iter().all(|byte| *byte == 0) && bytes[10] == 0xff && bytes[11] == 0xff;
+            let compatible = bytes[..12].iter().all(|byte| *byte == 0);
+            let nat64 = bytes[..4] == [0x00, 0x64, 0xff, 0x9b]
+                && bytes[4..12].iter().all(|byte| *byte == 0);
+            if mapped || compatible || nat64 {
+                return forbidden_resolved_probe_ip(std::net::IpAddr::V4(
+                    std::net::Ipv4Addr::new(bytes[12], bytes[13], bytes[14], bytes[15]),
+                ));
+            }
+
             let first = ip.segments()[0];
             ip.is_unspecified()
                 // fe80::/10. Written explicitly because Ipv6Addr::is_unicast_link_local is newer
