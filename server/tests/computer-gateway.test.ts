@@ -42,6 +42,7 @@ const SNAPSHOT: SnapshotResult = {
 function fakeComputer(options?: {
   stopResult?: { wasRunning: boolean };
   resetResult?: { cleared: boolean };
+  restoreResult?: { restored: boolean };
   locations?: ComputerLocation[];
   routes?: Record<string, (init?: RequestInit) => Response | Promise<Response>>;
   /** Which run of the computer this stands for. Absent means a provider that cannot say. */
@@ -53,6 +54,7 @@ function fakeComputer(options?: {
   const requests: Array<{ url: string; init?: RequestInit }> = [];
   const stopResult = options?.stopResult ?? { wasRunning: true };
   const resetResult = options?.resetResult ?? { cleared: true };
+  const restoreResult = options?.restoreResult ?? { restored: true };
   const locations = options?.locations ?? [];
   const result = (action: string) => ({
     action,
@@ -76,6 +78,10 @@ function fakeComputer(options?: {
     reset: async (botId) => {
       calls.push(`reset:${botId}`);
       return resetResult;
+    },
+    restoreSnapshot: async (botId) => {
+      calls.push(`restore:${botId}`);
+      return restoreResult;
     },
     list: async () => locations,
   };
@@ -795,6 +801,65 @@ describe("the computer gateway", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.eventType).toBe("computer.stopped");
     expect(rows[0]?.targetId).toBe("bot-2");
+  });
+
+  test("restoreComputerSnapshot records the restore even when clearing stale refs fails", async () => {
+    const { provider, fetchImpl, calls } = fakeComputer({
+      restoreResult: { restored: true },
+    });
+    const { store, rows } = fakeAudit();
+    const snapshots: SnapshotStore = {
+      ...createInMemorySnapshotStore(),
+      clear: async () => {
+        throw new Error("connection reset by peer");
+      },
+    };
+    const gateway = createComputerGateway({
+      provider,
+      fetchImpl,
+      auditStore: store,
+      policy: () => PERMISSIVE,
+      snapshots,
+    });
+
+    await expect(
+      gateway.restoreComputerSnapshot("bot-1", ACTOR),
+    ).rejects.toThrow("connection reset by peer");
+
+    expect(calls).toContain("restore:bot-1");
+    expect(rows.map((row) => row.eventType)).toContain(
+      "computer.snapshot_restored",
+    );
+    expect(rows[0]?.targetId).toBe("bot-1");
+  });
+
+  test("restoreComputerSnapshot records the restore even when clearing screenshots fails", async () => {
+    const { provider, fetchImpl, calls } = fakeComputer({
+      restoreResult: { restored: true },
+    });
+    const { store, rows } = fakeAudit();
+    const gateway = createComputerGateway({
+      provider,
+      fetchImpl,
+      auditStore: store,
+      policy: () => PERMISSIVE,
+      pageFrames: {
+        clear: async () => {
+          throw new Error("statement timeout");
+        },
+      } as unknown as NonNullable<
+        Parameters<typeof createComputerGateway>[0]["pageFrames"]
+      >,
+    });
+
+    await expect(
+      gateway.restoreComputerSnapshot("bot-1", ACTOR),
+    ).rejects.toThrow("statement timeout");
+
+    expect(calls).toContain("restore:bot-1");
+    expect(rows.map((row) => row.eventType)).toContain(
+      "computer.snapshot_restored",
+    );
   });
 
   test("resetComputer returns true when state was cleared and audits with the bot id as target", async () => {
