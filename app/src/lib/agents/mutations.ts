@@ -3,6 +3,7 @@ import { client } from "@/lib/client";
 import {
   type AgentInstructionsSettings,
   type AgentKnowledgeSettings,
+  type AgentMemorySettings,
   type AgentModelConnection,
   type AgentModelProvider,
   type AgentModelSettings,
@@ -130,6 +131,62 @@ export function testAgentModelMutationOptions() {
       client(`${agentApiPath(agentId)}/model/test`, "connection", {
         method: "POST",
         fallback: "Could not test the model connection",
+      }),
+  });
+}
+
+export function saveAgentMemoryMutationOptions(queryClient: QueryClient) {
+  return mutationOptions({
+    mutationFn: (variables: {
+      agentId: string;
+      memory: string;
+      baseRevisionId: string | null;
+    }): Promise<AgentMemorySettings> =>
+      client(`${agentApiPath(variables.agentId)}/memory`, "memory", {
+        method: "PUT",
+        body: {
+          memory: variables.memory,
+          baseRevisionId: variables.baseRevisionId,
+        },
+        fallback: "Could not save Agent memory",
+      }),
+    onSuccess: (memory, variables) => {
+      queryClient.setQueryData(agentKeys.memory(variables.agentId), memory);
+      void queryClient.invalidateQueries({
+        queryKey: agentKeys.memoryHistory(variables.agentId),
+      });
+    },
+    onError: (_error, variables) =>
+      queryClient.invalidateQueries({
+        queryKey: agentKeys.memory(variables.agentId),
+      }),
+  });
+}
+
+export function undoAgentMemoryMutationOptions(queryClient: QueryClient) {
+  return mutationOptions({
+    mutationFn: (variables: {
+      agentId: string;
+      revisionId: string;
+      baseRevisionId: string | null;
+    }): Promise<AgentMemorySettings> =>
+      client(`${agentApiPath(variables.agentId)}/memory/undo`, "memory", {
+        method: "POST",
+        body: {
+          revisionId: variables.revisionId,
+          baseRevisionId: variables.baseRevisionId,
+        },
+        fallback: "Could not restore that Agent memory revision",
+      }),
+    onSuccess: (memory, variables) => {
+      queryClient.setQueryData(agentKeys.memory(variables.agentId), memory);
+      void queryClient.invalidateQueries({
+        queryKey: agentKeys.memoryHistory(variables.agentId),
+      });
+    },
+    onError: (_error, variables) =>
+      queryClient.invalidateQueries({
+        queryKey: agentKeys.memory(variables.agentId),
       }),
   });
 }
