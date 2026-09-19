@@ -257,8 +257,7 @@ export async function dispatchClaimedWorkflowWaits(
        */
       if (item.attempts >= maxAttempts) {
         try {
-          const failure =
-            `Autonomous wait continuation exhausted its retry budget: ${reason}`;
+          const failure = `Autonomous wait continuation exhausted its retry budget: ${reason}`;
           if (resumed) {
             await options.store.failStep(
               { ownerUserId, agentId },
