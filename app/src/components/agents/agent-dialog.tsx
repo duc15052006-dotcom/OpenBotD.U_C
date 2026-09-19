@@ -2,6 +2,7 @@ import {
   IconAdjustments,
   IconArrowsExchange,
   IconBook,
+  IconBrain,
   IconClock,
   IconCpu,
   IconPencil,
@@ -20,6 +21,7 @@ import { ComputerScreenDialog } from "@/components/computers/computer-screen-dia
 import { HandoffPanel } from "@/components/agents/handoff-panel";
 import { InstructionsPanel } from "@/components/agents/instructions-panel";
 import { KnowledgePanel } from "@/components/agents/knowledge-panel";
+import { MemoryPanel } from "@/components/agents/memory-panel";
 import { ModelSettingsPanel } from "@/components/agents/model-settings-panel";
 import { SkillsPanel } from "@/components/agents/skills-panel";
 import { RoutinesList } from "@/components/routines/routines-list";
@@ -124,6 +126,7 @@ const SECTIONS = [
   { id: "instructions", name: "Instructions", icon: IconPencil },
   { id: "skills", name: "Skills", icon: IconPuzzle },
   { id: "knowledge", name: "Knowledge", icon: IconBook },
+  { id: "memory", name: "Memory", icon: IconBrain },
   { id: "access", name: "Access", icon: IconPuzzle },
   { id: "connection", name: "Connection", icon: IconPlugConnected },
   { id: "handoff", name: "Handoff", icon: IconArrowsExchange },
@@ -245,6 +248,8 @@ function AgentDialogBody({ agentId }: { agentId: string }) {
               <SkillsPanel agentId={agentId} />
             ) : section === "knowledge" ? (
               <KnowledgePanel agentId={agentId} />
+            ) : section === "memory" ? (
+              <MemoryPanel agentId={agentId} />
             ) : section === "access" ? (
               <AccessSection agentId={agentId} />
             ) : section === "connection" ? (
