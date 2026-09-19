@@ -228,7 +228,9 @@ function toAsset(row: WorkflowAssetRow): WorkflowAsset {
 const ATTACHMENT_REF =
   /^attachment:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 
-function safeAssetRef(value: string):
+function safeAssetRef(
+  value: string,
+):
   | { kind: "attachment"; value: string; attachmentId: string }
   | { kind: "workspace"; value: string } {
   const ref = textWithin(
@@ -548,10 +550,7 @@ export function createWorkflowStore(database: Database): WorkflowStore {
       .from(attachments)
       .innerJoin(
         channels,
-        and(
-          eq(channels.id, attachments.channelId),
-          isNull(channels.deletedAt),
-        ),
+        and(eq(channels.id, attachments.channelId), isNull(channels.deletedAt)),
       )
       .innerJoin(
         channelMemberships,
