@@ -98,8 +98,8 @@ function ComputersPage() {
       : snapshotState.error
         ? snapshotState.error.message
         : stopAll.error
-        ? stopAll.error.message
-        : null;
+          ? stopAll.error.message
+          : null;
   const hostProblem = hostAccess.error
     ? hostAccess.error.message
     : requestGrant.error
@@ -119,16 +119,10 @@ function ComputersPage() {
     setState.mutate({ action, botId }, { onSettled: () => setBusy(null) });
   };
 
-  const runSnapshot = (
-    botId: string,
-    action: "snapshot" | "restore",
-  ) => {
+  const runSnapshot = (botId: string, action: "snapshot" | "restore") => {
     setBusy(botId);
     setSnapshotConfirming(null);
-    snapshotState.mutate(
-      { action, botId },
-      { onSettled: () => setBusy(null) },
-    );
+    snapshotState.mutate({ action, botId }, { onSettled: () => setBusy(null) });
   };
 
   const showScreen = async (botId: string, running: boolean) => {
@@ -509,10 +503,10 @@ function ComputersPage() {
         downloads, <strong>Restart</strong> cycles it without deleting saved
         state, and <strong>Stop</strong> releases runtime resources while
         keeping its profile and workspace. <strong>Snapshot</strong> saves one
-        clean recovery point while stopped, and <strong>Restore snapshot</strong>{" "}
-        replaces current persistent state from it. <strong>Reset</strong> deletes its
-        profile, workspace and quarantine and starts clean. Lifecycle actions
-        are recorded in{" "}
+        clean recovery point while stopped, and{" "}
+        <strong>Restore snapshot</strong> replaces current persistent state from
+        it. <strong>Reset</strong> deletes its profile, workspace and quarantine
+        and starts clean. Lifecycle actions are recorded in{" "}
         <Link className="underline" to="/admin/audit">
           Audit
         </Link>
