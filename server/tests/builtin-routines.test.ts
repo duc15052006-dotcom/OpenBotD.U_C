@@ -227,17 +227,20 @@ describe("dispatch", () => {
   test("schedule_wake reaches createOneShot with connection-derived identity", async () => {
     const calls = recordingTools({
       async listFor() {
-        return [{
-          ...SUMMARY,
-          scheduleKind: "once",
-          schedule: "Once at 2026-09-20T07:30:00.000Z",
-          timezone: "UTC",
-          nextRunAt: new Date("2026-09-20T07:30:00.000Z"),
-        }];
+        return [
+          {
+            ...SUMMARY,
+            scheduleKind: "once",
+            schedule: "Once at 2026-09-20T07:30:00.000Z",
+            timezone: "UTC",
+            nextRunAt: new Date("2026-09-20T07:30:00.000Z"),
+          },
+        ];
       },
     });
     const result = await callTool(CONNECTION, "schedule_wake", {
-      instruction: "Check whether the video finished and continue the workflow.",
+      instruction:
+        "Check whether the video finished and continue the workflow.",
       runAt: "2026-09-20T14:30:00+07:00",
       channelId: "channel_1",
       ownerUserId: "user_attacker",
@@ -252,11 +255,14 @@ describe("dispatch", () => {
         ownerUserId: "user_asker",
         agentId: "bot_helper",
         channelId: "channel_1",
-        instruction: "Check whether the video finished and continue the workflow.",
+        instruction:
+          "Check whether the video finished and continue the workflow.",
       },
     });
     if (created?.method === "createOneShot") {
-      expect(created.input.runAt.toISOString()).toBe("2026-09-20T07:30:00.000Z");
+      expect(created.input.runAt.toISOString()).toBe(
+        "2026-09-20T07:30:00.000Z",
+      );
     }
   });
 
