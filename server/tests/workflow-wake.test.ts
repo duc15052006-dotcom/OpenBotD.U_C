@@ -368,11 +368,11 @@ describe("workflow wake bridge", () => {
     expect(finished).toBe(1);
     expect(runningFailed).toBe(0);
     expect(waitingFailures).toHaveLength(1);
-    expect((waitingFailures[0]?.[3] as Date).toISOString()).toBe(
+    expect((waitingFailures[0]![3] as Date).toISOString()).toBe(
       "2026-09-20T07:30:00.000Z",
     );
-    expect(waitingFailures[0]?.[4]).toBe(3);
-    expect(String(waitingFailures[0]?.[5])).toContain("retry budget");
+    expect(waitingFailures[0]![4]).toBe(3);
+    expect(String(waitingFailures[0]![5])).toContain("retry budget");
   });
 
   test("finishes a stale exact wake instead of retrying it", async () => {
