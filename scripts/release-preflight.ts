@@ -349,7 +349,9 @@ function checkComputerSandboxBoundary(): void {
     }
   }
   if (!gateway.includes('woke ? "computer.woke" : "computer.started"')) {
-    fail("computer: waking from automatic Sleep is not distinguished from Start");
+    fail(
+      "computer: waking from automatic Sleep is not distinguished from Start",
+    );
   }
 
   const workspace = read("agent-computer/src/workspace.ts");
