@@ -169,7 +169,10 @@ export async function dispatchClaimedWorkflowWaits(
          */
         const renewEveryMs =
           options.renewEveryMs ??
-          Math.min(DEFAULT_RENEW_EVERY_MS, Math.max(1_000, Math.floor(leaseMs / 3)));
+          Math.min(
+            DEFAULT_RENEW_EVERY_MS,
+            Math.max(1_000, Math.floor(leaseMs / 3)),
+          );
         let heartbeat: ReturnType<typeof setInterval> | undefined;
         try {
           heartbeat = setInterval(() => {
