@@ -12,6 +12,19 @@ test("includes durable Routine behavior in the built-in system guidance", () => 
   );
 });
 
+test("includes NOTE 21-2 autonomous workflow boundaries in the built-in adapter", () => {
+  const messages = toProviderMessages(input([]));
+  const system = messages[0];
+  expect(String(system?.content)).toContain("projectId + sceneId");
+  expect(String(system?.content)).toContain(
+    "An approved prompt is an execution input, not something to grade",
+  );
+  expect(String(system?.content)).toContain(
+    "Never claim you will automatically wake",
+  );
+});
+
+
 /**
  * The Bot that ships in the box, and the conversation a declined handover used to end.
  *
