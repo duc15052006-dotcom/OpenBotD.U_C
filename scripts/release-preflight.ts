@@ -1558,11 +1558,11 @@ function checkDurableWorkflowState(): void {
     }
   }
 
-  for (const evidence of [
-    "useWorkflowTools(workflowStore)",
-  ]) {
+  for (const evidence of ["useWorkflowTools(workflowStore)"]) {
     if (!server.includes(evidence)) {
-      fail(`workflows: builtin workflow tool store is not installed: ${evidence}`);
+      fail(
+        `workflows: builtin workflow tool store is not installed: ${evidence}`,
+      );
     }
   }
   for (const evidence of [
