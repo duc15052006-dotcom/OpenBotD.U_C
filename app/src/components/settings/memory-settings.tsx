@@ -67,13 +67,22 @@ export function MemorySettings() {
   const selectedCurrent = memories.find(
     (memory) => memory.id === currentForDiff,
   );
-  const diff = useMemo(
-    () =>
-      selectedRetired && selectedCurrent
-        ? diffMemoryLines(selectedRetired.content, selectedCurrent.content)
-        : [],
-    [selectedRetired, selectedCurrent],
-  );
+  const diff = useMemo(() => {
+    if (!selectedRetired || !selectedCurrent) return [];
+    const occurrences = new Map<string, number>();
+    return diffMemoryLines(
+      selectedRetired.content,
+      selectedCurrent.content,
+    ).map((line) => {
+      const identity = `${line.type}:\u0000${line.text}`;
+      const occurrence = (occurrences.get(identity) ?? 0) + 1;
+      occurrences.set(identity, occurrence);
+      return {
+        ...line,
+        key: `${identity}:\u0000${occurrence}`,
+      };
+    });
+  }, [selectedRetired, selectedCurrent]);
 
   const mutate = async (id: string, action: () => Promise<unknown>) => {
     setBusyId(id);
@@ -355,7 +364,7 @@ export function MemorySettings() {
               </div>
               {selectedRetired && selectedCurrent ? (
                 <div className="max-h-64 overflow-auto rounded-md border border-border bg-muted/30 p-3 font-mono text-xs">
-                  {diff.map((line, index) => (
+                  {diff.map((line) => (
                     <div
                       className={
                         line.type === "added"
@@ -364,7 +373,7 @@ export function MemorySettings() {
                             ? "text-destructive"
                             : "text-muted-foreground"
                       }
-                      key={`${index}-${line.type}`}
+                      key={line.key}
                     >
                       <span className="mr-2 select-none">
                         {line.type === "added"
