@@ -339,6 +339,34 @@ function checkComputerSandboxBoundary(): void {
     }
   }
 
+  const resourceProfiles = read("supervisor/src/resource-profile.ts");
+  for (const evidence of [
+    "light: {",
+    "normal: {",
+    "heavy: {",
+    "memoryBytes: 4_294_967_296",
+    "nanoCpus: 3_000_000_000",
+  ]) {
+    if (!resourceProfiles.includes(evidence)) {
+      fail(`computer: resource profile mapping is missing ${evidence}`);
+    }
+  }
+  const agentDialog = read("app/src/components/agents/agent-dialog.tsx");
+  for (const evidence of [
+    "Computer resources",
+    'value="light"',
+    'value="normal"',
+    'value="heavy"',
+  ]) {
+    if (!agentDialog.includes(evidence)) {
+      fail(`computer: Agent resource profile UI is missing ${evidence}`);
+    }
+  }
+  const serverIndex = read("server/src/index.ts");
+  if (!serverIndex.includes("agentProfileStore.computerResourceProfile(botId)")) {
+    fail("computer: Agent resource profile is not wired into the Computer gateway");
+  }
+
   const computersPage = read("app/src/routes/_authed/admin/computers.tsx");
   const computerRoutes = read("server/src/computer/routes.ts");
   for (const evidence of [
