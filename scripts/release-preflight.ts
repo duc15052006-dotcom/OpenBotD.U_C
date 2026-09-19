@@ -1446,9 +1446,22 @@ function checkDurableAgentWake(): void {
     "async createOneShot(",
     "async consumeOneShot(",
     'scheduleKind === "once"',
+    "databaseNow(transaction)",
+    "requireDatabaseFuture(",
+    "${at} > now()",
   ]) {
     if (!store.includes(evidence)) {
       fail(`routines: durable one-shot store invariant is missing ${evidence}`);
+    }
+  }
+
+  for (const forbidden of [
+    "runAt.getTime() <= Date.now()",
+    "existing.nextRunAt.getTime() <= Date.now()",
+    "nextRunFor(input.cron, timezone, new Date())",
+  ]) {
+    if (store.includes(forbidden)) {
+      fail(`routines: scheduling depends on the server clock through ${forbidden}`);
     }
   }
 
@@ -1517,10 +1530,15 @@ function checkDurableWorkflowState(): void {
     "eq(workflowSteps.waitUntil, expectedWaitUntil)",
     "greatest(",
     "date_trunc('milliseconds', now())",
+    "${input.waitUntil} > now()",
   ]) {
     if (!store.includes(evidence)) {
       fail(`workflows: durable recovery boundary is missing ${evidence}`);
     }
+  }
+
+  if (store.includes("input.waitUntil.getTime() <= Date.now()")) {
+    fail("workflows: wait validation depends on the server clock");
   }
 
   for (const evidence of [
