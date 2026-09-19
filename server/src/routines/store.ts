@@ -143,6 +143,14 @@ export type RoutineInput = {
   timezone?: string;
 };
 
+export type OneShotRoutineInput = {
+  ownerUserId: string;
+  agentId: string;
+  channelId?: string;
+  instruction: string;
+  runAt: Date;
+};
+
 /**
  * One firing, and everything running it headlessly needs — the runner's read, and nobody else's.
  *
@@ -168,6 +176,7 @@ export type RoutinePatch = Partial<{
 
 export type RoutineStore = {
   create(input: RoutineInput): Promise<Routine>;
+  createOneShot(input: OneShotRoutineInput): Promise<Routine>;
   listFor(ownerUserId: string): Promise<RoutineSummary[]>;
   update(
     ownerUserId: string,
@@ -180,7 +189,9 @@ export type RoutineStore = {
   /* The sweep's half. Deliberately not owner-scoped — see the boundary comment below. */
 
   /** Enabled routines whose next run has arrived, oldest due first. */
-  dueRoutines(limit: number): Promise<{ id: string; nextRunAt: Date }[]>;
+  dueRoutines(
+    limit: number,
+  ): Promise<{ id: string; nextRunAt: Date; scheduleKind: RoutineScheduleKind }[]>;
   /**
    * Compare-and-set the clock forward. False means another sweep got there first.
    *
@@ -207,9 +218,15 @@ export type RoutineStore = {
    * what the consumer's re-read needs before firing: has the routine been deleted or switched off
    * since the offer. Null means deleted; otherwise `enabled` says the rest.
    */
-  routineForFiring(
-    id: string,
-  ): Promise<{ id: string; enabled: boolean } | null>;
+  routineForFiring(id: string): Promise<{
+    id: string;
+    enabled: boolean;
+    scheduleKind: RoutineScheduleKind;
+    nextRunAt: Date;
+    lastRunAt: Date | null;
+  } | null>;
+  /** Commit one exact wake to the queue by disabling it with a compare-and-set. */
+  consumeOneShot(id: string, scheduledFor: Date): Promise<boolean>;
   /** Close a run row with its outcome, and the capped error when there was one. */
   finishRun(
     runId: string,
@@ -259,6 +276,7 @@ function toRoutine(row: RoutineRow): Routine {
     agentId: row.agentId,
     channelId: row.channelId,
     instruction: row.instruction,
+    scheduleKind: row.scheduleKind,
     cron: row.cron,
     timezone: row.timezone,
     enabled: row.enabled,
