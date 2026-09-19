@@ -1495,7 +1495,7 @@ function checkDurableWorkflowState(): void {
     "pg_advisory_xact_lock",
     "which must be an earlier step in the same workflow",
     "eq(workflowSteps.waitUntil, expectedWaitUntil)",
-    "lte(workflowSteps.waitUntil, sql\`now()\`)",
+    "lte(workflowSteps.waitUntil, sql`now()`)",
     "dueWaitingSteps(limit)",
   ]) {
     if (!store.includes(evidence)) {
