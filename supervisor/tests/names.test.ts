@@ -29,6 +29,9 @@ describe("the ids a supervisor will accept", () => {
       snapshotProfileVolume: `${NAMESPACE}-snapshot-profile-agent_2aaf8f2f-0e53-4bb2`,
       snapshotWorkspaceVolume: `${NAMESPACE}-snapshot-workspace-agent_2aaf8f2f-0e53-4bb2`,
       snapshotQuarantineVolume: `${NAMESPACE}-snapshot-quarantine-agent_2aaf8f2f-0e53-4bb2`,
+      snapshotAltProfileVolume: `${NAMESPACE}-snapshot-alt-profile-agent_2aaf8f2f-0e53-4bb2`,
+      snapshotAltWorkspaceVolume: `${NAMESPACE}-snapshot-alt-workspace-agent_2aaf8f2f-0e53-4bb2`,
+      snapshotAltQuarantineVolume: `${NAMESPACE}-snapshot-alt-quarantine-agent_2aaf8f2f-0e53-4bb2`,
     });
   });
 
