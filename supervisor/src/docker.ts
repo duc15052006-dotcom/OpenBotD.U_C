@@ -498,7 +498,9 @@ async function snapshotSlotStates(
       let createdAt = 0;
       if (state === "complete") {
         try {
-          const info = await docker.getVolume(volumes[0]!).inspect();
+          const info = (await docker.getVolume(volumes[0]!).inspect()) as {
+            CreatedAt?: string;
+          };
           const parsed = Date.parse(info.CreatedAt ?? "");
           if (Number.isFinite(parsed)) createdAt = parsed;
         } catch (error) {
