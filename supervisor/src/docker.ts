@@ -1006,6 +1006,17 @@ export async function ensure(
               : {}),
           });
           existing = await inspectOwned(names);
+          if (
+            !existing ||
+            (options.memoryBytes !== undefined &&
+              existing.memoryBytes !== options.memoryBytes) ||
+            (options.nanoCpus !== undefined &&
+              existing.nanoCpus !== options.nanoCpus)
+          ) {
+            throw new Error(
+              "Docker did not report the exact requested CPU/RAM limits after update.",
+            );
+          }
         } catch (error) {
           throw new DockerUnavailableError(
             `The resource profile for ${names.botId} could not be applied: ${String(error)}`,
