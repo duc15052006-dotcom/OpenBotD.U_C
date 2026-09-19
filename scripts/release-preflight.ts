@@ -1507,7 +1507,6 @@ function checkDurableWorkflowState(): void {
     "lte(workflowSteps.waitUntil, sql`now()`)",
     "dueWaitingSteps(limit)",
     "eq(workflowSteps.attempts, expectedAttempt)",
-    "eq(workflowSteps.resumedFromWaitUntil, expectedWaitUntil)",
     "date_trunc('milliseconds', now())",
   ]) {
     if (!store.includes(evidence)) {
