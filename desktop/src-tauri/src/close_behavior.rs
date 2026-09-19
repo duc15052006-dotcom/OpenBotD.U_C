@@ -5,7 +5,7 @@
 //! Missing, unreadable, or malformed state falls back to Ask: a corrupt preference must never turn
 //! clicking X into an unexpected process exit or a hidden background transition.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 pub const FILE: &str = "close-behavior.json";
 
@@ -37,30 +37,13 @@ impl CloseBehavior {
 
     pub fn write(self, config_dir: &Path) -> std::io::Result<()> {
         std::fs::create_dir_all(config_dir)?;
-        let path = config_dir.join(FILE);
-        let temporary = temporary_path(&path);
-        let bytes = serde_json::to_vec(&Record {
-            version: 1,
-            behavior: self,
-        })?;
-        let result = (|| {
-            let mut options = std::fs::OpenOptions::new();
-            options.create_new(true).write(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                options.mode(0o600);
-            }
-            let mut file = options.open(&temporary)?;
-            use std::io::Write as _;
-            file.write_all(&bytes)?;
-            file.sync_all()?;
-            std::fs::rename(&temporary, &path)
-        })();
-        if result.is_err() {
-            let _ = std::fs::remove_file(&temporary);
-        }
-        result
+        crate::env::write_private_file(
+            &config_dir.join(FILE),
+            &serde_json::to_vec(&Record {
+                version: 1,
+                behavior: self,
+            })?,
+        )
     }
 
     pub fn label(self) -> &'static str {
@@ -82,7 +65,7 @@ fn temporary_path(path: &Path) -> PathBuf {
 mod tests {
     use super::*;
 
-    fn root(label: &str) -> PathBuf {
+    fn root(label: &str) -> std::path::PathBuf {
         let path = std::env::temp_dir().join(format!(
             "openbot-close-behavior-{label}-{}-{}",
             std::process::id(),
