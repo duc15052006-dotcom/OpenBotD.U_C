@@ -7,11 +7,13 @@
 import {
   boolean,
   index,
+  integer,
   pgEnum,
   pgTable,
   primaryKey,
   text,
   timestamp,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { agents, users } from "./core";
 
@@ -169,3 +171,98 @@ export const routineRuns = pgTable(
     index("routine_runs_by_routine_idx").on(table.routineId, table.startedAt),
   ],
 );
+
+export const workflowRunStatus = pgEnum("workflow_run_status", [
+  "active",
+  "paused",
+  "succeeded",
+  "failed",
+  "cancelled",
+]);
+
+export const workflowStepStatus = pgEnum("workflow_step_status", [
+  "blocked",
+  "ready",
+  "running",
+  "waiting",
+  "succeeded",
+  "failed",
+  "cancelled",
+]);
+
+/**
+ * A durable multi-step plan owned by one person and one Bot.
+ *
+ * The Bot id is part of the authority boundary, not only metadata: workflow-store reads and
+ * transitions filter by both owner and Bot so two coworkers belonging to the same person cannot
+ * mutate each other's pending work.
+ */
+export const workflowRuns = pgTable(
+  "workflow_runs",
+  {
+    id: text("id").primaryKey(),
+    ownerUserId: text("owner_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    agentId: text("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    /** Channels soft-delete, so a broken destination must remain inspectable rather than cascade. */
+    channelId: text("channel_id").notNull(),
+    title: text("title").notNull(),
+    status: workflowRunStatus("status").notNull().default("active"),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    index("workflow_runs_owner_status_idx").on(
+      table.ownerUserId,
+      table.status,
+    ),
+    index("workflow_runs_agent_status_idx").on(table.agentId, table.status),
+  ],
+);
+
+/**
+ * One resumable unit inside a workflow.
+ *
+ * Dependencies are local step keys. The store only accepts references to earlier steps in the same
+ * create call, which makes the graph acyclic by construction and prevents cross-workflow references.
+ */
+export const workflowSteps = pgTable(
+  "workflow_steps",
+  {
+    id: text("id").primaryKey(),
+    workflowId: text("workflow_id")
+      .notNull()
+      .references(() => workflowRuns.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+    position: integer("position").notNull(),
+    instruction: text("instruction").notNull(),
+    dependsOn: text("depends_on").array().notNull().default([]),
+    status: workflowStepStatus("status").notNull().default("blocked"),
+    attempts: integer("attempts").notNull().default(0),
+    /** Which external/model provider owns a pending wait, when there is one. Never a credential. */
+    provider: text("provider"),
+    /** Exact durable wake target for a waiting step; execution wiring is a separate slice. */
+    waitUntil: timestamp("wait_until", { withTimezone: true }),
+    failureReason: text("failure_reason"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    uniqueIndex("workflow_steps_workflow_key_idx").on(
+      table.workflowId,
+      table.key,
+    ),
+    index("workflow_steps_workflow_position_idx").on(
+      table.workflowId,
+      table.position,
+    ),
+    index("workflow_steps_status_wait_idx").on(table.status, table.waitUntil),
+  ],
+);
+
