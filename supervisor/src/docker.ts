@@ -291,9 +291,7 @@ export async function listOwned(): Promise<ComputerState[]> {
           // Docker's list endpoint exposes container creation time, not when this run started.
           // After Stop -> Wake/Restart the container is the same but State.StartedAt changes; the
           // fleet UI and cross-replica session fallback must describe the live run, never its birth.
-          ...(currentRun?.startedAt
-            ? { startedAt: currentRun.startedAt }
-            : {}),
+          ...(currentRun?.startedAt ? { startedAt: currentRun.startedAt } : {}),
           snapshotAvailable,
         };
       }),
