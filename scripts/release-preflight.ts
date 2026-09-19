@@ -345,6 +345,47 @@ function checkComputerSandboxBoundary(): void {
       fail(`computer: clean snapshot boundary is missing ${evidence}`);
     }
   }
+  const restoreSupervisor =
+    snapshotSupervisor
+      .split("export async function restoreCleanSnapshot(", 2)[1]
+      ?.split("/**\n * Whether the computer that exists", 1)[0] ?? "";
+  const restoreTarget = restoreSupervisor.indexOf("const target = liveVolumes(names);");
+  const restoreTry = restoreSupervisor.indexOf("try {", restoreTarget);
+  const restorePrepare = restoreSupervisor.indexOf(
+    "for (const volume of target)",
+    restoreTry,
+  );
+  const restoreCatch = restoreSupervisor.indexOf("} catch (error)", restorePrepare);
+  if (
+    restoreTarget < 0 ||
+    restoreTry < restoreTarget ||
+    restorePrepare < restoreTry ||
+    restoreCatch < restorePrepare
+  ) {
+    fail(
+      "computer: restore destination preparation is outside the fail-closed cleanup boundary",
+    );
+  }
+
+  const restoreGateway =
+    read("server/src/computer/gateway.ts")
+      .split("async restoreComputerSnapshot(", 2)[1]
+      ?.split("/**\n     * Wipe a computer", 1)[0] ?? "";
+  const restored = restoreGateway.indexOf("provider.restoreSnapshot(botId)");
+  const audit = restoreGateway.indexOf('"computer.snapshot_restored"');
+  const clearRefs = restoreGateway.indexOf("snapshots.clear(botId)");
+  const clearFrames = restoreGateway.indexOf("pageFrames?.clear(botId)");
+  if (
+    restored < 0 ||
+    audit < restored ||
+    clearRefs < audit ||
+    clearFrames < clearRefs
+  ) {
+    fail(
+      "computer: restore audit must be durable before stale ref/frame cleanup",
+    );
+  }
+
   const snapshotRoutes = read("server/src/computer/routes.ts");
   for (const evidence of [
     'body?.confirm !== "SNAPSHOT"',
