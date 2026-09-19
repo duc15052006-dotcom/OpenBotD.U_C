@@ -1,3 +1,9 @@
+import { useState } from "react";
+import {
+  collectDesktopDiagnostics,
+  formatDesktopDiagnostics,
+} from "./diagnostics";
+
 /**
  * A failure, in both registers, wherever one happens.
  *
@@ -32,6 +38,7 @@ export function Failure({ problem }: { problem: Problem }) {
           <pre>{problem.detail}</pre>
         </details>
       )}
+      <DiagnosticsPanel />
     </div>
   );
 }
@@ -53,6 +60,53 @@ export function InlineFailure({ problem }: { problem: Problem }) {
           <pre>{problem.detail}</pre>
         </details>
       )}
+      <DiagnosticsPanel compact />
+    </div>
+  );
+}
+
+function DiagnosticsPanel({ compact = false }: { compact?: boolean }) {
+  const [report, setReport] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+
+  const run = async () => {
+    setBusy(true);
+    setProblem(null);
+    try {
+      setReport(formatDesktopDiagnostics(await collectDesktopDiagnostics()));
+    } catch (error) {
+      setProblem(
+        error instanceof Error
+          ? error.message
+          : "OpenBot could not gather diagnostics.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className={compact ? "diagnostics compact" : "diagnostics"}>
+      <button
+        className="quiet"
+        disabled={busy}
+        onClick={() => void run()}
+        type="button"
+      >
+        {busy
+          ? "Checking…"
+          : report
+            ? "Refresh diagnostics"
+            : "Run diagnostics"}
+      </button>
+      {problem ? <p className="caution">{problem}</p> : null}
+      {report ? (
+        <details className="detail-of" open>
+          <summary>Local diagnostics</summary>
+          <pre>{report}</pre>
+        </details>
+      ) : null}
     </div>
   );
 }

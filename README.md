@@ -27,11 +27,11 @@ your own machine.
 
 </div>
 
-> **A template, not a product.** OpenBot is meant to be cloned and made your own. There is no hosted version to sign up for, and nothing here is published as a package to depend on: every workspace in this repository is private. You take the repository, replace the example tenant package under `examples/` with your own coworkers, channels and skills, and run it. Everything below describes a starting point, not a finished thing somebody operates for you.
+> **Self-hosted desktop product, with the source available.** The Windows installer is the intended end-user path: install OpenBot, finish first-run setup, configure providers/coworkers in the app, and let the desktop shell start and recover the local stack. Developers can still clone and customize the source tree.
 
-> **Alpha, and under active development.** OpenBot is early. Expect rough edges and bugs, and expect things to move. Issues and pull requests are welcome.
+> **Alpha, and under active development.** OpenBot is early. Expect rough edges and bugs, and expect things to move. Releases are gated by desktop packaging, Windows installer acceptance, protected signing, and the normal repository checks.
 
-> **Runs on your machine.** Everything below is written for a laptop. `.env.example` carries `OPENBOT_SINGLE_USER=true`, which admits every request as one administrator, so a fresh clone reaches the product without registering an OAuth client first. [Sign-in](#sign-in) turns that off, and is required before anybody else can reach the deployment.
+> **Runs on your machine.** The desktop app keeps the deployment local and owns its start/stop/recovery flow. Source-development mode still uses `.env.example` and `OPENBOT_SINGLE_USER=true` for a one-person local setup; [Sign-in](#sign-in) is required before exposing a deployment to other people.
 
 ## What it is
 
@@ -54,58 +54,45 @@ A Bot is any endpoint speaking [AG-UI](https://github.com/ag-ui-protocol/ag-ui),
 
 ## Requirements
 
-- Docker, for PostgreSQL and the shipped Bots.
-- [Bun](https://bun.sh) 1.3+, for the app and API server.
-- A CopilotKit Intelligence project and license. A free plan is available, and Intelligence can be self-hosted.
-- A model key. The proof-of-concept Bot uses OpenAI; the LangGraph Bot can use OpenAI, Anthropic, or Google.
+For the Windows desktop path, install the published `*-setup.exe` and follow first-run setup. You do
+not need a source checkout or Bun.
+
+You still need:
+
+- a supported local container runtime that the desktop setup can prepare/use;
+- a CopilotKit Intelligence project;
+- a model/provider credential.
+
+Developers running the source tree additionally need [Bun](https://bun.sh) 1.3+.
 
 ## Quick start
 
-> **Setting up with an AI assistant?** Paste [`prompt.txt`](prompt.txt) into it first. It carries the
-> same steps as below plus the things that are easy to get wrong: which of the ten blank keys in
-> `.env.example` are actually yours to fill (three), which the start script generates for you, and
-> what each start-up refusal means. Every claim in it is checked against this repository.
+### Windows
 
-1. Create `.env`:
+1. Download the signed `*-setup.exe` from a published release.
+2. Run it as your normal Windows account.
+3. Open **OpenBot** from the desktop shortcut.
+4. Finish first-run setup.
+5. Configure your model/provider, use **Test connection**, then create or edit coworkers in the app.
 
-   ```sh
-   cp .env.example .env
-   ```
+The desktop shell starts the local services, applies database migrations before serving the app,
+keeps the selected installation root, and exposes retry/repair/diagnostics when startup fails. See
+[Windows desktop](docs/windows-desktop.md) for the full end-user flow.
 
-2. Get CopilotKit Intelligence credentials:
+### Source development
 
-   ```sh
-   npx --yes copilotkit@latest login
-   npx --yes copilotkit@latest project select
-   ```
+If you are changing OpenBot itself, use the source workflow instead:
 
-   Put the `cpk-...` runtime key from `project select` in `.env` as
-   `INTELLIGENCE_API_KEY`. That is the only Intelligence credential you need:
-   managed Intelligence derives entitlement from the project key, so there is
-   no separate licence token to fetch.
+```sh
+cp .env.example .env
+bun install
+bash scripts/start.sh
+```
 
-3. Fill the remaining required values:
-
-   - `OPENAI_API_KEY`
-
-   Keep the managed Intelligence URLs from `.env.example` unless you run Intelligence yourself. The example `KEY_ENCRYPTION_KEY` is public and fine locally; generate your own with:
-
-   ```sh
-   openssl rand -base64 32
-   ```
-
-4. Install and run:
-
-   ```sh
-   bun install
-   bash scripts/start.sh
-   ```
-
-5. Open <http://localhost:3010>.
-
-`scripts/start.sh` starts Docker services, applies migrations, starts the API server on port 3001, starts the app on port 3010, and checks that the services answer their own health routes before printing next steps.
-
-`scripts/stop.sh` takes the same things down, including each Bot's computer, which compose does not own. Nothing is deleted: the database, the Bots' files and their browser profiles are volumes.
+Get CopilotKit Intelligence credentials with the CopilotKit CLI and put the required runtime key and
+model credential into `.env`. `scripts/start.sh` starts Docker services, applies migrations, starts
+the API server on port 3001 and the development app on port 3010, then checks readiness.
+`scripts/stop.sh` stops the source-development stack without deleting its volumes.
 
 ## Deploy it
 
@@ -143,13 +130,13 @@ Leave `EMBEDDED_POSTGRES` off and set `DATABASE_URL` to point at a database you 
 | --------------------------- | ------------------------------------------------------------------ |
 | `/`                         | Start and browse channels.                                         |
 | `/agents`                   | Create, edit, duplicate, hide, delete, and launch coworkers.       |
-| `/channel/:id`              | Converse with one coworker, watch its screen, and see what it ran. |
+| `/channel/:id`              | Converse with one coworker or a group, @mention responders, watch work, and share files. |
 | `/bot`                      | Direct chat with a Bot; `?agent=<id>` selects one.                 |
 | `/skills`                   | Create and enable personal skills.                                 |
 | `/routines`                 | See the routines that are standing, and stop one.                  |
 | `/settings`                 | User preferences.                                                  |
 | `/admin/credentials`        | Store write-only encrypted credentials.                            |
-| `/admin/computers`          | View, stop, and reset Bot computers.                               |
+| `/admin/computers`          | Start, restart, stop, reset, inspect metrics, and manage Bot workspaces. |
 | `/admin/boundaries`         | Configure browser/file/MCP action policy.                          |
 | `/admin/components`         | Publish components and govern which Bots may use them.             |
 | `/admin/playground`         | Draft and publish sandboxed components in the browser.             |
@@ -161,6 +148,9 @@ Leave `EMBEDDED_POSTGRES` off and set `DATABASE_URL` to point at a database you 
 
 ## Features
 
+- **Windows desktop without a source checkout**: the installer, first-run setup, diagnostics, update check, desktop shortcut and uninstall flow are all part of the desktop release contract. The shell starts the local stack and applies migrations before opening the app.
+- **Per-Agent settings in the product**: each coworker can carry its own Model/API choice, standing Instructions, enabled Skills and uploaded Knowledge without editing tenant YAML.
+- **Group channels**: channels can hold several coworkers; @mentions route a turn to the addressed coworker, delegation status is visible, and shared files stay with the conversation.
 - **A computer per Bot**: the supervisor gives each Bot its own container, its own `/workspace` volume and its own browser profile. Set `COMPUTER_RUNTIME=runsc` to run them under gVisor where the host supports it.
 - **A shell, not just a browser**: a Bot can run a command in its workspace, install what it needs, and process a file it saved. Through the same gate as everything else, so a rule can refuse a shell outright or refuse particular commands, and the command is on the record either way. The command inherits PATH, locale, terminal and proxy variables, not the rest of the deployment's environment.
 - **The gateway is the only way in**: it resolves the target from a server-held snapshot, evaluates the policy, writes the audit row, and only then calls the computer. There is no path that acts without the record existing first.

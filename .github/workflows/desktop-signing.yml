@@ -9,6 +9,18 @@ on:
         options: [none, keyvault]
         default: none
         required: true
+  workflow_call:
+    inputs:
+      signing-mode:
+        description: Signing mode requested by a trusted caller workflow
+        type: string
+        default: none
+        required: false
+      release-build:
+        description: Emit the plain release version instead of an internal validation version
+        type: boolean
+        default: false
+        required: false
   # A label permits validation before this workflow exists on main. New pushes
   # run only the checks: remove/reapply the label to request signing a new head.
   pull_request:
@@ -44,7 +56,7 @@ jobs:
     name: Sign and verify app and NSIS installer
     needs: checks
     if: >-
-      (github.event_name == 'workflow_dispatch' && inputs.signing-mode == 'keyvault') ||
+      (inputs.signing-mode == 'keyvault' && github.event_name != 'pull_request') ||
       (github.event_name == 'pull_request' && github.event.action == 'labeled' &&
        github.event.label.name == 'windows-signing' &&
        github.event.pull_request.head.repo.full_name == github.repository)
@@ -112,12 +124,23 @@ jobs:
         working-directory: desktop
       - run: bun run typecheck
         working-directory: desktop
-      - name: Prepare internal build version
-        run: bun scripts/desktop-version.ts internal
+      - name: Prepare build version
+        shell: pwsh
         working-directory: desktop
+        env:
+          RELEASE_SIGNING: ${{ inputs.release-build && 'true' || 'false' }}
+        run: |
+          if ($env:RELEASE_SIGNING -eq 'true') {
+            bun scripts/desktop-version.ts release
+          } else {
+            bun scripts/desktop-version.ts internal
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'Could not prepare desktop build version.' }
       - name: Build and sign
         env:
           WINDOWS_SIGNING: keyvault
+          OPENBOT_RELEASE_REPOSITORY: ${{ github.repository }}
+          OPENBOT_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: bun run tauri build --config src-tauri/tauri.windows-signing.conf.json --config src-tauri/tauri.build-version.conf.json --bundles nsis
         working-directory: desktop
       # Tauri restores the unsigned build output after bundling. Verify the app
@@ -132,21 +155,58 @@ jobs:
         run: |
           $build = Get-Content desktop/build-version.json -Raw | ConvertFrom-Json
           ./desktop/scripts/verify-windows-signatures.ps1 -ExpectedVersion $build.version
+
+      # Signature validity alone does not prove the thing a person downloads still installs and
+      # launches after signing. Exercise the exact signed NSIS artifact under a fresh Users-only
+      # account before it is retained for release.
+      - name: Signed installer standard-user acceptance
+        run: |
+          $installers = @(Get-ChildItem 'desktop/src-tauri/target/release/bundle/nsis' -Filter '*-setup.exe' -File)
+          if ($installers.Count -ne 1) {
+            throw "Expected exactly one signed NSIS installer, found $($installers.Count)."
+          }
+          $windowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          & $windowsPowerShell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File desktop/scripts/test-windows-installer-standard-user.ps1 -InstallerPath $installers[0].FullName
+          if ($LASTEXITCODE -ne 0) {
+            throw 'The signed installer failed standard-user acceptance.'
+          }
+
+      # Upload one flat directory because upload-artifact preserves path hierarchy below the
+      # least common ancestor of multiple input paths. The publish job downloads this artifact and
+      # intentionally expects build-version.json and the installer at its root.
+      - name: Stage verified release artifact
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $stage = 'desktop/release-artifact'
+          Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $stage | Out-Null
+
+          $installers = @(Get-ChildItem 'desktop/src-tauri/target/release/bundle/nsis' -Filter '*-setup.exe' -File)
+          if ($installers.Count -ne 1) {
+            throw "Expected exactly one signed NSIS installer to stage, found $($installers.Count)."
+          }
+
+          Copy-Item -LiteralPath 'desktop/signed-app/openbot-desktop.exe' -Destination $stage
+          Copy-Item -LiteralPath $installers[0].FullName -Destination $stage
+          Copy-Item -LiteralPath 'desktop/build-version.json' -Destination $stage
+
+          $staged = @(Get-ChildItem -LiteralPath $stage -File)
+          if ($staged.Count -ne 3) {
+            throw "Expected exactly three staged release files, found $($staged.Count)."
+          }
       - name: Retain verified binaries
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: openbot-windows-signed-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            desktop/signed-app/openbot-desktop.exe
-            desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
-            desktop/build-version.json
+          name: openbot-windows-signed
+          path: desktop/release-artifact/
           if-no-files-found: error
           retention-days: 14
       - name: Retain verification evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: openbot-windows-signatures-${{ github.run_id }}-${{ github.run_attempt }}
+          name: openbot-windows-signatures
           path: desktop/signing-evidence/
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14

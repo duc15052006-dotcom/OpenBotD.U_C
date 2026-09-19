@@ -22,6 +22,16 @@ import {
   TAKE_CONTROL_FIRST,
 } from "./control";
 import { identity } from "./identity";
+import { collectComputerMetrics } from "./metrics";
+import {
+  approveQuarantinedDownload,
+  approvedQuarantineFile,
+  deleteQuarantinedDownload,
+  listQuarantinedDownloads,
+  markQuarantinedDownloadReleased,
+  QuarantineStateError,
+  scanQuarantinedDownload,
+} from "./download-quarantine";
 import { createProfiles, numberFromEnv, VIEWPORT } from "./profiles";
 import {
   parseExecTimeout,
@@ -35,6 +45,7 @@ import { createViewerSlot, type ViewerSlot } from "./viewer";
 import { startVirtualDisplay } from "./virtual-display";
 import {
   createWorkspace,
+  DEFAULT_WORKSPACE_LIMITS,
   WorkspaceFileError,
   WorkspacePathError,
 } from "./workspace";
@@ -208,9 +219,17 @@ function botIdOf(request: Request, fallback?: string | null): string {
  * would only add a syscall to every call. Everything about why confinement is harder than it looks
  * lives in workspace.ts.
  */
-const workspace = createWorkspace(
-  process.env.WORKSPACE_DIR?.trim() || "/workspace",
+const WORKSPACE_ROOT = process.env.WORKSPACE_DIR?.trim() || "/workspace";
+const QUARANTINE_ROOT = process.env.QUARANTINE_DIR?.trim() || "/quarantine";
+const WORKSPACE_MAX_BYTES = numberFromEnv(
+  "COMPUTER_WORKSPACE_MAX_BYTES",
+  4 * 1024 * 1024 * 1024,
+  { min: 1 },
 );
+const workspace = createWorkspace(WORKSPACE_ROOT, {
+  ...DEFAULT_WORKSPACE_LIMITS,
+  totalBytes: WORKSPACE_MAX_BYTES,
+});
 
 /**
  * Who has the wheel, as a state machine in its own module.
@@ -243,7 +262,7 @@ const profiles = createProfiles(
 );
 // Rooted in the same workspace the file tools use, so a command and a written file see one
 // directory rather than two.
-const shell = createShell(process.env.WORKSPACE_DIR?.trim() || "/workspace");
+const shell = createShell(WORKSPACE_ROOT);
 
 /**
  * The id normally arrives as a header on every request. This is the fallback for a caller that has no
@@ -818,6 +837,25 @@ serve<StreamData>({
     }
 
     /**
+     * Resource usage of this computer container.
+     *
+     * Authenticated like every other computer detail. It does not start a browser; the API server
+     * only asks it for computers the provider already reports as running.
+     */
+    if (url.pathname === "/metrics" && request.method === "GET") {
+      return json({
+        metrics: {
+          ...(await collectComputerMetrics(
+            WORKSPACE_ROOT,
+            100,
+            WORKSPACE_MAX_BYTES,
+          )),
+          browserRunning: profiles.isLive(botId),
+        },
+      });
+    }
+
+    /**
      * Stop the browser, keep what it knows.
      *
      * Closed gracefully so Chromium flushes its profile, and deliberately
@@ -909,6 +947,184 @@ serve<StreamData>({
               error instanceof Error ? error.message : "Screenshot failed.",
           },
           502,
+        );
+      }
+    }
+
+    /**
+     * Untrusted browser downloads for this Bot only.
+     *
+     * Listing and scanning never move a file out of quarantine. Approval is a separate, explicit
+     * transition and still does not copy, open or execute the file; the native export path will be
+     * responsible for choosing a host destination and marking the final release.
+     */
+    if (url.pathname === "/quarantine" && request.method === "GET") {
+      try {
+        return json({
+          downloads: await listQuarantinedDownloads(QUARANTINE_ROOT, botId),
+        });
+      } catch (error) {
+        return json(
+          { error: describe(error, "The quarantine could not be listed.") },
+          error instanceof QuarantineStateError ? 409 : 500,
+        );
+      }
+    }
+
+    if (url.pathname === "/quarantine/scan" && request.method === "POST") {
+      const body = (await request.json().catch(() => null)) as {
+        id?: unknown;
+      } | null;
+      if (typeof body?.id !== "string" || !body.id) {
+        return json({ error: "A quarantine download id is required." }, 400);
+      }
+      try {
+        return json(
+          await scanQuarantinedDownload(QUARANTINE_ROOT, botId, body.id),
+        );
+      } catch (error) {
+        return json(
+          {
+            error: describe(
+              error,
+              "The quarantined file could not be scanned.",
+            ),
+          },
+          error instanceof QuarantineStateError ? 409 : 500,
+        );
+      }
+    }
+
+    if (url.pathname === "/quarantine/approve" && request.method === "POST") {
+      const body = (await request.json().catch(() => null)) as {
+        id?: unknown;
+        botId?: unknown;
+        confirm?: unknown;
+      } | null;
+      if (
+        typeof body?.id !== "string" ||
+        body.confirm !== "APPROVE" ||
+        body.botId !== botId
+      ) {
+        return json(
+          {
+            error:
+              "Approval requires APPROVE confirmation, the exact Bot id, and the quarantine download id.",
+          },
+          400,
+        );
+      }
+      try {
+        return json(
+          await approveQuarantinedDownload(QUARANTINE_ROOT, botId, body.id),
+        );
+      } catch (error) {
+        return json(
+          {
+            error: describe(
+              error,
+              "The quarantined file could not be approved.",
+            ),
+          },
+          error instanceof QuarantineStateError ? 409 : 500,
+        );
+      }
+    }
+
+    /**
+     * Internal byte stream used only by the authenticated native desktop export worker.
+     *
+     * The API server never exposes this response to the web UI/model. The helper checks that the
+     * exact bytes are still approved and still match the SHA-256 ClamAV scanned before opening them.
+     */
+    if (
+      url.pathname === "/quarantine/export-internal" &&
+      request.method === "POST"
+    ) {
+      const body = (await request.json().catch(() => null)) as {
+        id?: unknown;
+      } | null;
+      if (typeof body?.id !== "string" || !body.id) {
+        return json({ error: "A quarantine download id is required." }, 400);
+      }
+      try {
+        const exportable = await approvedQuarantineFile(
+          QUARANTINE_ROOT,
+          botId,
+          body.id,
+        );
+        return new Response(Bun.file(exportable.file), {
+          headers: {
+            "content-type": "application/octet-stream",
+            "content-length": String(exportable.record.sizeBytes),
+            "x-openbot-sha256": exportable.record.sha256,
+          },
+        });
+      } catch (error) {
+        return json(
+          {
+            error: describe(
+              error,
+              "The quarantined file is not approved for export.",
+            ),
+          },
+          error instanceof QuarantineStateError ? 409 : 500,
+        );
+      }
+    }
+
+    if (url.pathname === "/quarantine/released" && request.method === "POST") {
+      const body = (await request.json().catch(() => null)) as {
+        id?: unknown;
+      } | null;
+      if (typeof body?.id !== "string" || !body.id) {
+        return json({ error: "A quarantine download id is required." }, 400);
+      }
+      try {
+        return json(
+          await markQuarantinedDownloadReleased(
+            QUARANTINE_ROOT,
+            botId,
+            body.id,
+          ),
+        );
+      } catch (error) {
+        return json(
+          {
+            error: describe(
+              error,
+              "The quarantined file could not be marked released.",
+            ),
+          },
+          error instanceof QuarantineStateError ? 409 : 500,
+        );
+      }
+    }
+
+    if (url.pathname === "/quarantine/delete" && request.method === "POST") {
+      const body = (await request.json().catch(() => null)) as {
+        id?: unknown;
+      } | null;
+      if (typeof body?.id !== "string" || !body.id) {
+        return json({ error: "A quarantine download id is required." }, 400);
+      }
+      try {
+        return json({
+          deleted: await deleteQuarantinedDownload(
+            QUARANTINE_ROOT,
+            botId,
+            body.id,
+          ),
+        });
+      } catch (error) {
+        return json(
+          {
+            error: describe(
+              error,
+              "The quarantined file could not be deleted.",
+            ),
+          },
+          error instanceof QuarantineStateError ? 409 : 500,
         );
       }
     }

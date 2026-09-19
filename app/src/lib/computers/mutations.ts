@@ -3,8 +3,8 @@ import { client } from "@/lib/client";
 import { clearActivity } from "./activity";
 import { type ActionPolicy, computerKeys } from "./queries";
 
-/** Stopping frees the container; resetting also deletes the browser profile. */
-export type ComputerAction = "stop" | "reset";
+/** Lifecycle controls. Reset is the only action that deletes the browser profile and workspace. */
+export type ComputerAction = "start" | "restart" | "stop" | "reset";
 
 function invalidateComputers(queryClient: QueryClient) {
   return queryClient.invalidateQueries({ queryKey: computerKeys.all });
@@ -20,15 +20,138 @@ export function setComputerStateMutationOptions(queryClient: QueryClient) {
         `/api/computers/${encodeURIComponent(variables.botId)}/computers/${variables.action}`,
         {
           method: "POST",
+          ...(variables.action === "reset"
+            ? {
+                body: {
+                  confirm: "RESET",
+                  // Bind the destructive acknowledgement to the same Bot named in the URL. The
+                  // server requires both, so an old dialog cannot wipe whichever Bot the route now
+                  // points at.
+                  botId: variables.botId,
+                },
+              }
+            : {}),
           fallback: `The computer could not be ${variables.action}.`,
         },
       );
     },
-    /** A reset deletes the profile those commands ran on; a stop keeps it, so only reset forgets. */
+    /** Only reset deletes the persistent Computer state, so only reset forgets local activity. */
     onSuccess: (_result, variables) => {
       if (variables.action === "reset") clearActivity(variables.botId);
       return invalidateComputers(queryClient);
     },
+  });
+}
+
+export function computerSnapshotMutationOptions(queryClient: QueryClient) {
+  return mutationOptions({
+    mutationFn: async (variables: {
+      botId: string;
+      action: "snapshot" | "restore";
+    }) => {
+      const response = await client(
+        `/api/computers/${encodeURIComponent(variables.botId)}/computers/${variables.action}`,
+        {
+          method: "POST",
+          body: {
+            confirm: variables.action === "snapshot" ? "SNAPSHOT" : "RESTORE",
+            botId: variables.botId,
+          },
+          fallback:
+            variables.action === "snapshot"
+              ? "The clean snapshot could not be created."
+              : "The clean snapshot could not be restored.",
+        },
+      );
+      return response.json();
+    },
+    onSuccess: (_result, variables) => {
+      if (variables.action === "restore") clearActivity(variables.botId);
+      return invalidateComputers(queryClient);
+    },
+  });
+}
+
+export function stopAllComputersMutationOptions(queryClient: QueryClient) {
+  return mutationOptions({
+    mutationFn: async () => {
+      await client("/api/computers/stop-all", {
+        method: "POST",
+        fallback: "The Computers could not all be stopped.",
+      });
+    },
+    onSuccess: () => invalidateComputers(queryClient),
+  });
+}
+
+export function scanQuarantinedDownloadMutationOptions(
+  queryClient: QueryClient,
+) {
+  return mutationOptions({
+    mutationFn: async (variables: { botId: string; id: string }) => {
+      const response = await client(
+        `/api/computers/${encodeURIComponent(variables.botId)}/quarantine/scan`,
+        {
+          method: "POST",
+          body: { id: variables.id },
+          fallback: "The quarantined file could not be scanned.",
+        },
+      );
+      return response.json();
+    },
+    onSuccess: (_result, variables) =>
+      queryClient.invalidateQueries({
+        queryKey: computerKeys.quarantine(variables.botId),
+      }),
+  });
+}
+
+export function approveQuarantinedDownloadMutationOptions(
+  queryClient: QueryClient,
+) {
+  return mutationOptions({
+    mutationFn: async (variables: { botId: string; id: string }) => {
+      const response = await client(
+        `/api/computers/${encodeURIComponent(variables.botId)}/quarantine/approve`,
+        {
+          method: "POST",
+          body: {
+            id: variables.id,
+            botId: variables.botId,
+            confirm: "APPROVE",
+          },
+          fallback: "The quarantined file could not be approved.",
+        },
+      );
+      return response.json();
+    },
+    onSuccess: (_result, variables) =>
+      queryClient.invalidateQueries({
+        queryKey: computerKeys.quarantine(variables.botId),
+      }),
+  });
+}
+
+export function exportQuarantinedDownloadMutationOptions(
+  queryClient: QueryClient,
+) {
+  return mutationOptions({
+    mutationFn: async (variables: { botId: string; id: string }) => {
+      const response = await client("/api/host-access/quarantine/export", {
+        method: "POST",
+        body: {
+          botId: variables.botId,
+          id: variables.id,
+          confirm: "EXPORT_QUARANTINED_FILE",
+        },
+        fallback: "The quarantined file could not be exported.",
+      });
+      return response.json();
+    },
+    onSuccess: (_result, variables) =>
+      queryClient.invalidateQueries({
+        queryKey: computerKeys.quarantine(variables.botId),
+      }),
   });
 }
 

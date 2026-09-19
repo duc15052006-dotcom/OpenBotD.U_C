@@ -11,7 +11,7 @@ import {
 /**
  * What a Bot id may be.
  *
- * The supervisor turns an id into a container name and two volume names, so anything it accepts it
+ * The supervisor turns an id into a container name and live and snapshot volume names, so anything it accepts it
  * can also address. These tests are the boundary: a name that escapes this file is a name the
  * supervisor will happily stop or delete.
  */
@@ -25,6 +25,13 @@ describe("the ids a supervisor will accept", () => {
       container: `${NAMESPACE}-computer-agent_2aaf8f2f-0e53-4bb2`,
       profileVolume: `${NAMESPACE}-profile-agent_2aaf8f2f-0e53-4bb2`,
       workspaceVolume: `${NAMESPACE}-workspace-agent_2aaf8f2f-0e53-4bb2`,
+      quarantineVolume: `${NAMESPACE}-quarantine-agent_2aaf8f2f-0e53-4bb2`,
+      snapshotProfileVolume: `${NAMESPACE}-snapshot-profile-agent_2aaf8f2f-0e53-4bb2`,
+      snapshotWorkspaceVolume: `${NAMESPACE}-snapshot-workspace-agent_2aaf8f2f-0e53-4bb2`,
+      snapshotQuarantineVolume: `${NAMESPACE}-snapshot-quarantine-agent_2aaf8f2f-0e53-4bb2`,
+      snapshotAltProfileVolume: `${NAMESPACE}-snapshot-alt-profile-agent_2aaf8f2f-0e53-4bb2`,
+      snapshotAltWorkspaceVolume: `${NAMESPACE}-snapshot-alt-workspace-agent_2aaf8f2f-0e53-4bb2`,
+      snapshotAltQuarantineVolume: `${NAMESPACE}-snapshot-alt-quarantine-agent_2aaf8f2f-0e53-4bb2`,
     });
   });
 

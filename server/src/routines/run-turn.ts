@@ -255,7 +255,20 @@ export function createTurnRunner(options: {
     abortGraceMs = DEFAULT_ABORT_GRACE_MS,
   } = options;
 
-  return async ({ ownerUserId, routineId, agentId, threadId, instruction }) => {
+  return async (turnInput) => {
+    const { ownerUserId, agentId, threadId, instruction } = turnInput;
+    const source =
+      "workflowId" in turnInput && turnInput.workflowId
+        ? "workflow"
+        : "routine";
+    const sourceId =
+      source === "workflow"
+        ? (turnInput as { workflowId: string }).workflowId
+        : (turnInput as { routineId: string }).routineId;
+    const initiator: AuditInitiator =
+      source === "workflow"
+        ? { kind: "workflow", id: sourceId }
+        : { kind: "routine", id: sourceId };
     /*
      * One id for this turn, minted once.
      *
@@ -309,7 +322,7 @@ export function createTurnRunner(options: {
     const turn = {
       id: crypto.randomUUID(),
       role: "user",
-      content: frameFiring(instruction),
+      content: source === "routine" ? frameFiring(instruction) : instruction,
     } as Message;
     const messages = [...seeded, turn];
 
@@ -342,7 +355,7 @@ export function createTurnRunner(options: {
     const agent = await buildAgentFor({
       ownerUserId,
       agentId,
-      initiator: { kind: "routine", id: routineId },
+      initiator,
     });
     agent.threadId = threadId;
     agent.setMessages(messages);
@@ -541,7 +554,9 @@ export function createTurnRunner(options: {
      */
     if (agent.pendingInterrupts.length > 0) {
       throw new Error(
-        "The turn stopped to ask a question, and a routine has nobody to ask.",
+        source === "routine"
+          ? "The turn stopped to ask a question, and a routine has nobody to ask."
+          : "The turn stopped to ask a question, and this workflow continuation has nobody to ask.",
       );
     }
     if (replyText.length === 0) {

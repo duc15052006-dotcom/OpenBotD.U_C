@@ -36,6 +36,8 @@ export {
   WorkspaceRequestError,
 } from "./client";
 
+import type { ComputerLifecycleReader } from "./lifecycle";
+import { computerLifecycleState } from "./lifecycle";
 import type { PageFrameStore } from "./page-frames";
 import {
   type ActionPolicy,
@@ -44,10 +46,16 @@ import {
   policyInitiator,
   type PolicyDecision,
 } from "./policy";
-import type { ComputerProvider } from "./provider";
+import type {
+  ComputerHostCapacity,
+  ComputerLocation,
+  ComputerProvider,
+} from "./provider";
+import type { ComputerResourceProfile } from "./resource-profile";
 import type {
   ActionResult,
   ClickInput,
+  ComputerResourceMetrics,
   ComputerStatus,
   ControlState,
   HumanInput,
@@ -59,6 +67,9 @@ import type {
   ReadFileInput,
   ReadFileResult,
   ReadResult,
+  QuarantineDeleteResult,
+  QuarantineListResult,
+  QuarantineRecord,
   RunCommandInput,
   RunCommandResult,
   ScreenshotResult,
@@ -122,6 +133,12 @@ export type ComputerGatewayOptions = {
    * this deployment makes in as many words.
    */
   pageFrames?: PageFrameStore;
+  /** Durable provenance that distinguishes automatic Sleep from an explicit Stop. */
+  lifecycleReader?: ComputerLifecycleReader;
+  /** Resolve the persisted bounded resource preset before this Bot is ensured. */
+  resourceProfile?: (
+    botId: string,
+  ) => ComputerResourceProfile | Promise<ComputerResourceProfile>;
 };
 
 export interface ComputerGateway {
@@ -131,6 +148,29 @@ export interface ComputerGateway {
   screenshot(botId: string): Promise<ScreenshotResult>;
   snapshot(botId: string): Promise<SnapshotResult>;
   read(botId: string): Promise<ReadResult>;
+  listQuarantine(botId: string): Promise<QuarantineListResult>;
+  scanQuarantine(
+    botId: string,
+    actor: ActionActor,
+    id: string,
+  ): Promise<QuarantineRecord>;
+  approveQuarantine(
+    botId: string,
+    actor: ActionActor,
+    id: string,
+  ): Promise<QuarantineRecord>;
+  /** Binary stream for the native desktop worker only; never returned to the browser/model. */
+  quarantineExportResponse(botId: string, id: string): Promise<Response>;
+  markQuarantineReleased(
+    botId: string,
+    actor: ActionActor,
+    id: string,
+  ): Promise<QuarantineRecord>;
+  deleteQuarantine(
+    botId: string,
+    actor: ActionActor,
+    id: string,
+  ): Promise<QuarantineDeleteResult>;
   navigate(
     botId: string,
     actor: ActionActor,
@@ -201,17 +241,43 @@ export interface ComputerGateway {
   humanInput(botId: string, input: HumanInput): Promise<HumanInputResult>;
   computers(): Promise<{
     isolation: "per-bot" | "shared";
+    capacity?: ComputerHostCapacity;
     computers: {
       botId: string;
       running: boolean;
+      lifecycle: "running" | "idle" | "sleeping" | "stopped";
       startedAt: string | null;
       egress?: string | null;
+      snapshotAvailable?: boolean;
+      metrics?: ComputerResourceMetrics;
     }[];
   }>;
+  startComputer(
+    botId: string,
+    actor: ActionActor,
+  ): Promise<{ started: boolean; url: string }>;
+  restartComputer(
+    botId: string,
+    actor: ActionActor,
+  ): Promise<{ restarted: boolean; url: string }>;
   stopComputer(
     botId: string,
     actor: ActionActor,
   ): Promise<{ wasRunning: boolean }>;
+  stopAllComputers(actor: ActionActor): Promise<{
+    attempted: number;
+    stopped: string[];
+    alreadyStopped: string[];
+    failed: { botId: string; error: string }[];
+  }>;
+  createComputerSnapshot(
+    botId: string,
+    actor: ActionActor,
+  ): Promise<{ created: boolean }>;
+  restoreComputerSnapshot(
+    botId: string,
+    actor: ActionActor,
+  ): Promise<{ restored: boolean }>;
   resetComputer(
     botId: string,
     actor: ActionActor,
@@ -254,13 +320,22 @@ export function createComputerGateway(
    * Not the navigation check. That one refuses private hosts, which is the right answer for where a
    * Bot may browse and the wrong one here, where loopback is the normal case.
    */
-  async function locate(botId: string): Promise<string> {
-    const address = await provider.locate(botId);
+  function checkedComputerAddress(address: string): string {
     const verdict = checkComputerAddress(address);
     if (!verdict.allowed) {
       throw new ComputerUnavailableError(verdict.reason);
     }
     return verdict.url;
+  }
+
+  async function locate(botId: string): Promise<string> {
+    const resourceProfile = await options.resourceProfile?.(botId);
+    return checkedComputerAddress(
+      await provider.locate(
+        botId,
+        resourceProfile ? { resourceProfile } : undefined,
+      ),
+    );
   }
 
   async function get<T>(
@@ -302,19 +377,23 @@ export function createComputerGateway(
     );
   }
 
+  type LocatedAction =
+    | { address: string; error?: never }
+    | { address?: never; error: unknown };
+
   /**
-   * This action's own `/ensure`, or nothing when it cannot be made.
+   * This action's own `/ensure`, including the failure when it cannot be made.
    *
-   * A computer that cannot be located is not a verdict this may reach on its own. The action still
-   * has to be decided and recorded, and the attempt failing is what writes the failure row beside the
-   * decision; throwing here would take the action off the trail entirely. So a failure answers
-   * "unknown", which leaves the generation check where it was and leaves the address to the attempt.
+   * A locate failure is not a policy verdict, so the action still gets its decision and failure audit
+   * rows. But a cited action must never hide that failure as `undefined` and then let `post` locate
+   * again: the second locate can name a different Computer run from the one the snapshot check tried
+   * to bind. Carry the first failure forward so the audited attempt fails without a second lookup.
    */
-  async function locateForAction(botId: string): Promise<string | undefined> {
+  async function locateForAction(botId: string): Promise<LocatedAction> {
     try {
-      return await locate(botId);
-    } catch {
-      return undefined;
+      return { address: await locate(botId) };
+    } catch (error) {
+      return { error };
     }
   }
 
@@ -468,9 +547,14 @@ export function createComputerGateway(
      * the policy has even seen it. The address that comes back is the one the attempt then uses, so
      * this costs no extra call for the actions that do need it.
      */
-    const address = ref ? await locateForAction(botId) : undefined;
-    const { session } = ref ? await sessionOf(botId) : { session: undefined };
-    const element = resolve(stored, ref, snapshotId, session);
+    const located = ref ? await locateForAction(botId) : undefined;
+    const address = located?.address;
+    const { session } =
+      ref && address ? await sessionOf(botId) : { session: undefined };
+    const element =
+      ref && located && "error" in located
+        ? undefined
+        : resolve(stored, ref, snapshotId, session);
     // For a navigation the relevant page is the one being opened, not the one already loaded. Using
     // the stored URL would mean `page.host == "..."` could never match the destination, which is the
     // only thing a rule about navigation would ever want to say.
@@ -576,6 +660,9 @@ export function createComputerGateway(
        * was written would be a way to act without appearing on the trail. The failure row beside it is
        * what stops the trail claiming a permitted action was carried out when nothing was sent.
        */
+      if (ref && located && "error" in located) {
+        throw located.error;
+      }
       if (ref && stored && !element) {
         throw new StaleSnapshotError(
           `${ref} is not on the page this computer is showing, so nothing can be checked against it before acting. Take a fresh snapshot and use the refs it returns.`,
@@ -634,6 +721,83 @@ export function createComputerGateway(
     snapshot,
     read,
 
+    listQuarantine(botId: string): Promise<QuarantineListResult> {
+      return get<QuarantineListResult>(botId, "/quarantine");
+    },
+
+    async scanQuarantine(botId: string, actor: ActionActor, id: string) {
+      const result = await post<QuarantineRecord>(botId, "/quarantine/scan", {
+        id,
+      });
+      await writeControlEvent(auditStore, "computer.quarantine_scanned", {
+        botId,
+        actor,
+        reason: `${id}: ${result.status}`,
+      });
+      return result;
+    },
+
+    async approveQuarantine(botId: string, actor: ActionActor, id: string) {
+      const result = await post<QuarantineRecord>(
+        botId,
+        "/quarantine/approve",
+        { id, botId, confirm: "APPROVE" },
+      );
+      await writeControlEvent(auditStore, "computer.quarantine_approved", {
+        botId,
+        actor,
+        reason: `${id}: explicitly approved after clean scan`,
+      });
+      return result;
+    },
+
+    async quarantineExportResponse(botId: string, id: string) {
+      return transport.raw(
+        await locate(botId),
+        botId,
+        "/quarantine/export-internal",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id }),
+        },
+        undefined,
+        10 * 60_000,
+      );
+    },
+
+    async markQuarantineReleased(
+      botId: string,
+      actor: ActionActor,
+      id: string,
+    ) {
+      const result = await post<QuarantineRecord>(
+        botId,
+        "/quarantine/released",
+        { id },
+      );
+      await writeControlEvent(auditStore, "computer.quarantine_released", {
+        botId,
+        actor,
+        reason: `${id}: native export completed without auto-open`,
+      });
+      return result;
+    },
+
+    async deleteQuarantine(botId: string, actor: ActionActor, id: string) {
+      const result = await post<QuarantineDeleteResult>(
+        botId,
+        "/quarantine/delete",
+        { id },
+      );
+      await writeControlEvent(auditStore, "computer.quarantine_deleted", {
+        botId,
+        actor,
+        reason: `${id}: ${result.deleted ? "deleted" : "already absent"}`,
+      });
+      return result;
+    },
+
     status(botId: string): Promise<ComputerStatus> {
       return provider.status(botId);
     },
@@ -687,15 +851,176 @@ export function createComputerGateway(
     /** Return every computer that the configured provider owns. */
     async computers() {
       const computers = await provider.list();
+
+      const metricsFor = async (
+        computer: ComputerLocation,
+      ): Promise<ComputerResourceMetrics | undefined> => {
+        if (computer.status !== "running" || !computer.url) return undefined;
+
+        // A provider supplies this address, and the request carries the deployment's computer token.
+        // Apply the same address check as every acting call before sending that token anywhere.
+        const verdict = checkComputerAddress(computer.url);
+        if (!verdict.allowed) return undefined;
+
+        try {
+          const body = await transport.call<{
+            metrics?: ComputerResourceMetrics;
+          }>(
+            verdict.url,
+            computer.botId,
+            "/metrics",
+            undefined,
+            undefined,
+            5_000,
+          );
+          return body.metrics;
+        } catch {
+          // Metrics are observability, not lifecycle state. A browser that is running but too busy to
+          // answer a sample still belongs in the fleet and should not turn the whole Admin page red.
+          return undefined;
+        }
+      };
+
+      const [metrics, capacity] = await Promise.all([
+        Promise.all(computers.map(metricsFor)),
+        provider.capacity?.().catch(() => undefined),
+      ]);
+      let lifecycleEvents = new Map();
+      if (options.lifecycleReader) {
+        try {
+          lifecycleEvents = await options.lifecycleReader.latest(
+            computers
+              .filter((computer) => computer.status !== "running")
+              .map((computer) => computer.botId),
+          );
+        } catch {
+          // Lifecycle provenance is presentation metadata. A temporary audit-read failure must not
+          // hide the fleet; a stopped Computer falls back to "stopped" until the next refresh.
+        }
+      }
       return {
         isolation: provider.isolation,
-        computers: computers.map((computer) => ({
-          botId: computer.botId,
-          running: computer.status === "running",
-          startedAt: computer.startedAt ?? null,
-          egress: computer.egress,
-        })),
+        ...(capacity ? { capacity } : {}),
+        computers: computers.map((computer, index) => {
+          const running = computer.status === "running";
+          return {
+            botId: computer.botId,
+            running,
+            lifecycle: computerLifecycleState({
+              running,
+              browserRunning: metrics[index]?.browserRunning,
+              latestEvent: lifecycleEvents.get(computer.botId),
+            }),
+            startedAt: computer.startedAt ?? null,
+            egress: computer.egress,
+            ...(computer.snapshotAvailable !== undefined
+              ? { snapshotAvailable: computer.snapshotAvailable }
+              : {}),
+            ...(metrics[index] ? { metrics: metrics[index] } : {}),
+          };
+        }),
       };
+    },
+
+    /**
+     * Start (or wake) a computer without changing its saved browser profile.
+     *
+     * Per-Bot providers already define locating as "ensure this Bot has a running computer", so the
+     * lifecycle surface uses that same primitive rather than adding a second start path that could
+     * drift from the one every normal action relies on. A shared provider may already be running as
+     * a service; in that mode this is an idempotent reachability/wake request.
+     */
+    async startComputer(botId: string, actor: ActionActor) {
+      const before = await provider.status(botId).catch(() => ({
+        botId,
+        state: "unreachable" as const,
+      }));
+      const priorLifecycle =
+        before.state === "ready" || !options.lifecycleReader
+          ? undefined
+          : await options.lifecycleReader
+              .latest([botId])
+              .then((events) => events.get(botId))
+              .catch(() => undefined);
+      let url = await locate(botId);
+      const started = before.state !== "ready";
+      // Refs belong to the browser run that produced them. Waking a stopped computer may replace
+      // that run, so never let an old accessibility ref survive into the new process.
+      if (started) await snapshots.clear(botId);
+      const woke = started && priorLifecycle === "computer.slept";
+      await writeControlEvent(
+        auditStore,
+        woke ? "computer.woke" : "computer.started",
+        {
+          botId,
+          actor,
+          reason: woke
+            ? "the computer woke from automatic idle sleep"
+            : started
+              ? "the computer was started or resumed"
+              : "the computer was already running",
+        },
+      );
+
+      /*
+       * The idle culler rechecks activity before it stops, but that check and stop are not atomic
+       * with this request. If it passed the check just before this Start/Wake was recorded, it can
+       * stop the Computer after the first locate above. Re-read state after the audit row exists:
+       * the culler can now see the request and repair its side too, while this side refuses to
+       * return a successful Start for a Computer that has already gone back down.
+       */
+      const after = await provider.status(botId).catch(() => ({
+        botId,
+        state: "unreachable" as const,
+      }));
+      let recoveredFromSleepRace = false;
+      if (after.state !== "ready") {
+        url = await locate(botId);
+        recoveredFromSleepRace = true;
+        await snapshots.clear(botId);
+        await writeControlEvent(auditStore, "computer.woke", {
+          botId,
+          actor,
+          reason:
+            "the computer was restored after idle sleep raced this Start/Wake request",
+        });
+      }
+      return { started: started || recoveredFromSleepRace, url };
+    },
+
+    /**
+     * Restart a computer while preserving its saved profile.
+     *
+     * A supervisor-backed provider performs Stop -> Ensure under one per-Bot lock. Providers that do
+     * not expose that primitive retain the legacy stop-then-locate fallback. Neither path calls reset:
+     * restart must never sign the Bot out or erase its workspace/browser profile.
+     */
+    async restartComputer(botId: string, actor: ActionActor) {
+      const resourceProfile = await options.resourceProfile?.(botId);
+      let url: string;
+      if (provider.restart) {
+        // The Docker supervisor keeps Stop -> Ensure under one per-Bot lock. Without this primitive,
+        // Reset/Stop/Start from another request can interleave after Stop and before Ensure.
+        url = checkedComputerAddress(
+          await provider.restart(
+            botId,
+            resourceProfile ? { resourceProfile } : undefined,
+          ),
+        );
+      } else {
+        // Compatibility for shared/remote providers that have not adopted the atomic lifecycle verb.
+        await provider.stop(botId);
+        url = await locate(botId);
+      }
+      // A restarted browser has a new accessibility tree even when its profile is preserved.
+      await snapshots.clear(botId);
+      await writeControlEvent(auditStore, "computer.restarted", {
+        botId,
+        actor,
+        reason:
+          "the computer was stopped and started again without clearing its saved profile",
+      });
+      return { restarted: true, url };
     },
 
     /**
@@ -719,16 +1044,113 @@ export function createComputerGateway(
     },
 
     /**
-     * Wipe a computer's profile.
+     * Emergency stop for every Computer this deployment owns.
      *
-     * The most destructive button we have. Every login the Bot had is gone and no undo exists, so the
-     * row is written whatever happens next.
+     * Best effort, not fail-fast: one broken container must not prevent the others from stopping.
+     * Persistent volumes are untouched, so this is safe to press under pressure and every Bot can
+     * resume later.
+     */
+    async stopAllComputers(actor: ActionActor) {
+      const computers = await provider.list();
+      const botIds = [...new Set(computers.map((computer) => computer.botId))];
+      const outcomes = await Promise.all(
+        botIds.map(async (botId) => {
+          try {
+            const result = await provider.stop(botId);
+            await writeControlEvent(auditStore, "computer.stopped", {
+              botId,
+              actor,
+              reason: result.wasRunning
+                ? "the computer was stopped by Kill All Computers"
+                : "Kill All Computers found the computer already stopped",
+            });
+            return { botId, wasRunning: result.wasRunning } as const;
+          } catch (error) {
+            return {
+              botId,
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "The computer could not be stopped.",
+            } as const;
+          }
+        }),
+      );
+
+      return {
+        attempted: botIds.length,
+        stopped: outcomes
+          .filter(
+            (outcome): outcome is { botId: string; wasRunning: true } =>
+              "wasRunning" in outcome && outcome.wasRunning === true,
+          )
+          .map((outcome) => outcome.botId),
+        alreadyStopped: outcomes
+          .filter(
+            (outcome): outcome is { botId: string; wasRunning: false } =>
+              "wasRunning" in outcome && outcome.wasRunning === false,
+          )
+          .map((outcome) => outcome.botId),
+        failed: outcomes
+          .filter(
+            (outcome): outcome is { botId: string; error: string } =>
+              "error" in outcome,
+          )
+          .map(({ botId, error }) => ({ botId, error })),
+      };
+    },
+
+    async createComputerSnapshot(botId: string, actor: ActionActor) {
+      if (!provider.snapshot) {
+        throw new ComputerUnavailableError(
+          "This Computer provider does not support clean snapshots.",
+        );
+      }
+      const result = await provider.snapshot(botId);
+      await writeControlEvent(auditStore, "computer.snapshot_created", {
+        botId,
+        actor,
+        reason:
+          "a clean snapshot of profile, workspace and quarantine was created",
+      });
+      return result;
+    },
+
+    async restoreComputerSnapshot(botId: string, actor: ActionActor) {
+      if (!provider.restoreSnapshot) {
+        throw new ComputerUnavailableError(
+          "This Computer provider does not support clean snapshot restore.",
+        );
+      }
+      const result = await provider.restoreSnapshot(botId);
+      /*
+       * The persistent state has changed at this point. Record that fact before clearing stale refs
+       * and page frames: a database failure during either cleanup must not erase the only audit row
+       * saying who restored the Bot and when.
+       */
+      await writeControlEvent(auditStore, "computer.snapshot_restored", {
+        botId,
+        actor,
+        reason:
+          "profile, workspace and quarantine were restored from the clean snapshot; Computer remains stopped",
+      });
+      await snapshots.clear(botId);
+      await pageFrames?.clear(botId);
+      return result;
+    },
+
+    /**
+     * Wipe a computer's persistent state.
+     *
+     * The most destructive button we have. Browser profile, logins, workspace and quarantine are
+     * gone and no undo exists, so the row is written whatever happens next.
      */
     async resetComputer(botId: string, actor: ActionActor) {
       const result = await provider.reset(botId);
       /*
        * The row goes in HERE, before the two deletes below, because this line is the point of no
-       * return: the profile is already gone and nothing after it can put the logins back.
+       * return: the persistent Computer state is already gone and nothing after it can put the
+       * logins or workspace back.
        *
        * Both clears are Postgres deletes, and a connection reset, a failover or a statement timeout
        * in either used to throw before the row was written -- leaving a computer wiped with nothing
@@ -1191,8 +1613,17 @@ async function writeControlEvent(
     | "computer.control_released"
     | "computer.secret_requested"
     | "computer.secret_supplied"
+    | "computer.started"
+    | "computer.woke"
+    | "computer.restarted"
     | "computer.stopped"
-    | "computer.reset",
+    | "computer.snapshot_created"
+    | "computer.snapshot_restored"
+    | "computer.reset"
+    | "computer.quarantine_scanned"
+    | "computer.quarantine_approved"
+    | "computer.quarantine_released"
+    | "computer.quarantine_deleted",
   entry: {
     botId: string;
     actor: ActionActor;

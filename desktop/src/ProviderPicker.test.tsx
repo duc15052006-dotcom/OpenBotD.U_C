@@ -73,7 +73,10 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-async function renderPicker(onChoose: (choice: unknown) => void = () => {}) {
+async function renderPicker(
+  onChoose: (choice: unknown) => void = () => {},
+  requireConnectionTest = false,
+) {
   let view!: ReturnType<typeof render>;
 
   await act(async () => {
@@ -84,6 +87,7 @@ async function renderPicker(onChoose: (choice: unknown) => void = () => {}) {
         root=" /tmp/openbot-provider-root "
         onBack={() => {}}
         onChoose={onChoose}
+        requireConnectionTest={requireConnectionTest}
       />,
     );
   });
@@ -141,6 +145,97 @@ test("a completed plan sign-in enables and submits only its issuing provider", a
 
   await userEvent.click(continueButton);
   expect(choices).toEqual([]);
+});
+
+test("first-run cannot continue until the exact current model choice passes Test connection", async () => {
+  const choices: unknown[] = [];
+  invokeHandler = async (command) => {
+    if (command === "providers") return providers;
+    if (command === "test_model_connection") {
+      return { detail: "OpenAI accepted this API key." };
+    }
+    throw new Error(`unexpected command ${command}`);
+  };
+
+  const view = await renderPicker((choice) => choices.push(choice), true);
+  await userEvent.click(await view.findByRole("radio", { name: /OpenAI/ }));
+  await userEvent.click(view.getByRole("tab", { name: "Use an API key" }));
+  const key = view.getByLabelText("OpenAI API key");
+  await userEvent.type(key, "first-run-key");
+
+  const continueButton = view.getByRole("button", { name: "Continue" });
+  expect(continueButton).toHaveProperty("disabled", true);
+  await userEvent.click(continueButton);
+  expect(choices).toEqual([]);
+
+  await userEvent.click(view.getByRole("button", { name: "Test connection" }));
+  await view.findByText(/OpenAI accepted this API key/);
+  expect(continueButton).toHaveProperty("disabled", false);
+
+  await userEvent.type(key, "-changed");
+  expect(continueButton).toHaveProperty("disabled", true);
+});
+
+test("Test connection checks the exact current API-key choice without saving it", async () => {
+  invokeHandler = async (command, args) => {
+    if (command === "providers") return providers;
+    if (command === "test_model_connection") {
+      expect(args).toEqual({
+        root: "/tmp/openbot-provider-root",
+        model: {
+          provider: "openai",
+          login: "api-key",
+          apiKey: "sk-synthetic-connection-test",
+        },
+      });
+      return { detail: "OpenAI accepted this API key." };
+    }
+    throw new Error(`unexpected command ${command}`);
+  };
+
+  const view = await renderPicker();
+  await userEvent.click(await view.findByRole("radio", { name: /OpenAI/ }));
+  await userEvent.click(view.getByRole("tab", { name: "Use an API key" }));
+  await userEvent.type(
+    view.getByLabelText("OpenAI API key"),
+    "  sk-synthetic-connection-test  ",
+  );
+
+  await userEvent.click(view.getByRole("button", { name: "Test connection" }));
+
+  await waitFor(() =>
+    expect(view.getByText(/OpenAI accepted this API key/)).toBeTruthy(),
+  );
+  expect(view.queryByText(/sk-synthetic-connection-test/)).toBeNull();
+  expect(
+    invokeCalls.filter((call) => call.command === "test_model_connection"),
+  ).toHaveLength(1);
+});
+
+test("changing provider fields makes the previous connection result stale", async () => {
+  invokeHandler = async (command) => {
+    if (command === "providers") return providers;
+    if (command === "test_model_connection") {
+      return { detail: "OpenAI accepted this API key." };
+    }
+    throw new Error(`unexpected command ${command}`);
+  };
+
+  const view = await renderPicker();
+  await userEvent.click(await view.findByRole("radio", { name: /OpenAI/ }));
+  await userEvent.click(view.getByRole("tab", { name: "Use an API key" }));
+  const field = view.getByLabelText("OpenAI API key");
+  await userEvent.type(field, "first-key");
+  await userEvent.click(view.getByRole("button", { name: "Test connection" }));
+  await view.findByText(/OpenAI accepted this API key/);
+
+  await userEvent.type(field, "-changed");
+
+  expect(
+    view.getByText(
+      /Connection settings changed\. Test the current connection again/,
+    ),
+  ).toBeTruthy();
 });
 
 test("a pending plan sign-in completion is ignored after switching provider rows", async () => {
@@ -318,7 +413,6 @@ test("a compatible endpoint does not inherit a saved OpenAI API key", async () =
 
   const view = await renderPickerWithHeld(
     {
-      OPENAI_API_KEY: "sk-synthetic-openai",
       saved: {
         modelApiKeys: {
           openai: true,
@@ -358,7 +452,6 @@ test("a compatible endpoint submits the key typed into its endpoint key field", 
 
   const view = await renderPickerWithHeld(
     {
-      OPENAI_API_KEY: "sk-synthetic-openai",
       saved: {
         modelApiKeys: {
           openai: true,

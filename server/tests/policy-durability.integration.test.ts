@@ -58,7 +58,7 @@ describe("a boundary set while running", () => {
     // changes what is enforced, which is what an operator expects a reset to mean.
     const after = createPolicyStore(configured, database);
     expect(await after.load()).toBe("configuration");
-    expect(after.get().deny).toEqual([]);
+    expect(after.get().deny).toEqual(DEFAULT_ACTION_POLICY.deny);
   });
 
   test("setting twice keeps one row and the latest rule", async () => {

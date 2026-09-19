@@ -1,4 +1,8 @@
-import { IconDeviceDesktop, IconSettings } from "@tabler/icons-react";
+import {
+  IconDeviceDesktop,
+  IconPaperclip,
+  IconSettings,
+} from "@tabler/icons-react";
 import {
   useInfiniteQuery,
   useMutation,
@@ -7,12 +11,14 @@ import {
 } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { motion, useReducedMotion } from "motion/react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import { AgentProfile } from "@/components/agents/agent-profile";
 import { hasUnseenActivity } from "@/components/app-sidebar/app-sidebar";
 import { ChannelAvatar } from "@/components/channels/avatar";
 import { ChannelChat } from "@/components/channels/channel-chat";
+import { DelegationStatus } from "@/components/channels/delegation-status";
+import { SharedFilesDialog } from "@/components/channels/shared-files-dialog";
 import { ActivityLog } from "@/components/computer/activity-log";
 import { ComputerView } from "@/components/computer/computer-view";
 import { useNeedsYou } from "@/components/computer/needs-you";
@@ -84,7 +90,8 @@ function RouteComponent() {
   const isSettingsOpen = settings === true;
   const prefersReducedMotion = useReducedMotion();
   const isWatching = watch === true;
-  /** Channel routing currently supports one coworker. */
+  const [sharedFilesOpen, setSharedFilesOpen] = useState(false);
+  /** The first linked Bot coordinates this Intelligence thread; peers join through durable handoffs. */
   const agentId = channel.data?.agentIds[0];
   /** Only polled while the screen is closed; the screen panel polls control itself. */
   const needsYou = useNeedsYou(agentId, !isWatching);
@@ -217,6 +224,16 @@ function RouteComponent() {
           </div>
           <div className="flex flex-row gap-1.5">
             <Button
+              aria-label="Shared files"
+              aria-pressed={sharedFilesOpen}
+              className={sharedFilesOpen ? "bg-foreground/5" : undefined}
+              onClick={() => setSharedFilesOpen((open) => !open)}
+              variant="ghost"
+              size="icon"
+            >
+              <IconPaperclip className="size-4.5" />
+            </Button>
+            <Button
               aria-label={
                 needsYou
                   ? "This Bot is waiting for you. Open its screen"
@@ -236,7 +253,11 @@ function RouteComponent() {
               ) : null}
             </Button>
             <Button
-              aria-label="Channel coworker"
+              aria-label={
+                channel.data && channel.data.agentIds.length > 1
+                  ? "Group coordinator settings"
+                  : "Channel coworker"
+              }
               aria-pressed={isSettingsOpen}
               className={isSettingsOpen ? "bg-foreground/5" : undefined}
               disabled={agentId === undefined}
@@ -249,6 +270,12 @@ function RouteComponent() {
           </div>
         </div>
       </div>
+      <SharedFilesDialog
+        channelId={channelId}
+        onOpenChange={setSharedFilesOpen}
+        open={sharedFilesOpen}
+      />
+      <DelegationStatus channelId={channelId} />
       <ChannelBody
         channel={channel.data}
         isPending={channel.isPending}
@@ -259,8 +286,9 @@ function RouteComponent() {
 }
 
 /**
- * A channel holds exactly one coworker. More than one is not supported yet, and rendering a shared
- * transcript for several agents before the runtime can route between them would look like it works.
+ * One Intelligence thread still has one runtime Bot. In a group channel the first linked Bot is the
+ * coordinator; explicit @mentions are handed to peers through the durable handoff queue and relayed
+ * back into this same transcript.
  */
 function ChannelBody({
   channel,
@@ -281,12 +309,11 @@ function ChannelBody({
     );
   }
 
-  const runtimeAgentId =
-    channel.agentIds.length === 1 ? channel.agentIds[0] : undefined;
+  const runtimeAgentId = channel.agentIds[0];
   if (!runtimeAgentId) {
     return (
       <p className="p-8 text-sm text-muted-foreground">
-        This channel has more than one coworker, which is not supported yet.
+        This channel has no active coworkers.
       </p>
     );
   }

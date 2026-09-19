@@ -4,10 +4,11 @@ name: Desktop
 # Windows app and a Linux app built from one tree, and the ways they differ are exactly the ways
 # this fails. So it tests and builds on all three, on every change to it.
 on:
+  workflow_dispatch:
   pull_request:
     paths: ["desktop/**", "package.json", ".github/workflows/desktop.yml"]
   push:
-    branches: [main]
+    branches: [main, "verify/**"]
     paths: ["desktop/**", "package.json", ".github/workflows/desktop.yml"]
   workflow_call:
 
@@ -83,6 +84,12 @@ jobs:
         working-directory: desktop
       - run: bun run typecheck
         working-directory: desktop
+      # Run the webview/setup tests on every desktop OS. The root CI discovers these on Linux, but
+      # path handling, mocked Tauri command boundaries and packaged-config regressions are precisely
+      # the class of desktop bugs that should not wait for another platform's build to expose them.
+      - name: Desktop frontend regressions
+        run: bun test src
+        working-directory: desktop
       - name: Desktop version regressions
         run: bun test scripts/desktop-version.test.ts
         working-directory: desktop
@@ -101,6 +108,10 @@ jobs:
         working-directory: desktop
         env:
           APPLE_SIGNING_IDENTITY: ${{ matrix.platform.name == 'macos' && '-' || '' }}
+          # The native updater checks the repository that produced this exact artifact. Fork builds
+          # therefore check their own releases instead of silently pointing back at another project.
+          OPENBOT_RELEASE_REPOSITORY: ${{ github.repository }}
+          OPENBOT_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Verify packaged Mac version and ad-hoc signature
         if: matrix.platform.name == 'macos'
         run: |
@@ -152,6 +163,86 @@ jobs:
           $windowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
           & $windowsPowerShell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ../scripts/test-windows-standard-user.ps1 -TestExecutable $executables[0]
           if ($LASTEXITCODE -ne 0) { throw 'The native standard-user setup test failed.' }
+      # Building the NSIS executable is not the acceptance test people experience. Install the
+      # exact artifact into a fresh temporary directory, prove an app binary was laid down, then run
+      # the generated uninstaller. This catches installer-script/resource failures that a successful
+      # Tauri bundle can still leave until somebody double-clicks the release on Windows.
+      - name: Windows installer install/uninstall smoke
+        if: matrix.platform.name == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installers = @(Get-ChildItem 'desktop/src-tauri/target/release/bundle/nsis' -Filter '*.exe' -File)
+          if ($installers.Count -ne 1) {
+            throw "Expected exactly one NSIS installer, found $($installers.Count)."
+          }
+
+          $target = Join-Path $env:RUNNER_TEMP 'openbot-clean-install'
+          Remove-Item $target -Recurse -Force -ErrorAction SilentlyContinue
+
+          $installed = Start-Process -FilePath $installers[0].FullName -ArgumentList @('/S', "/D=$target") -Wait -PassThru
+          if ($installed.ExitCode -ne 0) {
+            throw "NSIS installer exited with $($installed.ExitCode)."
+          }
+
+          $appBinaries = @(
+            Get-ChildItem $target -Recurse -Filter '*.exe' -File |
+              Where-Object { $_.Name -notmatch '^uninstall' }
+          )
+          if ($appBinaries.Count -lt 1) {
+            throw "The installer reported success but no application executable exists under $target."
+          }
+          Write-Host "Installed application: $($appBinaries[0].FullName)"
+
+          # Open the installed artifact, not the build-tree binary. The setup wizard may report a
+          # missing Windows prerequisite on this runner and that is fine; what must not happen is an
+          # immediate loader/WebView/resource crash before a window can stay alive.
+          $app = Start-Process -FilePath $appBinaries[0].FullName -PassThru
+          Start-Sleep -Seconds 5
+          $app.Refresh()
+          if ($app.HasExited) {
+            throw "The installed OpenBot executable exited during its first five seconds (exit $($app.ExitCode))."
+          }
+          Stop-Process -Id $app.Id -Force
+          Wait-Process -Id $app.Id -ErrorAction SilentlyContinue
+
+          $uninstallers = @(
+            Get-ChildItem $target -Recurse -Filter 'uninstall*.exe' -File
+          )
+          if ($uninstallers.Count -ne 1) {
+            throw "Expected exactly one generated uninstaller, found $($uninstallers.Count)."
+          }
+
+          $removed = Start-Process -FilePath $uninstallers[0].FullName -ArgumentList '/S' -Wait -PassThru
+          if ($removed.ExitCode -ne 0) {
+            throw "NSIS uninstaller exited with $($removed.ExitCode)."
+          }
+
+          for ($attempt = 0; $attempt -lt 30 -and (Test-Path $appBinaries[0].FullName); $attempt++) {
+            Start-Sleep -Milliseconds 500
+          }
+          if (Test-Path $appBinaries[0].FullName) {
+            throw "The uninstaller reported success but the installed application still exists."
+          }
+
+      # Hosted Windows runners are administrators, so the smoke above can still hide an accidental
+      # elevation dependency. Repeat the exact install → first launch → uninstall flow inside a fresh
+      # Users-only account and fail unless its token is non-admin.
+      - name: Windows standard-user installer acceptance
+        if: matrix.platform.name == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installers = @(Get-ChildItem 'desktop/src-tauri/target/release/bundle/nsis' -Filter '*.exe' -File)
+          if ($installers.Count -ne 1) {
+            throw "Expected exactly one NSIS installer, found $($installers.Count)."
+          }
+          $windowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          & $windowsPowerShell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File desktop/scripts/test-windows-installer-standard-user.ps1 -InstallerPath $installers[0].FullName
+          if ($LASTEXITCODE -ne 0) {
+            throw 'The standard-user installer acceptance failed.'
+          }
+
       # Keep what was built. Without this the only way to try an installer is to build one on
       # the machine you are trying it on, which is not what anybody installs.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

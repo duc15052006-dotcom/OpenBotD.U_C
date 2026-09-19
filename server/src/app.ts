@@ -8,6 +8,13 @@ import {
   parseAgentToolCallInput,
   sameToken,
 } from "./agents/callback-token";
+import { createAgentInstructionsRoutes } from "./agents/instructions-routes";
+import type { AgentInstructionsStore } from "./agents/instructions-store";
+import { createAgentKnowledgeRoutes } from "./agents/knowledge-routes";
+import type { AgentKnowledgeStore } from "./agents/knowledge-store";
+import { createAgentModelConfigRoutes } from "./agents/model-config-routes";
+import type { AgentModelConfigStore } from "./agents/model-config-store";
+import type { AgentModelConnectionService } from "./agents/model-connection-service";
 import type { BotAccessCheck } from "./agents/profile-policy";
 import type { AgentProfileStore } from "./agents/profile-store";
 import { createAgentRoutes } from "./agents/routes";
@@ -313,6 +320,13 @@ export function createApp(
    * no app directory to offer, rather than one that lists apps nobody can connect.
    */
   composio?: { broker: ComposioBroker },
+  /** Per-Agent model settings and their secret-safe connection test. */
+  agentModels?: AgentModelConfigStore,
+  agentModelConnections?: AgentModelConnectionService,
+  /** Durable instructions that belong to one Agent rather than to the signed-in person. */
+  agentInstructions?: AgentInstructionsStore,
+  /** Bounded uploaded reference material owned by one Agent. */
+  agentKnowledge?: AgentKnowledgeStore,
 ) {
   const app = new Hono<{ Variables: AppVariables }>();
 
@@ -1131,6 +1145,28 @@ export function createApp(
         config.managedAgent?.endpoint?.toString(),
       ),
     );
+    if (agentModels) {
+      app.route(
+        "/api/agents",
+        createAgentModelConfigRoutes(
+          agentModels,
+          requireUser,
+          agentModelConnections,
+        ),
+      );
+    }
+    if (agentInstructions) {
+      app.route(
+        "/api/agents",
+        createAgentInstructionsRoutes(agentInstructions, requireUser),
+      );
+    }
+    if (agentKnowledge) {
+      app.route(
+        "/api/agents",
+        createAgentKnowledgeRoutes(agentKnowledge, requireUser),
+      );
+    }
     // Choosing a coworker for an untagged message needs the same permission-filtered roster the
     // agents routes read, so it is mounted here where that store is in scope. Only when a router was
     // configured; without one the composer keeps sending untagged messages to the default.

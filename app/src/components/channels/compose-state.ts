@@ -1,3 +1,5 @@
+import { MAX_CHANNEL_AGENTS } from "../../../../shared/channel-groups";
+
 /**
  * The rules a compose screen follows before there is a channel to hold them.
  *
@@ -10,13 +12,12 @@ export type Recipient = {
 };
 
 /**
- * One coworker per channel.
- *
- * Matches the chat screen's current one-coworker render contract.
+ * A small group is enough to coordinate several specialist Bots without turning the mention menu
+ * into a deployment-wide roster. The server still validates every id against the caller's roster.
  */
-export const MAX_RECIPIENTS = 1;
+export const MAX_RECIPIENTS = MAX_CHANNEL_AGENTS;
 
-/** Add a coworker, replacing the oldest once the channel recipient cap is reached. */
+/** Add a coworker unless this group is already at its explicit participant cap. */
 export function addRecipient(
   current: readonly Recipient[],
   next: Recipient,
@@ -24,7 +25,8 @@ export function addRecipient(
   if (current.some((recipient) => recipient.id === next.id)) {
     return [...current];
   }
-  return [...current, next].slice(-MAX_RECIPIENTS);
+  if (current.length >= MAX_RECIPIENTS) return [...current];
+  return [...current, next];
 }
 
 export function removeRecipient(
@@ -39,5 +41,9 @@ export function canSend(
   recipients: readonly Recipient[],
   text: string,
 ): boolean {
-  return recipients.length === MAX_RECIPIENTS && text.trim().length > 0;
+  return (
+    recipients.length > 0 &&
+    recipients.length <= MAX_RECIPIENTS &&
+    text.trim().length > 0
+  );
 }

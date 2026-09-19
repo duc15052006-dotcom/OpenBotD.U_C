@@ -23,6 +23,7 @@ jobs:
     outputs:
       is_release: ${{ steps.release.outputs.is_release }}
       version: ${{ steps.release.outputs.version }}
+      registry_owner: ${{ steps.release.outputs.registry_owner }}
     steps:
       - id: pull-request
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -33,31 +34,39 @@ jobs:
               await github.rest.repos.listPullRequestsAssociatedWithCommit({
                 owner, repo, commit_sha: context.sha,
               });
-            const pull = pulls.find((candidate) =>
+            // GitHub's commit -> associated PR relation survives merge, squash and rebase.
+            // Do not compare merge_commit_sha: for squash/rebase it is not a stable classifier for
+            // the commit that landed on main, which can silently turn a real release merge into a
+            // normal push. The push itself already proves context.sha is now on main; association
+            // proves GitHub ties that exact commit to the reviewed PR.
+            const candidates = pulls.filter((candidate) =>
               candidate.base.ref === "main" &&
               candidate.merged_at !== null &&
-              candidate.merge_commit_sha === context.sha
+              /^release\/publish\/v\d+\.\d+\.\d+$/.test(candidate.head.ref) &&
+              candidate.head.repo?.full_name === `${owner}/${repo}` &&
+              candidate.labels.some((label) => label.name === "release")
             );
-            if (!pull) {
-              // Not a merge commit of a reviewed PR. That is most pushes; it is not an error.
+            if (candidates.length !== 1) {
+              // Zero is an ordinary non-release push. More than one is ambiguous and therefore also
+              // fails closed rather than guessing which version should be published.
               core.setOutput("head_ref", "");
               core.setOutput("trusted", "false");
+              if (candidates.length > 1) {
+                core.warning(
+                  `Commit ${context.sha} is associated with multiple trusted release PRs; refusing to publish.`
+                );
+              }
               return;
             }
-            // A release branch name is not enough on its own: a fork can open a PR from a branch
-            // with any name it likes. The branch must be in this repository and the PR must carry
-            // the label, which only somebody with write access can add.
-            const trusted =
-              /^release\/publish\/v\d+\.\d+\.\d+$/.test(pull.head.ref) &&
-              pull.head.repo?.full_name === `${owner}/${repo}` &&
-              pull.labels.some((label) => label.name === "release");
+            const pull = candidates[0];
             core.setOutput("head_ref", pull.head.ref);
-            core.setOutput("trusted", String(trusted));
+            core.setOutput("trusted", "true");
       - id: release
         name: Decide
         env:
           HEAD_REF: ${{ steps.pull-request.outputs.head_ref }}
           TRUSTED: ${{ steps.pull-request.outputs.trusted }}
+          REGISTRY_OWNER: ${{ github.repository_owner }}
         run: |
           set -euo pipefail
           if [ "$TRUSTED" != true ]; then
@@ -66,9 +75,15 @@ jobs:
             exit 0
           fi
           version="${HEAD_REF#release/publish/}"
+          registry_owner="$(printf '%s' "$REGISTRY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          if ! [[ "$registry_owner" =~ ^[a-z0-9][a-z0-9._-]*$ ]]; then
+            echo "::error::Repository owner cannot be used as a GHCR namespace."
+            exit 1
+          fi
           echo "is_release=true" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "Releasing $version"
+          echo "registry_owner=$registry_owner" >> "$GITHUB_OUTPUT"
+          echo "Releasing $version to ghcr.io/$registry_owner"
 
   # The version in the tree has to agree with the branch that is publishing it. They are written by
   # the same workflow, so disagreement means something was edited by hand after review.
@@ -107,15 +122,40 @@ jobs:
   checks:
     needs: [metadata, verify]
     if: needs.metadata.outputs.is_release == 'true'
-    uses: $/.github/workflows/ci.yml
+    uses: ./.github/workflows/ci.yml
     permissions:
       contents: read
+
+  # Desktop is a release product too. Reuse the exact cross-platform build/install workflow rather
+  # than treating an image-only CI pass as permission to publish a release. The Windows leg builds
+  # the NSIS artifact, installs the exact executable, launches it, and uninstalls it; the other legs
+  # prove the same tree packages on macOS and Linux.
+  desktop-checks:
+    needs: [metadata, verify]
+    if: needs.metadata.outputs.is_release == 'true'
+    uses: ./.github/workflows/desktop.yml
+    permissions:
+      contents: read
+
+  # A public Windows release is not the unsigned CI bundle. Sign and verify the exact release commit
+  # through the protected Key Vault environment before any image or GitHub Release is published.
+  # Environment review remains the human approval boundary around the publisher certificate.
+  windows-signing:
+    needs: [metadata, verify, checks, desktop-checks]
+    if: needs.metadata.outputs.is_release == 'true'
+    uses: ./.github/workflows/desktop-signing.yml
+    with:
+      signing-mode: keyvault
+      release-build: true
+    permissions:
+      contents: read
+      id-token: write
 
   # One image, built once. Everything downstream refers to it by digest, so what was tested is what
   # is deployed and there is no second build to disagree with the first.
   image:
     name: image
-    needs: [metadata, verify, checks]
+    needs: [metadata, verify, checks, desktop-checks, windows-signing]
     if: needs.metadata.outputs.is_release == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -146,20 +186,20 @@ jobs:
           # The version, the commit, and a moving latest. The version tag is the one to deploy; the
           # commit tag is how you find out what a running image actually contains.
           tags: |
-            ghcr.io/copilotkit/openbot:${{ needs.metadata.outputs.version }}
-            ghcr.io/copilotkit/openbot:${{ github.sha }}
-            ghcr.io/copilotkit/openbot:latest
+            ghcr.io/${{ needs.metadata.outputs.registry_owner }}/openbot:${{ needs.metadata.outputs.version }}
+            ghcr.io/${{ needs.metadata.outputs.registry_owner }}/openbot:${{ github.sha }}
+            ghcr.io/${{ needs.metadata.outputs.registry_owner }}/openbot:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
           provenance: true
           sbom: true
       # BuildKit's own attestations above travel inside the image. This one is the record GitHub
-      # holds, and it is what `gh attestation verify oci://ghcr.io/copilotkit/openbot:vX.Y.Z
-      # -R CopilotKit/OpenBot` checks before anybody deploys it. Bound to the digest, never a tag,
+      # holds, and it is what `gh attestation verify oci://ghcr.io/${{ needs.metadata.outputs.registry_owner }}/openbot:vX.Y.Z
+      # -R ${{ github.repository }}` checks before anybody deploys it. Bound to the digest, never a tag,
       # because a tag can be moved to point at something else afterwards.
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-name: ghcr.io/copilotkit/openbot
+          subject-name: ghcr.io/${{ needs.metadata.outputs.registry_owner }}/openbot
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
 
@@ -174,7 +214,7 @@ jobs:
   # would be the slower and less reliable option at no saving.
   component-images:
     name: ${{ matrix.image }} ${{ matrix.platform.arch }}
-    needs: [metadata, verify, checks]
+    needs: [metadata, verify, checks, desktop-checks, windows-signing]
     if: needs.metadata.outputs.is_release == 'true'
     runs-on: ${{ matrix.platform.runner }}
     permissions:
@@ -226,7 +266,7 @@ jobs:
           # `oci-mediatypes=true` because zstd layers have no Docker-schema2 media type to be
           # described by. It is buildx's default for this exporter and is stated rather than
           # assumed, since the push fails without it and the reason would not be obvious.
-          outputs: type=image,name=ghcr.io/copilotkit/openbot-${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true,oci-mediatypes=true,compression=zstd,force-compression=true
+          outputs: type=image,name=ghcr.io/${{ needs.metadata.outputs.registry_owner }}/openbot-${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true,oci-mediatypes=true,compression=zstd,force-compression=true
           # Scoped per image and per architecture. One shared scope would have ten builds
           # overwriting each other's cache and none of them reading their own.
           cache-from: type=gha,scope=${{ matrix.image }}-${{ matrix.platform.arch }}
@@ -292,7 +332,7 @@ jobs:
       - id: merge
         name: Write the tags over both architectures
         env:
-          REPOSITORY: ghcr.io/copilotkit/openbot-${{ matrix.image }}
+          REPOSITORY: ghcr.io/${{ needs.metadata.outputs.registry_owner }}/openbot-${{ matrix.image }}
           VERSION: ${{ needs.metadata.outputs.version }}
           COMMIT: ${{ github.sha }}
         run: |
@@ -319,7 +359,7 @@ jobs:
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-name: ghcr.io/copilotkit/openbot-${{ matrix.image }}
+          subject-name: ghcr.io/${{ needs.metadata.outputs.registry_owner }}/openbot-${{ matrix.image }}
           subject-digest: ${{ steps.merge.outputs.digest }}
           push-to-registry: true
       # For the same reason the digests above travel as files: a matrix cannot hand a value to a
@@ -327,7 +367,7 @@ jobs:
       - name: Record the manifest
         env:
           NAME: ${{ matrix.image }}
-          REPOSITORY: ghcr.io/copilotkit/openbot-${{ matrix.image }}
+          REPOSITORY: ghcr.io/${{ needs.metadata.outputs.registry_owner }}/openbot-${{ matrix.image }}
           DIGEST: ${{ steps.merge.outputs.digest }}
         run: |
           set -euo pipefail
@@ -345,7 +385,7 @@ jobs:
   # tag somebody could move.
   github-release:
     name: tag and release
-    needs: [metadata, verify, checks, image, component-manifests]
+    needs: [metadata, verify, checks, desktop-checks, windows-signing, image, component-manifests]
     if: needs.metadata.outputs.is_release == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -362,6 +402,53 @@ jobs:
           pattern: manifest-*
           path: manifests
           merge-multiple: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: openbot-windows-signed
+          path: windows-release
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: openbot-windows-signatures
+          path: windows-signatures
+      - name: Verify signed Windows release identity
+        env:
+          VERSION: ${{ needs.metadata.outputs.version }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          release="${VERSION#v}"
+          build="windows-release/build-version.json"
+          evidence="windows-signatures/signatures.json"
+
+          test "$(jq -r .version "$build")" = "$release"
+          test "$(jq -r .releaseVersion "$build")" = "$release"
+          test "$(jq -r .channel "$build")" = "release"
+          test "$(jq -r .sourceSha "$build")" = "$COMMIT"
+          test "$(jq -r .expectedVersion "$evidence")" = "$release"
+          test "$(jq -r .sourceSha "$evidence")" = "$COMMIT"
+          test "$(jq -r '.files | length' "$evidence")" = "2"
+          test "$(jq -r '[.files[] | select(.status == "Valid" and .publisher == "Tawkit, Inc." and (.timestampSubject | length > 0))] | length' "$evidence")" = "2"
+
+          mapfile -t installers < <(find windows-release -maxdepth 1 -type f -name '*-setup.exe')
+          if [ "${#installers[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one signed Windows setup executable."
+            exit 1
+          fi
+          installer="${installers[0]}"
+          app="windows-release/openbot-desktop.exe"
+          test -f "$app"
+
+          for file in "$installer" "$app"; do
+            name="$(basename "$file")"
+            actual="$(sha256sum "$file" | awk '{print $1}')"
+            recorded="$(jq -r --arg name "$name" '.files[] | select(.file == $name) | .sha256' "$evidence" | tr '[:upper:]' '[:lower:]')"
+            matches="$(jq -r --arg name "$name" '[.files[] | select(.file == $name)] | length' "$evidence")"
+            if [ "$matches" != "1" ] || [ -z "$recorded" ] || [ "$actual" != "$recorded" ]; then
+              echo "::error::Signed Windows file $name does not match signature evidence."
+              exit 1
+            fi
+          done
+
       - name: Write the image manifest
         env:
           VERSION: ${{ needs.metadata.outputs.version }}
@@ -396,7 +483,7 @@ jobs:
             --arg version "$VERSION" \
             --arg digest "$DIGEST" \
             --arg commit "$COMMIT" \
-            --arg repository "ghcr.io/copilotkit/openbot" \
+            --arg repository "ghcr.io/${{ needs.metadata.outputs.registry_owner }}/openbot" \
             --argjson components "$components" \
             '{
               version: $version,
@@ -420,17 +507,45 @@ jobs:
           awk -v v="## ${VERSION#v}" '$0==v{f=1;next} /^## /{if(f)exit} f' CHANGELOG.md > notes.md
           test -s notes.md
 
-          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$VERSION" >/dev/null 2>&1; then
-            echo "$VERSION is already tagged; only refreshing the release."
+          if existing_tag="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$VERSION" --jq '.object.type + " " + .object.sha' 2>/dev/null)"; then
+            if [ "$existing_tag" != "commit $GITHUB_SHA" ]; then
+              echo "::error::$VERSION already exists but does not point directly at release commit $GITHUB_SHA (found: $existing_tag)."
+              exit 1
+            fi
+            echo "$VERSION is already tagged at this exact release commit; only refreshing the release."
           else
             gh api "repos/$GITHUB_REPOSITORY/git/refs" \
               -f "ref=refs/tags/$VERSION" -f "sha=$GITHUB_SHA" >/dev/null
           fi
 
-          if gh release view "$VERSION" >/dev/null 2>&1; then
+          if existing_release="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$VERSION" 2>/dev/null)"; then
+            if [ "$(jq -r '.draft' <<< "$existing_release")" != "false" ] || [ "$(jq -r '.prerelease' <<< "$existing_release")" != "false" ]; then
+              echo "::error::$VERSION already has a draft or prerelease record. Refusing to silently change release visibility."
+              exit 1
+            fi
+
+            mapfile -t release_installers < <(find windows-release -maxdepth 1 -type f -name '*-setup.exe')
+            if [ "${#release_installers[@]}" -ne 1 ]; then
+              echo "::error::Expected exactly one signed Windows installer before checking existing release assets."
+              exit 1
+            fi
+            installer_name="$(basename "${release_installers[0]}")"
+            unexpected_assets="$(jq -r --arg installer "$installer_name" '
+              [.assets[].name | select(
+                . != "container-images.json" and
+                . != $installer and
+                . != "build-version.json" and
+                . != "signatures.json"
+              )] | join(",")
+            ' <<< "$existing_release")"
+            if [ -n "$unexpected_assets" ]; then
+              echo "::error::$VERSION contains unexpected existing assets: $unexpected_assets"
+              exit 1
+            fi
+
             gh release edit "$VERSION" --title "$VERSION" --notes-file notes.md
-            gh release upload "$VERSION" container-images.json --clobber
+            gh release upload "$VERSION" container-images.json windows-release/*-setup.exe windows-release/build-version.json windows-signatures/signatures.json --clobber
           else
-            gh release create "$VERSION" container-images.json \
+            gh release create "$VERSION" container-images.json windows-release/*-setup.exe windows-release/build-version.json windows-signatures/signatures.json \
               --title "$VERSION" --notes-file notes.md
           fi

@@ -19,6 +19,11 @@ import {
 import { agentListQueryOptions } from "@/lib/agents/queries";
 import { attachmentUrl } from "@/lib/channels/attachments";
 import {
+  groupCoordinatorInstruction,
+  groupMentionInstruction,
+  resolveGroupMention,
+} from "@/lib/channels/group-routing";
+import {
   recordChannelActivityMutationOptions,
   setChannelBusy,
 } from "@/lib/channels/mutations";
@@ -220,10 +225,11 @@ function describeAttachments(attachments: readonly Attachment[]): string {
 }
 
 /**
- * One channel's conversation with one coworker.
+ * One channel's conversation, owned by one coordinator runtime Bot.
  *
- * The local agent id is channel-scoped so two channels with the same coworker keep separate
- * durable threads.
+ * Direct channels have only that Bot. Group channels keep the same single Intelligence thread and
+ * route explicit peer mentions through durable handoffs, so two channels with the same coordinator
+ * still keep separate durable threads and group membership never leaks between them.
  */
 export function ChannelChat({
   channel,
@@ -840,22 +846,47 @@ export function ChannelChat({
             </>
           }
           onSubmit={async (draft) => {
-            // `draft.agentId` carries the @mentioned coworker, but nothing routes on it yet: this
-            // channel is pinned to one `runtimeAgentId` for the life of its thread, so honouring a
-            // per-message mention is a change to that binding, not to the composer.
+            // The coordinator owns this Intelligence thread for its whole life. An explicit peer
+            // mention therefore becomes a durable handoff instruction rather than swapping the
+            // runtime agent mid-thread. Re-check channel membership here even though the composer
+            // only offers participants: a stale or crafted client can still submit any agent id.
             //
             // `commandIds` are the `/` chips that survived into the send, in the order they were
             // typed. Resolved against the same list the menu was built from, so a chip left over from
             // a skill that has since been revoked resolves to nothing rather than to a stale
             // instruction — the menu is refetched, and this reads from it.
-            const skillInstructions = draft.commandIds
-              .map(
+            const mentioned = resolveGroupMention({
+              coordinatorId: runtimeAgentId,
+              draftAgentId: draft.agentId,
+              channelAgentIds: channel.agentIds,
+              agentProfiles,
+            });
+            const routingInstruction = mentioned
+              ? groupMentionInstruction({
+                  coordinatorId: runtimeAgentId,
+                  targetId: mentioned.id,
+                  targetName: mentioned.name,
+                })
+              : null;
+            const coordinatorInstruction =
+              !mentioned && channel.agentIds.length > 1
+                ? groupCoordinatorInstruction({
+                    coordinatorId: runtimeAgentId,
+                    channelAgentIds: channel.agentIds,
+                    agentProfiles,
+                  })
+                : null;
+
+            const skillInstructions = [
+              routingInstruction,
+              coordinatorInstruction,
+              ...draft.commandIds.map(
                 (id) =>
                   skillCommands.find((command) => command.id === id)?.prompt,
-              )
-              .filter((instruction): instruction is string =>
-                Boolean(instruction),
-              );
+              ),
+            ].filter((instruction): instruction is string =>
+              Boolean(instruction),
+            );
 
             await say(draft.text, skillInstructions, draft.attachments);
           }}

@@ -40,7 +40,7 @@ type Blocker =
 type Progress = { step: string; ok: boolean; detail: string };
 
 type AlreadyConfigured = {
-  values: Record<string, string>;
+  values: Omit<HeldConfiguration, "saved">;
   saved: NonNullable<HeldConfiguration["saved"]>;
   launch?: { harness: HarnessChoice | null } | null;
 };
@@ -73,6 +73,7 @@ export function App() {
   const [instruction, setInstruction] = useState("");
   const [root, setRoot] = useState("");
   const [reuseIntelligence, setReuseIntelligence] = useState(false);
+  const [pendingIntelligence, setPendingIntelligence] = useState(false);
   const [apiKey, setApiKey] = useState("");
   /*
    * Which Bot and which model, as two separate answers.
@@ -131,9 +132,10 @@ export function App() {
     setSigningIn(true);
     setFailure(null);
     try {
-      // The key never passes through the window until it exists: it is created for the project
-      // chosen here and put straight into the field this screen already had.
-      setApiKey(await invoke<string>("intelligence_key_for", { project: id }));
+      // Provisioning stays native-side. The renderer only records that this root now has a
+      // session-only project key waiting for Start.
+      await invoke("intelligence_key_for", { root: root.trim(), project: id });
+      setPendingIntelligence(true);
       setProjects(null);
     } catch (error) {
       setFailure(asProblem(error));
@@ -194,6 +196,7 @@ export function App() {
     harness,
     step,
     reuseIntelligence,
+    pendingIntelligence,
   ]);
   useEffect(() => {
     const next = [
@@ -205,6 +208,7 @@ export function App() {
       harness,
       step,
       reuseIntelligence,
+      pendingIntelligence,
     ];
     if (
       next.some((value, index) => value !== credentialContext.current[index])
@@ -212,11 +216,22 @@ export function App() {
       credentialContext.current = next;
       setFailure(null);
     }
-  }, [root, model, apiKey, apiUrl, wsUrl, harness, step, reuseIntelligence]);
+  }, [
+    root,
+    model,
+    apiKey,
+    apiUrl,
+    wsUrl,
+    harness,
+    step,
+    reuseIntelligence,
+    pendingIntelligence,
+  ]);
 
   const clearRootScopedSavedState = useCallback(() => {
     setApiKey("");
     setReuseIntelligence(false);
+    setPendingIntelligence(false);
     setApiUrl(MANAGED_INTELLIGENCE_API_URL);
     setWsUrl(MANAGED_INTELLIGENCE_GATEWAY_WS_URL);
     setAlreadyHeld({});
@@ -236,7 +251,6 @@ export function App() {
         );
         if (configuredRunRef.current !== run) return;
         const { values, saved } = configured;
-        if (values.INTELLIGENCE_API_KEY) setApiKey(values.INTELLIGENCE_API_KEY);
         if (values.INTELLIGENCE_API_URL) setApiUrl(values.INTELLIGENCE_API_URL);
         if (values.INTELLIGENCE_GATEWAY_WS_URL)
           setWsUrl(values.INTELLIGENCE_GATEWAY_WS_URL);
@@ -668,6 +682,11 @@ export function App() {
               setFailure(asProblem(error)),
             );
           }}
+          onCreateCoworker={() => {
+            invoke("show_agent_creator").catch((error) =>
+              setFailure(asProblem(error)),
+            );
+          }}
           onBack={changeModelAfterAskFailure}
         />
         {displayedFailure && <Failure problem={displayedFailure} />}
@@ -682,6 +701,7 @@ export function App() {
           held={alreadyHeld}
           root={root}
           chosen={model}
+          requireConnectionTest
           onChoose={(choice) => {
             recordSetupEvent(modelChoiceEvent(choice));
             setModel(choice);
@@ -727,7 +747,7 @@ export function App() {
             Intelligence has a key this sign-in knows nothing about, so the field moves down there
             with the addresses it belongs with.
           */}
-          {apiKey ? (
+          {apiKey || pendingIntelligence ? (
             <p className="lede">Connected to CopilotKit.</p>
           ) : (alreadyHeld.saved?.intelligenceApiKey || reuseIntelligence) &&
             !signingIn &&
@@ -809,6 +829,7 @@ export function App() {
             </>
           )}
           {!apiKey &&
+            !pendingIntelligence &&
             !reuseIntelligence &&
             alreadyHeld.saved?.intelligenceApiKey == null &&
             !signingIn &&
@@ -936,6 +957,7 @@ export function App() {
               busy ||
               !installationReady ||
               (apiKey.trim() === "" &&
+                !pendingIntelligence &&
                 !alreadyHeld.saved?.intelligenceApiKey &&
                 !reuseIntelligence) ||
               !modelCanStart() ||

@@ -1,17 +1,38 @@
 import { mutationOptions, type QueryClient } from "@tanstack/react-query";
 import { client } from "@/lib/client";
 import {
+  type AgentInstructionsSettings,
+  type AgentKnowledgeSettings,
+  type AgentModelConnection,
+  type AgentModelProvider,
+  type AgentModelSettings,
   type AgentProfile,
   type AgentVisibility,
+  type ComputerResourceProfile,
   agentApiPath,
   agentKeys,
 } from "./queries";
+
+export type AgentModelInput =
+  | { mode: "global" }
+  | {
+      mode: "custom";
+      provider: AgentModelProvider;
+      model: string;
+      credentialSource: "global" | "custom";
+      apiKey?: string;
+      baseUrl?: string;
+      temperature?: number;
+      maxTokens?: number;
+      fallback?: { provider: AgentModelProvider; model: string };
+    };
 
 export type AgentInput = {
   name: string;
   title: string;
   roleDescription: string;
   visibility: AgentVisibility;
+  computerResourceProfile?: ComputerResourceProfile;
   /** Where this coworker runs. Empty means the Bot in the box. */
   endpoint?: string;
   /** Write-only auth value; omitted when the user leaves the key field empty. */
@@ -85,6 +106,130 @@ export function deleteAgentMutationOptions(queryClient: QueryClient) {
       });
     },
     onSuccess: () => invalidateAgents(queryClient),
+  });
+}
+
+export function saveAgentModelMutationOptions(queryClient: QueryClient) {
+  return mutationOptions({
+    mutationFn: (variables: {
+      agentId: string;
+      input: AgentModelInput;
+    }): Promise<AgentModelSettings> =>
+      client(`${agentApiPath(variables.agentId)}/model`, "model", {
+        method: "PUT",
+        body: variables.input,
+        fallback: "Could not save model settings",
+      }),
+    onSuccess: (model, variables) => {
+      queryClient.setQueryData(agentKeys.model(variables.agentId), model);
+    },
+  });
+}
+
+export function testAgentModelMutationOptions() {
+  return mutationOptions({
+    mutationFn: (agentId: string): Promise<AgentModelConnection> =>
+      client(`${agentApiPath(agentId)}/model/test`, "connection", {
+        method: "POST",
+        fallback: "Could not test the model connection",
+      }),
+  });
+}
+
+export function saveAgentInstructionsMutationOptions(queryClient: QueryClient) {
+  return mutationOptions({
+    mutationFn: (variables: {
+      agentId: string;
+      instructions: string;
+    }): Promise<AgentInstructionsSettings> =>
+      client(
+        `${agentApiPath(variables.agentId)}/instructions`,
+        "instructions",
+        {
+          method: "PUT",
+          body: { instructions: variables.instructions },
+          fallback: "Could not save Agent instructions",
+        },
+      ),
+    onSuccess: (instructions, variables) => {
+      queryClient.setQueryData(
+        agentKeys.instructions(variables.agentId),
+        instructions,
+      );
+    },
+  });
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 32_768) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 32_768));
+  }
+  return btoa(binary);
+}
+
+export function uploadAgentKnowledgeMutationOptions(queryClient: QueryClient) {
+  return mutationOptions({
+    mutationFn: async (variables: {
+      agentId: string;
+      file: File;
+      maxBytes: number;
+    }): Promise<AgentKnowledgeSettings> => {
+      /*
+       * Refuse before arrayBuffer(). The server is authoritative, but without this browser-side
+       * guard a dragged multi-gigabyte file would be read into this tab just to be rejected later.
+       */
+      if (variables.file.size > variables.maxBytes) {
+        throw new Error(
+          `Knowledge files are limited to ${variables.maxBytes} bytes.`,
+        );
+      }
+      const bytes = new Uint8Array(await variables.file.arrayBuffer());
+      return client(
+        `${agentApiPath(variables.agentId)}/knowledge`,
+        "knowledge",
+        {
+          method: "POST",
+          body: {
+            name: variables.file.name,
+            mimeType: variables.file.type,
+            bytesBase64: bytesToBase64(bytes),
+          },
+          fallback: "Could not upload Agent knowledge",
+        },
+      );
+    },
+    onSuccess: (knowledge, variables) => {
+      queryClient.setQueryData(
+        agentKeys.knowledge(variables.agentId),
+        knowledge,
+      );
+    },
+  });
+}
+
+export function removeAgentKnowledgeMutationOptions(queryClient: QueryClient) {
+  return mutationOptions({
+    mutationFn: (variables: {
+      agentId: string;
+      documentId: string;
+    }): Promise<AgentKnowledgeSettings> =>
+      client(
+        `${agentApiPath(variables.agentId)}/knowledge/${encodeURIComponent(
+          variables.documentId,
+        )}`,
+        "knowledge",
+        {
+          method: "DELETE",
+          fallback: "Could not remove Agent knowledge",
+        },
+      ),
+    onSuccess: (knowledge, variables) => {
+      queryClient.setQueryData(
+        agentKeys.knowledge(variables.agentId),
+        knowledge,
+      );
+    },
   });
 }
 

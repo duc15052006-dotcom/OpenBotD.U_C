@@ -5,10 +5,21 @@ import {
   readSandboxTemplate,
 } from "./sandbox";
 import type { ComputerStatus } from "./schema";
+import type { ComputerResourceProfile } from "./resource-profile";
 import {
   createDockerSupervisorProvider,
   type SupervisorOptions,
 } from "./supervisor";
+
+export type ComputerHostCapacity = {
+  memoryBytes: number | null;
+  logicalCpus: number | null;
+  maxActiveComputers: number | null;
+  resourceProfiles: Record<
+    ComputerResourceProfile,
+    { memoryBytes: number; nanoCpus: number }
+  >;
+};
 
 /** The address and lifecycle details for one Bot's computer. */
 export type ComputerLocation = {
@@ -17,6 +28,7 @@ export type ComputerLocation = {
   url?: string;
   startedAt?: string;
   egress?: string | null;
+  snapshotAvailable?: boolean;
 };
 
 /** A description of how a provider separates one Bot's computer from another. */
@@ -72,15 +84,32 @@ export interface ComputerProvider {
   /** How the provider separates computers between Bots. */
   readonly isolation: "per-bot" | "shared";
   /** Return the base address of the computer for this Bot. */
-  locate(botId: string): Promise<string>;
+  locate(
+    botId: string,
+    options?: { resourceProfile?: ComputerResourceProfile },
+  ): Promise<string>;
   /** Return the lifecycle state of the computer for this Bot. */
   status(botId: string): Promise<ComputerStatus>;
   /** Stop the computer for this Bot if it exists. */
   stop(botId: string): Promise<{ wasRunning: boolean }>;
+  /**
+   * Atomically stop and start this Bot when the provider owns a lifecycle supervisor.
+   *
+   * Optional because shared/remote providers may only expose separate stop and locate primitives.
+   */
+  restart?(
+    botId: string,
+    options?: { resourceProfile?: ComputerResourceProfile },
+  ): Promise<string>;
   /** Remove the computer state for this Bot if it exists. */
   reset(botId: string): Promise<{ cleared: boolean }>;
+  /** Optional clean snapshot support for providers that own durable per-Bot storage. */
+  snapshot?(botId: string): Promise<{ created: boolean }>;
+  restoreSnapshot?(botId: string): Promise<{ restored: boolean }>;
   /** List the computers that this provider owns. */
   list(): Promise<ComputerLocation[]>;
+  /** Host/VM capacity, when the provider owns a scheduler that can report it. */
+  capacity?(): Promise<ComputerHostCapacity | undefined>;
   /** Prepare provider resources before the first computer request. */
   warm?(): Promise<void>;
   /**
@@ -292,7 +321,7 @@ function createLazySandboxProvider(
   return {
     name: "sandbox",
     isolation: "per-bot",
-    locate: async (botId) => (await provider()).locate(botId),
+    locate: async (botId, options) => (await provider()).locate(botId, options),
     status: async (botId) => (await provider()).status(botId),
     stop: async (botId) => (await provider()).stop(botId),
     reset: async (botId) => (await provider()).reset(botId),

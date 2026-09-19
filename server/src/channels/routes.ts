@@ -6,27 +6,32 @@ import {
   exists,
   inArray,
   isNull,
+  like,
   lt,
   or,
   sql,
 } from "drizzle-orm";
 import type { Context, MiddlewareHandler } from "hono";
+import { MAX_CHANNEL_AGENTS } from "../../../shared/channel-groups";
 import { Hono } from "hono";
 import {
   AgentNotFoundError,
   type AgentProfileStore,
 } from "../agents/profile-store";
+import { HANDOFF_KIND } from "../agents/handoff";
 import type { AgentActor, AgentProfile } from "../agents/profile-types";
 import { type AuditStore, recordAuditEvent } from "../audit";
 import type { AppVariables } from "../auth/guards";
 import type { Database } from "../db/client";
 import { parsePageLimit } from "../paging";
+import { DEFAULT_MAX_ATTEMPTS } from "../work/queue";
 import {
   agentProfiles,
   channelAgents,
   channelMemberships,
   channels,
   intelligenceChannelMappings,
+  workItems,
 } from "../db/schema";
 import {
   CHANNEL_ACTIVITY_TOPIC,
@@ -73,6 +78,19 @@ export type ChannelActivity = {
   /** The agent that said it, or null when a person did. */
   agentId: string | null;
   at: Date;
+};
+
+/** One Bot-to-Bot delegation connected to a conversation the caller belongs to. */
+export type ChannelDelegation = {
+  key: string;
+  fromBotId: string;
+  toBotId: string;
+  task: string;
+  state: "queued" | "working" | "delivered" | "failed";
+  attempts: number;
+  lastError: string | null;
+  createdAt: Date;
+  updatedAt: Date;
 };
 
 /** One page of somebody's channels, newest activity first. */
@@ -217,11 +235,48 @@ export type ChannelStore = {
     channelId: string,
     busy: boolean,
   ): Promise<void>;
+  /**
+   * Recent Bot-to-Bot handoffs whose originating run belongs to this channel.
+   *
+   * Membership is checked before the queue is read, so work-item payloads never become a side
+   * channel for discovering conversations or Bots the caller cannot reach.
+   */
+  listDelegations(
+    actor: AgentActor,
+    channelId: string,
+  ): Promise<ChannelDelegation[]>;
 };
 
 const PRIVATE_AGENT_CHANNEL_DESCRIPTION = "Private agent channel.";
 const MAX_CHANNEL_NAME_CODE_POINTS = 120;
 const MAX_ACTIVITY_GRAPHEMES = 200;
+type GroupChannelOverride = {
+  group?: {
+    version?: number;
+    coordinatorAgentId?: string;
+  };
+};
+
+function coordinatorAgentId(override: unknown): string | null {
+  if (!override || typeof override !== "object" || Array.isArray(override)) {
+    return null;
+  }
+  const group = (override as GroupChannelOverride).group;
+  return group &&
+    typeof group === "object" &&
+    typeof group.coordinatorAgentId === "string"
+    ? group.coordinatorAgentId
+    : null;
+}
+
+function coordinatorFirst(agentIds: string[], override: unknown): string[] {
+  const coordinator = coordinatorAgentId(override);
+  if (!coordinator || !agentIds.includes(coordinator)) return agentIds;
+  return [
+    coordinator,
+    ...agentIds.filter((agentId) => agentId !== coordinator),
+  ];
+}
 
 /** Reduce a message to the one line a roster draws. See `oneLine` for why it is shared. */
 function previewOf(text: string) {
@@ -284,6 +339,16 @@ export function createChannelStore(
       id,
       name,
       description: PRIVATE_AGENT_CHANNEL_DESCRIPTION,
+      ...(agentIds.length > 1
+        ? {
+            override: {
+              group: {
+                version: 1,
+                coordinatorAgentId: agentIds[0],
+              },
+            },
+          }
+        : {}),
     });
     await transaction.insert(channelMemberships).values({
       channelId: id,
@@ -382,6 +447,7 @@ export function createChannelStore(
           agentId: channelAgents.agentId,
           threadId: intelligenceChannelMappings.threadId,
           lastMessageAt: channels.lastMessageAt,
+          channelOverride: channels.override,
           deletedAt: agentProfiles.deletedAt,
         })
         .from(channels)
@@ -413,7 +479,10 @@ export function createChannelStore(
       return {
         id: first.id,
         name: first.name,
-        agentIds: rows.map((row) => row.agentId),
+        agentIds: coordinatorFirst(
+          rows.map((row) => row.agentId),
+          first.channelOverride,
+        ),
         threadId: first.threadId,
         active: rows.every((row) => row.deletedAt === null),
         lastMessageAt: first.lastMessageAt,
@@ -489,6 +558,7 @@ export function createChannelStore(
           createdAt: channels.createdAt,
           pinnedAt: channelMemberships.pinnedAt,
           lastReadAt: channelMemberships.lastReadAt,
+          channelOverride: channels.override,
         })
         .from(channels)
         .innerJoin(
@@ -528,7 +598,9 @@ export function createChannelStore(
       // One row per channel-agent pair; the ordering above keeps each channel's rows together and
       // its agents in the same lexicographic order `get` returns.
       const summaries = new Map<string, ChannelSummary>();
+      const channelOverrides = new Map<string, unknown>();
       for (const row of rows) {
+        channelOverrides.set(row.id, row.channelOverride);
         const summary = summaries.get(row.id);
         if (summary) {
           summary.agentIds.push(row.agentId);
@@ -549,6 +621,12 @@ export function createChannelStore(
           pinned: row.pinnedAt !== null,
           lastReadAt: row.lastReadAt,
         });
+      }
+      for (const [channelId, summary] of summaries) {
+        summary.agentIds = coordinatorFirst(
+          summary.agentIds,
+          channelOverrides.get(channelId),
+        );
       }
       return { channels: [...summaries.values()], nextCursor };
     },
@@ -785,6 +863,100 @@ export function createChannelStore(
       );
     },
 
+    async listDelegations(actor, channelId) {
+      /*
+       * Resolve the thread through the caller's membership first.
+       *
+       * Work items are shared deployment infrastructure and their payload names Bots, tasks and
+       * threads. Querying them by an arbitrary channel id would turn this endpoint into a roster and
+       * conversation oracle, so there is no queue read until membership and non-deletion are proven.
+       */
+      const [mapped] = await database
+        .select({ threadId: intelligenceChannelMappings.threadId })
+        .from(intelligenceChannelMappings)
+        .innerJoin(
+          channelMemberships,
+          and(
+            eq(
+              channelMemberships.channelId,
+              intelligenceChannelMappings.channelId,
+            ),
+            eq(channelMemberships.userId, actor.id),
+          ),
+        )
+        .innerJoin(
+          channels,
+          and(
+            eq(channels.id, intelligenceChannelMappings.channelId),
+            isNull(channels.deletedAt),
+          ),
+        )
+        .where(eq(intelligenceChannelMappings.channelId, channelId))
+        .limit(1);
+      if (!mapped) throw new ChannelNotFoundError(channelId);
+
+      const rows = await database
+        .select({
+          key: workItems.key,
+          payload: workItems.payload,
+          attempts: workItems.attempts,
+          claimedBy: workItems.claimedBy,
+          leaseUntil: workItems.leaseUntil,
+          finishedAt: workItems.finishedAt,
+          lastError: workItems.lastError,
+          createdAt: workItems.createdAt,
+          updatedAt: workItems.updatedAt,
+        })
+        .from(workItems)
+        .where(
+          and(
+            eq(workItems.kind, HANDOFF_KIND),
+            // Original hops only. Relay/notice rows are implementation details of one delegation
+            // and showing them would make one ask appear as two or three separate jobs.
+            like(workItems.key, "hop:%"),
+            sql`${workItems.payload}->>'threadId' = ${mapped.threadId}`,
+          ),
+        )
+        .orderBy(desc(workItems.createdAt))
+        .limit(20);
+
+      const now = Date.now();
+      return rows.flatMap<ChannelDelegation>((row) => {
+        const payload = (row.payload ?? {}) as Record<string, unknown>;
+        const fromBotId =
+          typeof payload.fromBotId === "string" ? payload.fromBotId : null;
+        const toBotId =
+          typeof payload.toBotId === "string" ? payload.toBotId : null;
+        const task = typeof payload.task === "string" ? payload.task : null;
+        if (!fromBotId || !toBotId || !task) return [];
+
+        const state: ChannelDelegation["state"] =
+          row.finishedAt !== null
+            ? "delivered"
+            : row.attempts >= DEFAULT_MAX_ATTEMPTS
+              ? "failed"
+              : row.claimedBy !== null &&
+                  row.leaseUntil !== null &&
+                  row.leaseUntil.getTime() > now
+                ? "working"
+                : "queued";
+
+        return [
+          {
+            key: row.key,
+            fromBotId,
+            toBotId,
+            task,
+            state,
+            attempts: row.attempts,
+            lastError: row.lastError,
+            createdAt: row.createdAt,
+            updatedAt: row.updatedAt,
+          },
+        ];
+      });
+    },
+
     async signalBusy(threadId, busy) {
       // The channel this thread is shown in, if any. A scratch thread maps to nothing, so a hop
       // running there signals nowhere and the branch below returns without announcing.
@@ -898,8 +1070,17 @@ export function parseChannelInput(input: unknown): ChannelInputParseResult {
   if (new Set(agentIds).size !== agentIds.length) {
     return { ok: false, error: "Agent IDs must be unique." };
   }
+  if (agentIds.length > MAX_CHANNEL_AGENTS) {
+    return {
+      ok: false,
+      error: `A channel may have at most ${MAX_CHANNEL_AGENTS} agents.`,
+    };
+  }
 
-  return { ok: true, value: { agentIds: agentIds.sort() } };
+  // Preserve the person's ordering. The first Bot is the group coordinator; database locks are
+  // still taken in sorted id order inside makeChannel, so preserving presentation order does not
+  // reintroduce the deadlock that sorting there prevents.
+  return { ok: true, value: { agentIds } };
 }
 
 function isChannelInputObject(input: unknown): input is ChannelInputObject {
@@ -1085,6 +1266,29 @@ export function createChannelRoutes(
       return context.json({
         channels: page.channels.map(channelSummaryDto),
         nextCursor: page.nextCursor,
+      });
+    } catch (error) {
+      return mapStoreError(context, error);
+    }
+  });
+
+  routes.get("/:channelId/delegations", requireUser, async (context) => {
+    const channelId = context.req.param("channelId");
+    if (!channelId.trim()) {
+      return context.json({ error: "A channel id is required." }, 400);
+    }
+
+    try {
+      const delegations = await store.listDelegations(
+        context.var.actor,
+        channelId,
+      );
+      return context.json({
+        delegations: delegations.map((delegation) => ({
+          ...delegation,
+          createdAt: delegation.createdAt.toISOString(),
+          updatedAt: delegation.updatedAt.toISOString(),
+        })),
       });
     } catch (error) {
       return mapStoreError(context, error);

@@ -88,6 +88,7 @@ const TOO_MANY_ENABLED = `You already have ${MAX_ENABLED_ROUTINES} routines swit
 const MAX_NAMED_CHANNELS = 5;
 
 export type RoutineRunOutcome = "succeeded" | "failed" | "skipped";
+export type RoutineScheduleKind = "recurring" | "once";
 
 export type Routine = {
   id: string;
@@ -95,6 +96,7 @@ export type Routine = {
   agentId: string;
   channelId: string;
   instruction: string;
+  scheduleKind: RoutineScheduleKind;
   cron: string;
   timezone: string;
   enabled: boolean;
@@ -119,6 +121,7 @@ export type RoutineSummary = {
    * and the sweep both derive from the expression itself.
    */
   schedule: string;
+  scheduleKind: RoutineScheduleKind;
   timezone: string;
   enabled: boolean;
   nextRunAt: Date;
@@ -138,6 +141,14 @@ export type RoutineInput = {
   instruction: string;
   cron: string;
   timezone?: string;
+};
+
+export type OneShotRoutineInput = {
+  ownerUserId: string;
+  agentId: string;
+  channelId?: string;
+  instruction: string;
+  runAt: Date;
 };
 
 /**
@@ -165,6 +176,7 @@ export type RoutinePatch = Partial<{
 
 export type RoutineStore = {
   create(input: RoutineInput): Promise<Routine>;
+  createOneShot(input: OneShotRoutineInput): Promise<Routine>;
   listFor(ownerUserId: string): Promise<RoutineSummary[]>;
   update(
     ownerUserId: string,
@@ -177,7 +189,11 @@ export type RoutineStore = {
   /* The sweep's half. Deliberately not owner-scoped — see the boundary comment below. */
 
   /** Enabled routines whose next run has arrived, oldest due first. */
-  dueRoutines(limit: number): Promise<{ id: string; nextRunAt: Date }[]>;
+  dueRoutines(
+    limit: number,
+  ): Promise<
+    { id: string; nextRunAt: Date; scheduleKind: RoutineScheduleKind }[]
+  >;
   /**
    * Compare-and-set the clock forward. False means another sweep got there first.
    *
@@ -204,9 +220,15 @@ export type RoutineStore = {
    * what the consumer's re-read needs before firing: has the routine been deleted or switched off
    * since the offer. Null means deleted; otherwise `enabled` says the rest.
    */
-  routineForFiring(
-    id: string,
-  ): Promise<{ id: string; enabled: boolean } | null>;
+  routineForFiring(id: string): Promise<{
+    id: string;
+    enabled: boolean;
+    scheduleKind: RoutineScheduleKind;
+    nextRunAt: Date;
+    lastRunAt: Date | null;
+  } | null>;
+  /** Commit one exact wake to the queue by disabling it with a compare-and-set. */
+  consumeOneShot(id: string, scheduledFor: Date): Promise<boolean>;
   /** Close a run row with its outcome, and the capped error when there was one. */
   finishRun(
     runId: string,
@@ -256,6 +278,7 @@ function toRoutine(row: RoutineRow): Routine {
     agentId: row.agentId,
     channelId: row.channelId,
     instruction: row.instruction,
+    scheduleKind: row.scheduleKind,
     cron: row.cron,
     timezone: row.timezone,
     enabled: row.enabled,
@@ -290,6 +313,29 @@ function nextRunFor(cron: string, timezone: string, after: Date): Date {
     }
     throw error;
   }
+}
+
+function validOneShotAt(runAt: Date): Date {
+  if (!(runAt instanceof Date) || Number.isNaN(runAt.getTime())) {
+    throw new RoutineRefusedError(
+      "A one-time wake needs a valid date and time.",
+    );
+  }
+  if (runAt.getTime() <= Date.now()) {
+    throw new RoutineRefusedError("A one-time wake has to be in the future.");
+  }
+  return runAt;
+}
+
+/** Observability only: one-shot rows are never advanced through this cron expression. */
+function oneShotCron(runAt: Date): string {
+  return [
+    runAt.getUTCMinutes(),
+    runAt.getUTCHours(),
+    runAt.getUTCDate(),
+    runAt.getUTCMonth() + 1,
+    "*",
+  ].join(" ");
 }
 
 /**
@@ -478,15 +524,33 @@ export function createRoutineStore(database: Database): RoutineStore {
 
     const cron = patch.cron ?? existing.cron;
     const timezone = patch.timezone ?? existing.timezone;
+    if (
+      existing.scheduleKind === "once" &&
+      (patch.cron !== undefined || patch.timezone !== undefined)
+    ) {
+      throw new RoutineRefusedError(
+        "A one-time wake has an exact time, not a cron schedule. Delete it and schedule a new wake to change that time.",
+      );
+    }
     if (patch.cron !== undefined) values.cron = patch.cron;
     if (patch.timezone !== undefined) values.timezone = timezone;
     /*
-     * Recomputed for a new cron, a new zone, and for switching back on. That last one is the subtle
-     * case: a routine switched off in June still holds June's `next_run_at`, and enabling it without
-     * recomputing hands the sweep a firing that was due months ago.
+     * Recurring schedules recompute when their cron/zone changes or they are switched back on. A
+     * one-time wake keeps its exact persisted stamp; re-enabling it after that stamp has passed is
+     * refused rather than silently turning completed work back into scheduled work.
      */
-    if (patch.cron !== undefined || patch.timezone !== undefined || enabling) {
-      values.nextRunAt = nextRunFor(cron, timezone, new Date());
+    if (existing.scheduleKind === "recurring") {
+      if (
+        patch.cron !== undefined ||
+        patch.timezone !== undefined ||
+        enabling
+      ) {
+        values.nextRunAt = nextRunFor(cron, timezone, new Date());
+      }
+    } else if (enabling && existing.nextRunAt.getTime() <= Date.now()) {
+      throw new RoutineRefusedError(
+        "That one-time wake has already passed. Schedule a new wake instead.",
+      );
     }
 
     /*
@@ -556,6 +620,44 @@ export function createRoutineStore(database: Database): RoutineStore {
       return toRoutine(row);
     },
 
+    async createOneShot(input) {
+      const instruction = validInstruction(input.instruction);
+      const nextRunAt = validOneShotAt(input.runAt);
+      const channelId = await resolveChannel(
+        input.ownerUserId,
+        input.agentId,
+        input.channelId,
+      );
+
+      const [row] = await withEnabledCapLock(
+        input.ownerUserId,
+        async (transaction) => {
+          if (
+            (await countEnabled(transaction, input.ownerUserId)) >=
+            MAX_ENABLED_ROUTINES
+          ) {
+            throw new RoutineRefusedError(TOO_MANY_ENABLED);
+          }
+          return await transaction
+            .insert(routines)
+            .values({
+              id: `routine_${crypto.randomUUID()}`,
+              ownerUserId: input.ownerUserId,
+              agentId: input.agentId,
+              channelId,
+              instruction,
+              scheduleKind: "once",
+              cron: oneShotCron(nextRunAt),
+              timezone: "UTC",
+              nextRunAt,
+            })
+            .returning();
+        },
+      );
+      if (!row) throw new Error("inserting a one-time wake returned no row");
+      return toRoutine(row);
+    },
+
     async listFor(ownerUserId) {
       /*
        * The last-run join reads `routine_runs`, which only the sweep's half of this file writes to:
@@ -616,7 +718,11 @@ export function createRoutineStore(database: Database): RoutineStore {
           id: routine.id,
           agentId: routine.agentId,
           instruction: routine.instruction,
-          schedule: describeCron(routine.cron),
+          schedule:
+            routine.scheduleKind === "once"
+              ? `Once at ${routine.nextRunAt.toISOString()}`
+              : describeCron(routine.cron),
+          scheduleKind: routine.scheduleKind,
           timezone: routine.timezone,
           enabled: routine.enabled,
           nextRunAt: routine.nextRunAt,
@@ -666,7 +772,11 @@ export function createRoutineStore(database: Database): RoutineStore {
        * it returns ids and stamps and nothing a person wrote.
        */
       return await database
-        .select({ id: routines.id, nextRunAt: routines.nextRunAt })
+        .select({
+          id: routines.id,
+          nextRunAt: routines.nextRunAt,
+          scheduleKind: routines.scheduleKind,
+        })
         .from(routines)
         .where(
           and(
@@ -685,11 +795,20 @@ export function createRoutineStore(database: Database): RoutineStore {
 
     async advanceNextRun(id, from, computeFrom) {
       const [row] = await database
-        .select({ cron: routines.cron, timezone: routines.timezone })
+        .select({
+          cron: routines.cron,
+          timezone: routines.timezone,
+          scheduleKind: routines.scheduleKind,
+        })
         .from(routines)
         .where(eq(routines.id, id))
         .limit(1);
       if (!row) return false;
+      if (row.scheduleKind !== "recurring") {
+        throw new RoutineRefusedError(
+          "A one-time wake cannot be advanced as a recurring routine.",
+        );
+      }
 
       // `computeFrom` moves only where the next occurrence is measured from, never what the CAS
       // compares against: the sweep uses it to make a month-stale clock current in one pass, and
@@ -763,11 +882,37 @@ export function createRoutineStore(database: Database): RoutineStore {
       // A single select, not owner-scoped — the sweep's read, like `dueRoutines`. A routine id here
       // comes from a work item's own payload, not from a person, so there is no owner to check.
       const [row] = await database
-        .select({ id: routines.id, enabled: routines.enabled })
+        .select({
+          id: routines.id,
+          enabled: routines.enabled,
+          scheduleKind: routines.scheduleKind,
+          nextRunAt: routines.nextRunAt,
+          lastRunAt: routines.lastRunAt,
+        })
         .from(routines)
         .where(eq(routines.id, id))
         .limit(1);
       return row ?? null;
+    },
+
+    async consumeOneShot(id, scheduledFor) {
+      const consumed = await database
+        .update(routines)
+        .set({
+          enabled: false,
+          lastRunAt: scheduledFor,
+          updatedAt: sql`now()`,
+        })
+        .where(
+          and(
+            eq(routines.id, id),
+            eq(routines.scheduleKind, "once"),
+            eq(routines.enabled, true),
+            eq(routines.nextRunAt, scheduledFor),
+          ),
+        )
+        .returning({ id: routines.id });
+      return consumed.length > 0;
     },
 
     async finishRun(runId, status, error) {

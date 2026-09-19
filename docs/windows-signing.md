@@ -1,14 +1,17 @@
 # Windows desktop signing
 
-Builds use the root OpenBot release number plus `-internal.g<commit>`. The workflow verifies
-that both the packaged app and installer embed that version, and includes `build-version.json`
-with the binaries. See [desktop build versions](releasing.md#desktop-build-versions).
+Validation builds use the root OpenBot release number plus `-internal.g<commit>`; a trusted
+release call uses the plain release version. The workflow verifies that both the packaged app and
+installer embed the selected version, and includes `build-version.json` with the binaries. See
+[desktop build versions](releasing.md#desktop-build-versions).
 
 The [Desktop Windows signing workflow](../.github/workflows/desktop-signing.yml)
 builds OpenBot and its NSIS installer with the existing DigiCert certificate in
 Azure Key Vault. It retains verified binaries and signature evidence as Actions
-artifacts for 14 days. It does not create or publish a release. Desktop version
-`0.0.0` remains a validation build.
+artifacts for 14 days. Manual and PR-triggered runs remain validation builds. When
+`publish-release.yml` calls the same workflow for a trusted release commit, the verified NSIS
+installer and `signatures.json` are carried into that GitHub Release after environment approval.
+Desktop version `0.0.0` remains a validation build.
 
 Ordinary Desktop CI and fork PR builds remain unsigned. The
 `tauri.windows-signing.conf.json` overlay is passed explicitly to Tauri only by
@@ -35,7 +38,11 @@ installer using Windows Authenticode and
 publisher `Tawkit, Inc.`. Any warning or nonzero SignTool exit fails the job.
 `signatures.json` records the source SHA, artifact SHA-256 hashes, signer and
 timestamp certificates; the companion text files retain verbose SignTool output.
-The binaries upload only after both pass. The extracted app is retained from
+
+After those cryptographic checks, the workflow runs the **exact signed NSIS installer** through the
+same fresh Users-only acceptance harness used by Desktop CI. The signed artifact must still install,
+launch OpenBot for the first time, expose the desktop shortcut, uninstall cleanly, and remove that
+shortcut without ever relying on an administrator token. Only then are the binaries retained. The extracted app is retained from
 `desktop/signed-app/`: Tauri restores the unsigned build executable after bundling,
 so verifying `target/release/openbot-desktop.exe` would inspect the wrong copy.
 These checks do not test SmartScreen reputation or exercise the app UI.
@@ -64,8 +71,10 @@ az ad app federated-credential create \
 ```
 
 Check existing credentials first; do not duplicate or replace another repository's
-credential. The subject in the checked-in JSON is OpenBot's verified immutable
-subject, including owner and repository IDs, scoped to this environment. An
+credential. This repository's immutable GitHub OIDC subject is pinned in the checked-in JSON as
+`repo:duc15052006-dotcom@270219086/OpenBotD.U_C@1374258280:environment:windows-signing`.
+Both the account ID and repository ID are part of the trust boundary, so copying the upstream
+CopilotKit/OpenBot subject here will make Azure reject this repository's token. An
 `Insufficient privileges` response requires an authorized app owner/administrator
 to run the command; GitHub environment approval does not grant Entra permissions.
 

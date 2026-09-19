@@ -10,6 +10,7 @@
  * reported and left for the next sweep, because a computer still running costs money rather than
  * losing anything, and a failing CronJob that pages somebody at 3am should mean something worse.
  */
+import { createAuditStore } from "../src/audit";
 import { createComputerProvider } from "../src/computer/provider";
 import { loadConfig } from "../src/config";
 import { createDatabase } from "../src/db/client";
@@ -45,6 +46,7 @@ try {
     database,
     queue,
     provider,
+    auditStore: createAuditStore(database),
     idleAfterMs: config.computer.idleAfterMs,
     owner,
   };

@@ -1,7 +1,9 @@
 import {
   IconAdjustments,
   IconArrowsExchange,
+  IconBook,
   IconClock,
+  IconCpu,
   IconPencil,
   IconPlugConnected,
   IconPuzzle,
@@ -13,7 +15,13 @@ import { useState } from "react";
 import type { ZodType } from "zod";
 import { AbstractAvatar } from "@/components/agents/abstract-avatar";
 import { CallbackTokenPanel } from "@/components/agents/callback-token-panel";
+import { ComputerFilesDialog } from "@/components/computers/computer-files-dialog";
+import { ComputerScreenDialog } from "@/components/computers/computer-screen-dialog";
 import { HandoffPanel } from "@/components/agents/handoff-panel";
+import { InstructionsPanel } from "@/components/agents/instructions-panel";
+import { KnowledgePanel } from "@/components/agents/knowledge-panel";
+import { ModelSettingsPanel } from "@/components/agents/model-settings-panel";
+import { SkillsPanel } from "@/components/agents/skills-panel";
 import { RoutinesList } from "@/components/routines/routines-list";
 import { Button } from "@/components/ui/button";
 import {
@@ -71,6 +79,10 @@ import {
 } from "@/lib/agents/mutations";
 import { type AgentProfile, agentQueryOptions } from "@/lib/agents/queries";
 import { isComposing } from "@/lib/composing";
+import {
+  type ComputerAction,
+  setComputerStateMutationOptions,
+} from "@/lib/computers/mutations";
 import { agentPluginsQueryOptions } from "@/lib/plugins/queries";
 import { readToolName } from "@/lib/plugins/tool-name";
 
@@ -108,6 +120,10 @@ export function AgentDialog({
 
 const SECTIONS = [
   { id: "general", name: "General", icon: IconUser },
+  { id: "model", name: "Model & API", icon: IconCpu },
+  { id: "instructions", name: "Instructions", icon: IconPencil },
+  { id: "skills", name: "Skills", icon: IconPuzzle },
+  { id: "knowledge", name: "Knowledge", icon: IconBook },
   { id: "access", name: "Access", icon: IconPuzzle },
   { id: "connection", name: "Connection", icon: IconPlugConnected },
   { id: "handoff", name: "Handoff", icon: IconArrowsExchange },
@@ -221,6 +237,14 @@ function AgentDialogBody({ agentId }: { agentId: string }) {
           <div className="flex flex-1 flex-col gap-6 overflow-y-auto px-6 pb-6">
             {section === "general" ? (
               <GeneralSection agentId={agentId} profile={profile} />
+            ) : section === "model" ? (
+              <ModelSettingsPanel agentId={agentId} builtIn={profile.builtIn} />
+            ) : section === "instructions" ? (
+              <InstructionsPanel agentId={agentId} />
+            ) : section === "skills" ? (
+              <SkillsPanel agentId={agentId} />
+            ) : section === "knowledge" ? (
+              <KnowledgePanel agentId={agentId} />
             ) : section === "access" ? (
               <AccessSection agentId={agentId} />
             ) : section === "connection" ? (
@@ -249,6 +273,56 @@ function GeneralSection({
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const updateAgent = useMutation(updateAgentMutationOptions(queryClient));
+  const computer = useMutation(setComputerStateMutationOptions(queryClient));
+  const [filesOpen, setFilesOpen] = useState(false);
+  const [screenOpen, setScreenOpen] = useState(false);
+  const [confirmingReset, setConfirmingReset] = useState(false);
+  const [computerStatus, setComputerStatus] = useState<string | null>(null);
+
+  const startComputer = async (after?: "files" | "screen") => {
+    // A managed coworker runs at somebody else's AG-UI endpoint. It has no deployment-owned
+    // browser/workspace to start, so keep the local Computer gateway a built-in-only action even if
+    // this callback is reached through a stale render.
+    if (!profile.builtIn) return;
+    setComputerStatus(null);
+    try {
+      await computer.mutateAsync({ botId: agentId, action: "start" });
+      setComputerStatus(
+        "Computer ready. Browser profile and workspace are preserved.",
+      );
+      if (after === "files") setFilesOpen(true);
+      if (after === "screen") setScreenOpen(true);
+    } catch (error) {
+      setComputerStatus(
+        error instanceof Error
+          ? error.message
+          : "The computer could not be started.",
+      );
+    }
+  };
+
+  const changeComputerState = async (
+    action: Exclude<ComputerAction, "start">,
+  ) => {
+    if (!profile.builtIn) return;
+    setComputerStatus(null);
+    try {
+      await computer.mutateAsync({ botId: agentId, action });
+      setComputerStatus(
+        action === "reset"
+          ? "Computer reset. Browser logins and workspace files were erased."
+          : action === "restart"
+            ? "Computer restarted. Browser profile and workspace were preserved."
+            : "Computer stopped. Browser profile and workspace were preserved.",
+      );
+    } catch (error) {
+      setComputerStatus(
+        error instanceof Error
+          ? error.message
+          : `The computer could not be ${action}.`,
+      );
+    }
+  };
 
   /*
    * One field at a time, over the whole update endpoint: the API takes the full profile, so the
@@ -262,6 +336,7 @@ function GeneralSection({
         title: profile.title,
         roleDescription: profile.roleDescription,
         visibility: profile.visibility,
+        computerResourceProfile: profile.computerResourceProfile ?? "normal",
         /*
          * Not a built-in coworker's endpoint. That is the managed Bot's own address, which nobody
          * typed, and the route checks any endpoint it is sent as one somebody did: on a deployment
@@ -305,6 +380,40 @@ function GeneralSection({
           onSave={(visibility) => save({ visibility })}
           value={profile.visibility}
         />
+        {profile.builtIn ? (
+          <Item variant="muted">
+            <ItemContent>
+              <ItemTitle>Computer resources</ItemTitle>
+              <ItemDescription>
+                Light: 1 CPU / 1.5 GB · Normal: 2 CPU / 2 GB · Heavy: 3 CPU / 4
+                GB. The supervisor applies this limit to this coworker only.
+              </ItemDescription>
+            </ItemContent>
+            <ItemActions>
+              <Select
+                disabled={!profile.canManage || updateAgent.isPending}
+                onValueChange={(value) =>
+                  void save({
+                    computerResourceProfile: value as
+                      | "light"
+                      | "normal"
+                      | "heavy",
+                  })
+                }
+                value={profile.computerResourceProfile ?? "normal"}
+              >
+                <SelectTrigger className="w-28">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="light">Light</SelectItem>
+                  <SelectItem value="normal">Normal</SelectItem>
+                  <SelectItem value="heavy">Heavy</SelectItem>
+                </SelectContent>
+              </Select>
+            </ItemActions>
+          </Item>
+        ) : null}
         {profile.systemOwned ? (
           <Item variant="muted">
             <ItemContent>
@@ -317,11 +426,90 @@ function GeneralSection({
         ) : null}
       </div>
 
+      {profile.builtIn ? (
+        <Item variant="muted">
+          <ItemContent>
+            <ItemTitle>Computer</ItemTitle>
+            <ItemDescription>
+              Start or wake this coworker&apos;s persistent browser and
+              workspace.
+              {computerStatus ? (
+                <span className="mt-1 block">{computerStatus}</span>
+              ) : null}
+            </ItemDescription>
+          </ItemContent>
+          <ItemActions>
+            <Button
+              disabled={computer.isPending}
+              onClick={() => void startComputer()}
+              size="sm"
+              variant="outline"
+            >
+              {computer.isPending ? "Starting…" : "Start"}
+            </Button>
+            <Button
+              disabled={computer.isPending}
+              onClick={() => void startComputer("screen")}
+              size="sm"
+              variant="outline"
+            >
+              Screen
+            </Button>
+            <Button
+              disabled={computer.isPending}
+              onClick={() => void startComputer("files")}
+              size="sm"
+            >
+              Files
+            </Button>
+          </ItemActions>
+        </Item>
+      ) : null}
+
+      {profile.builtIn ? (
+        <Item variant="muted">
+          <ItemContent>
+            <ItemTitle>Computer lifecycle</ItemTitle>
+            <ItemDescription>
+              Stop and Restart keep browser logins and workspace files. Reset
+              permanently erases both and creates a clean Computer next time.
+            </ItemDescription>
+          </ItemContent>
+          <ItemActions className="flex-wrap justify-end">
+            <Button
+              disabled={computer.isPending}
+              onClick={() => void changeComputerState("restart")}
+              size="sm"
+              variant="outline"
+            >
+              Restart
+            </Button>
+            <Button
+              disabled={computer.isPending}
+              onClick={() => void changeComputerState("stop")}
+              size="sm"
+              variant="outline"
+            >
+              Stop
+            </Button>
+            <Button
+              disabled={computer.isPending}
+              onClick={() => setConfirmingReset(true)}
+              size="sm"
+              variant="destructive"
+            >
+              Reset
+            </Button>
+          </ItemActions>
+        </Item>
+      ) : null}
+
       <Item variant="muted">
         <ItemContent>
           <ItemTitle>Start channel</ItemTitle>
           <ItemDescription>
-            Open a new channel with this coworker.
+            Open a channel to ask this coworker to use its browser, files and
+            tools.
           </ItemDescription>
         </ItemContent>
         <ItemActions>
@@ -338,6 +526,61 @@ function GeneralSection({
           </Button>
         </ItemActions>
       </Item>
+
+      {profile.builtIn ? (
+        <>
+          <ComputerFilesDialog
+            botId={agentId}
+            botName={profile.name}
+            onOpenChange={setFilesOpen}
+            open={filesOpen}
+          />
+          <ComputerScreenDialog
+            botId={agentId}
+            botName={profile.name}
+            onOpenChange={setScreenOpen}
+            open={screenOpen}
+          />
+          <Dialog
+            onOpenChange={(next) => !next && setConfirmingReset(false)}
+            open={confirmingReset}
+          >
+            <DialogContent
+              className="max-w-sm"
+              overlayClassName="bg-black/20 supports-backdrop-filter:backdrop-blur-sm"
+            >
+              <DialogHeader>
+                <DialogTitle>Reset {profile.name}&apos;s Computer?</DialogTitle>
+                <DialogDescription>
+                  This permanently deletes its browser profile, logins and all
+                  workspace files. Stop or Restart instead if you want to keep
+                  them.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button
+                  onClick={() => setConfirmingReset(false)}
+                  size="sm"
+                  variant="outline"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  disabled={computer.isPending}
+                  onClick={async () => {
+                    await changeComputerState("reset");
+                    setConfirmingReset(false);
+                  }}
+                  size="sm"
+                  variant="destructive"
+                >
+                  {computer.isPending ? "Resetting…" : "Reset Computer"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </>
+      ) : null}
     </>
   );
 }

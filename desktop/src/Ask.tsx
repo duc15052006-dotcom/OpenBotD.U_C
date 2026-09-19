@@ -18,11 +18,13 @@ export function Ask({
   suggestion,
   onAsk,
   onOpen,
+  onCreateCoworker,
   onBack,
 }: {
   suggestion: string;
   onAsk: (question: string) => Promise<string>;
   onOpen: () => void;
+  onCreateCoworker: () => void;
   onBack: () => void;
 }) {
   const [question, setQuestion] = useState(suggestion);
@@ -58,6 +60,7 @@ export function Ask({
       <h1>Ask it something.</h1>
       <p className="lede">
         Your Bot is set up. This proves it can answer before you start using it.
+        After that, create your first coworker or open OpenBot directly.
       </p>
 
       <div className="field">
@@ -101,8 +104,8 @@ export function Ask({
             {asking ? "Asking…" : "Ask"}
           </button>
         ) : (
-          <button type="button" onClick={onOpen}>
-            Start using OpenBot
+          <button type="button" onClick={onCreateCoworker}>
+            Create a coworker
           </button>
         )}
         {/*
@@ -123,14 +126,19 @@ export function Ask({
           </button>
         )}
         {answer !== null && (
-          <button
-            type="button"
-            className="quiet"
-            onClick={ask}
-            disabled={asking}
-          >
-            Ask again
-          </button>
+          <>
+            <button type="button" className="quiet" onClick={onOpen}>
+              Open OpenBot
+            </button>
+            <button
+              type="button"
+              className="quiet"
+              onClick={ask}
+              disabled={asking}
+            >
+              Ask again
+            </button>
+          </>
         )}
       </div>
 
