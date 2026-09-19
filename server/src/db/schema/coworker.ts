@@ -190,6 +190,19 @@ export const workflowStepStatus = pgEnum("workflow_step_status", [
   "cancelled",
 ]);
 
+export const workflowAssetDirection = pgEnum("workflow_asset_direction", [
+  "input",
+  "output",
+]);
+
+export const workflowAssetMediaKind = pgEnum("workflow_asset_media_kind", [
+  "image",
+  "video",
+  "audio",
+  "file",
+  "text",
+]);
+
 /**
  * A durable multi-step plan owned by one person and one Bot.
  *
@@ -260,5 +273,39 @@ export const workflowSteps = pgTable(
       table.position,
     ),
     index("workflow_steps_status_wait_idx").on(table.status, table.waitUntil),
+  ],
+);
+
+/**
+ * Durable metadata for files/media used or produced by one workflow step.
+ *
+ * The ref is deliberately metadata only. Resolving a workspace path or attachment still goes
+ * through the existing Files/attachment permission boundaries; this table grants no file access.
+ */
+export const workflowAssets = pgTable(
+  "workflow_assets",
+  {
+    id: text("id").primaryKey(),
+    workflowId: text("workflow_id")
+      .notNull()
+      .references(() => workflowRuns.id, { onDelete: "cascade" }),
+    stepKey: text("step_key").notNull(),
+    direction: workflowAssetDirection("direction").notNull(),
+    mediaKind: workflowAssetMediaKind("media_kind").notNull(),
+    ref: text("ref").notNull(),
+    label: text("label"),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex("workflow_assets_step_ref_idx").on(
+      table.workflowId,
+      table.stepKey,
+      table.direction,
+      table.ref,
+    ),
+    index("workflow_assets_workflow_step_idx").on(
+      table.workflowId,
+      table.stepKey,
+    ),
   ],
 );

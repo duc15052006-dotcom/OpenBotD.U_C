@@ -9,9 +9,11 @@ import { createDatabase } from "../src/db/client";
 import {
   agentProfiles,
   agents,
+  attachments,
   channels,
   intelligenceChannelMappings,
   users,
+  workflowAssets,
   workflowRuns,
   workflowSteps,
 } from "../src/db/schema";
@@ -38,8 +40,12 @@ const prefix = `workflow-store-${randomUUID()}`;
 const createdUserIds: string[] = [];
 const createdAgentIds: string[] = [];
 const createdChannelIds: string[] = [];
+const createdAttachmentIds: string[] = [];
 
 afterEach(async () => {
+  for (const attachmentId of createdAttachmentIds.splice(0)) {
+    await database.delete(attachments).where(eq(attachments.id, attachmentId));
+  }
   for (const userId of createdUserIds) {
     await database
       .delete(workflowRuns)
@@ -336,6 +342,158 @@ describe("deleted Agents leave no stale workflow", () => {
       .select({ id: workflowSteps.id })
       .from(workflowSteps)
       .where(eq(workflowSteps.workflowId, plan.id));
+    expect(rows).toEqual([]);
+  });
+});
+
+describe("workflow asset ledger", () => {
+  test("stores idempotent per-step workspace assets and removes them", async () => {
+    const { owner, agentId, channel } = await setUp();
+    const who = identity(owner, agentId);
+    const plan = await store.create(planInput(owner, agentId, channel.id));
+
+    const first = await store.addAsset(who, plan.id, "script", {
+      direction: "input",
+      mediaKind: "text",
+      ref: "workspace:scenes/01/prompt.txt",
+      label: "Scene 1 prompt",
+    });
+    const duplicate = await store.addAsset(who, plan.id, "script", {
+      direction: "input",
+      mediaKind: "text",
+      ref: "workspace:scenes/01/prompt.txt",
+      label: "Ignored duplicate label",
+    });
+
+    expect(duplicate.id).toBe(first.id);
+    expect(
+      (await store.listAssets(who, plan.id, "script")).map((asset) => ({
+        direction: asset.direction,
+        mediaKind: asset.mediaKind,
+        ref: asset.ref,
+        label: asset.label,
+      })),
+    ).toEqual([
+      {
+        direction: "input",
+        mediaKind: "text",
+        ref: "workspace:scenes/01/prompt.txt",
+        label: "Scene 1 prompt",
+      },
+    ]);
+
+    await store.removeAsset(who, plan.id, first.id);
+    expect(await store.listAssets(who, plan.id, "script")).toEqual([]);
+  });
+
+  test("rejects unsafe workspace refs and unknown ref schemes", async () => {
+    const { owner, agentId, channel } = await setUp();
+    const who = identity(owner, agentId);
+    const plan = await store.create(planInput(owner, agentId, channel.id));
+
+    for (const ref of [
+      "workspace:/absolute/file.png",
+      "workspace:../other-agent/output.png",
+      "workspace:scenes/../secret.txt",
+      "workspace:scenes\\secret.txt",
+      "https://example.test/output.png",
+    ]) {
+      await expect(
+        store.addAsset(who, plan.id, "script", {
+          direction: "output",
+          mediaKind: "file",
+          ref,
+        }),
+      ).rejects.toBeInstanceOf(WorkflowRefusedError);
+    }
+  });
+
+  test("owner and Bot isolation applies to asset reads and writes", async () => {
+    const { owner, agentId, channel } = await setUp();
+    const who = identity(owner, agentId);
+    const plan = await store.create(planInput(owner, agentId, channel.id));
+    await store.addAsset(who, plan.id, "script", {
+      direction: "output",
+      mediaKind: "file",
+      ref: "workspace:scenes/01/final.mp4",
+    });
+
+    const stranger = await createUser();
+    const siblingAgent = await createAgent(owner, "Sibling");
+    await expect(
+      store.addAsset(identity(stranger, agentId), plan.id, "script", {
+        direction: "input",
+        mediaKind: "file",
+        ref: "workspace:foreign.txt",
+      }),
+    ).rejects.toBeInstanceOf(WorkflowNotFoundError);
+    await expect(
+      store.listAssets(identity(owner, siblingAgent), plan.id),
+    ).rejects.toBeInstanceOf(WorkflowNotFoundError);
+  });
+
+  test("attachment refs must belong to the exact workflow channel", async () => {
+    const { owner, agentId, channel } = await setUp();
+    const who = identity(owner, agentId);
+    const plan = await store.create(planInput(owner, agentId, channel.id));
+
+    const attachmentId = randomUUID();
+    createdAttachmentIds.push(attachmentId);
+    await database.insert(attachments).values({
+      id: attachmentId,
+      channelId: channel.id,
+      uploadedBy: owner.id,
+      name: "reference.png",
+      mimeType: "image/png",
+      sizeBytes: 4,
+      bytes: Buffer.from([1, 2, 3, 4]),
+    });
+
+    const accepted = await store.addAsset(who, plan.id, "render", {
+      direction: "input",
+      mediaKind: "image",
+      ref: `attachment:${attachmentId}`,
+      label: "Reference image",
+    });
+    expect(accepted.ref).toBe(`attachment:${attachmentId}`);
+
+    const otherChannel = await createChannel(owner, [agentId]);
+    const foreignId = randomUUID();
+    createdAttachmentIds.push(foreignId);
+    await database.insert(attachments).values({
+      id: foreignId,
+      channelId: otherChannel.id,
+      uploadedBy: owner.id,
+      name: "wrong-channel.png",
+      mimeType: "image/png",
+      sizeBytes: 4,
+      bytes: Buffer.from([5, 6, 7, 8]),
+    });
+
+    await expect(
+      store.addAsset(who, plan.id, "render", {
+        direction: "input",
+        mediaKind: "image",
+        ref: `attachment:${foreignId}`,
+      }),
+    ).rejects.toBeInstanceOf(WorkflowRefusedError);
+  });
+
+  test("workflow deletion cascades asset metadata", async () => {
+    const { owner, agentId, channel } = await setUp();
+    const who = identity(owner, agentId);
+    const plan = await store.create(planInput(owner, agentId, channel.id));
+    await store.addAsset(who, plan.id, "review", {
+      direction: "output",
+      mediaKind: "video",
+      ref: "workspace:scenes/01/final.mp4",
+    });
+
+    await database.delete(workflowRuns).where(eq(workflowRuns.id, plan.id));
+    const rows = await database
+      .select({ id: workflowAssets.id })
+      .from(workflowAssets)
+      .where(eq(workflowAssets.workflowId, plan.id));
     expect(rows).toEqual([]);
   });
 });
