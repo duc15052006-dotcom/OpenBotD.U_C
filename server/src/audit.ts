@@ -456,6 +456,7 @@ export type AuditInitiator =
   | { kind: "person" }
   | { kind: "deployment" }
   | { kind: "routine"; id: string }
+  | { kind: "workflow"; id: string }
   | { kind: "handoff"; id: string };
 
 export const PERSON_INITIATOR: AuditInitiator = { kind: "person" };
@@ -474,6 +475,7 @@ export const auditInitiatorKinds = [
   "person",
   "deployment",
   "routine",
+  "workflow",
   "handoff",
 ] as const;
 
