@@ -52,6 +52,9 @@ export type ComputerNames = {
   snapshotProfileVolume: string;
   snapshotWorkspaceVolume: string;
   snapshotQuarantineVolume: string;
+  snapshotAltProfileVolume: string;
+  snapshotAltWorkspaceVolume: string;
+  snapshotAltQuarantineVolume: string;
 };
 
 export type NameResult =
@@ -96,6 +99,9 @@ export function namesFor(botId: unknown): NameResult {
       snapshotProfileVolume: `${NAMESPACE}-snapshot-profile-${botId}`,
       snapshotWorkspaceVolume: `${NAMESPACE}-snapshot-workspace-${botId}`,
       snapshotQuarantineVolume: `${NAMESPACE}-snapshot-quarantine-${botId}`,
+      snapshotAltProfileVolume: `${NAMESPACE}-snapshot-alt-profile-${botId}`,
+      snapshotAltWorkspaceVolume: `${NAMESPACE}-snapshot-alt-workspace-${botId}`,
+      snapshotAltQuarantineVolume: `${NAMESPACE}-snapshot-alt-quarantine-${botId}`,
     },
   };
 }
