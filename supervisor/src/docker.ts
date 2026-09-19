@@ -214,32 +214,55 @@ function labelsFor(names: ComputerNames): Record<string, string> {
 /** Every computer this supervisor owns, and only those. */
 export async function listOwned(): Promise<ComputerState[]> {
   try {
-    const containers = (
-      await docker.listContainers({
+    const [rawContainers, volumeList] = await Promise.all([
+      docker.listContainers({
         all: true,
         filters: { label: [`${OWNER_LABEL}=true`] },
-      })
-    ).filter((container) => ours(container.Labels));
+      }),
+      docker.listVolumes({
+        filters: { label: [`${OWNER_LABEL}=true`] },
+      }),
+    ]);
+    const containers = rawContainers.filter((container) =>
+      ours(container.Labels),
+    );
+    const byBot = new Map<string, ComputerState>();
+    for (const container of containers) {
+      const botId = container.Labels?.[BOT_LABEL] ?? "unknown";
+      byBot.set(botId, {
+        botId,
+        container: (container.Names?.[0] ?? "").replace(/^\//, ""),
+        status: container.State,
+        ...(container.Created
+          ? { startedAt: new Date(container.Created * 1000).toISOString() }
+          : {}),
+        ...(portOf(container.Ports) ? { port: portOf(container.Ports) } : {}),
+      });
+    }
+
+    // A Restore deliberately removes the stopped container before replacing its live volumes.
+    // Snapshot-only state after Reset is also still a real recoverable Computer. Keep those Bots in
+    // the fleet so the UI can offer Restore instead of making the backup disappear with the row.
+    for (const volume of volumeList.Volumes ?? []) {
+      if (!ours(volume.Labels)) continue;
+      const botId = volume.Labels?.[BOT_LABEL];
+      if (!botId || byBot.has(botId)) continue;
+      const parsed = namesFor(botId);
+      if (!parsed.ok) continue;
+      byBot.set(botId, {
+        botId,
+        container: parsed.names.container,
+        status: "exited",
+      });
+    }
+
     return Promise.all(
-      containers.map(async (container) => {
-        const botId = container.Labels?.[BOT_LABEL] ?? "unknown";
-        let snapshotAvailable = false;
-        const parsed = namesFor(botId);
-        if (parsed.ok) {
-          snapshotAvailable = await hasCompleteSnapshot(parsed.names).catch(
-            () => false,
-          );
-        }
-        return {
-          botId,
-          container: (container.Names?.[0] ?? "").replace(/^\//, ""),
-          status: container.State,
-          snapshotAvailable,
-          ...(container.Created
-            ? { startedAt: new Date(container.Created * 1000).toISOString() }
-            : {}),
-          ...(portOf(container.Ports) ? { port: portOf(container.Ports) } : {}),
-        };
+      [...byBot.values()].map(async (computer) => {
+        const parsed = namesFor(computer.botId);
+        const snapshotAvailable = parsed.ok
+          ? await hasCompleteSnapshot(parsed.names).catch(() => false)
+          : false;
+        return { ...computer, snapshotAvailable };
       }),
     );
   } catch (error) {
