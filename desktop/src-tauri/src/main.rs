@@ -3462,13 +3462,35 @@ fn main() {
             remember_setup_url(app.handle())?;
 
             // The status menu lets somebody open the window, stop the stack, or quit the app.
-            use tauri::menu::{Menu, MenuItem};
+            use tauri::menu::{Menu, MenuItem, Submenu};
             use tauri::tray::TrayIconBuilder;
 
             let open = MenuItem::with_id(app, "open", "Open OpenBot", true, None::<&str>)?;
             let updates =
                 MenuItem::with_id(app, "updates", "Check for updates", true, None::<&str>)?;
             let stop = MenuItem::with_id(app, "stop", "STOP ALL AGENTS", true, None::<&str>)?;
+            let close_ask =
+                MenuItem::with_id(app, "close-ask", "Ask every time", true, None::<&str>)?;
+            let close_tray = MenuItem::with_id(
+                app,
+                "close-tray",
+                "Keep running in tray",
+                true,
+                None::<&str>,
+            )?;
+            let close_exit = MenuItem::with_id(
+                app,
+                "close-exit",
+                "Exit and stop all Agents",
+                true,
+                None::<&str>,
+            )?;
+            let close_behavior = Submenu::with_items(
+                app,
+                "On window close",
+                true,
+                &[&close_ask, &close_tray, &close_exit],
+            )?;
             let quit = MenuItem::with_id(
                 app,
                 "quit",
@@ -3476,7 +3498,8 @@ fn main() {
                 true,
                 quit_menu_accelerator(),
             )?;
-            let menu = Menu::with_items(app, &[&open, &updates, &stop, &quit])?;
+            let menu =
+                Menu::with_items(app, &[&open, &updates, &stop, &close_behavior, &quit])?;
 
             TrayIconBuilder::with_id("openbot")
                 .icon(tray::icon())
@@ -3493,12 +3516,37 @@ fn main() {
             // menu still provides access when the tray is unavailable or hard to find.
             // Its own items, not the tray's: a menu item belongs to one menu, and the two menus
             // outlive each other. The ids match so both arrive at the same function.
-            use tauri::menu::Submenu;
             let window_open = MenuItem::with_id(app, "open", "Open OpenBot", true, None::<&str>)?;
             let window_updates =
                 MenuItem::with_id(app, "updates", "Check for updates", true, None::<&str>)?;
             let window_stop =
                 MenuItem::with_id(app, "stop", "STOP ALL AGENTS", true, None::<&str>)?;
+            let window_close_ask =
+                MenuItem::with_id(app, "close-ask", "Ask every time", true, None::<&str>)?;
+            let window_close_tray = MenuItem::with_id(
+                app,
+                "close-tray",
+                "Keep running in tray",
+                true,
+                None::<&str>,
+            )?;
+            let window_close_exit = MenuItem::with_id(
+                app,
+                "close-exit",
+                "Exit and stop all Agents",
+                true,
+                None::<&str>,
+            )?;
+            let window_close_behavior = Submenu::with_items(
+                app,
+                "On window close",
+                true,
+                &[
+                    &window_close_ask,
+                    &window_close_tray,
+                    &window_close_exit,
+                ],
+            )?;
             let window_quit = MenuItem::with_id(
                 app,
                 "quit",
@@ -3511,7 +3559,13 @@ fn main() {
                 app,
                 "OpenBot",
                 true,
-                &[&window_open, &window_updates, &window_stop, &window_quit],
+                &[
+                    &window_open,
+                    &window_updates,
+                    &window_stop,
+                    &window_close_behavior,
+                    &window_quit,
+                ],
             )?;
             /*
              * AN EDIT MENU, WITHOUT WHICH COMMAND-V DOES NOTHING.
