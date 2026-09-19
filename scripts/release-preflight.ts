@@ -430,6 +430,35 @@ function checkComputerSandboxBoundary(): void {
     }
   }
 
+  const capacitySupervisorIndex = read("supervisor/src/index.ts");
+  const provider = read("server/src/computer/provider.ts");
+  const computerQueries = read("app/src/lib/computers/queries.ts");
+  for (const evidence of [
+    'app.get("/capacity"',
+    "resourceProfiles: RESOURCE_PROFILES",
+    "maxActiveComputers",
+  ]) {
+    if (!capacitySupervisorIndex.includes(evidence)) {
+      fail(`computer: supervisor capacity reporting is missing ${evidence}`);
+    }
+  }
+  if (!provider.includes("capacity?(): Promise<ComputerHostCapacity")) {
+    fail("computer: provider capacity contract is missing");
+  }
+  for (const evidence of ["capacity?:", "resourceProfiles"]) {
+    if (!computerQueries.includes(evidence)) {
+      fail(
+        `computer: Computer Manager capacity contract is missing ${evidence}`,
+      );
+    }
+  }
+  if (
+    !computersPage.includes("computerStartWarning") ||
+    !computersPage.includes("Start anyway")
+  ) {
+    fail("computer: start-time host resource warning is missing");
+  }
+
   const workspace = read("agent-computer/src/workspace.ts");
   for (const evidence of [
     "totalBytes: 4 * 1024 * 1024 * 1024",
