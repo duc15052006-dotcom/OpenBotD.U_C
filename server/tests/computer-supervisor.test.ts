@@ -322,6 +322,96 @@ describe("Docker supervisor provider", () => {
  * design, which is right for a provider that cannot tell and wrong here: the check is simply absent,
  * silently, on exactly the deployment shape it was written for.
  */
+describe("Docker supervisor session cache", () => {
+  test("evicts old Bot sessions instead of growing without bound", async () => {
+    let listCalls = 0;
+    const provider = createDockerSupervisorProvider({
+      baseUrl: "http://supervisor:4300",
+      fetchImpl: (async (url: string | URL | Request) => {
+        const path = new URL(String(url)).pathname;
+        if (path === "/computers") {
+          listCalls += 1;
+          return Response.json({
+            computers: [
+              {
+                botId: "bot-0",
+                status: "running",
+                url: "http://openbot-computer-bot-0:4100",
+                startedAt: "fresh-after-eviction",
+              },
+            ],
+          });
+        }
+        const botId = decodeURIComponent(
+          path.slice("/computers/".length, -"/ensure".length),
+        );
+        return Response.json({
+          botId,
+          status: "running",
+          url: `http://openbot-computer-${botId}:4100`,
+          startedAt: `session-${botId}`,
+        });
+      }) as unknown as typeof fetch,
+    });
+
+    for (let index = 0; index <= 512; index += 1) {
+      await provider.locate(`bot-${index}`);
+    }
+
+    // bot-0 is the oldest of 513 remembered sessions and must have been evicted. sessionOf then
+    // uses the existing cross-replica read path rather than retaining every Bot id forever.
+    expect(await provider.sessionOf?.("bot-0")).toBe("fresh-after-eviction");
+    expect(listCalls).toBe(1);
+  });
+
+  test("stop/reset/restore forget the inactive run identity", async () => {
+    const seenGets: string[] = [];
+    const provider = createDockerSupervisorProvider({
+      baseUrl: "http://supervisor:4300",
+      fetchImpl: (async (url: string | URL | Request) => {
+        const path = new URL(String(url)).pathname;
+        if (path.endsWith("/ensure")) {
+          return Response.json({
+            botId: "bot",
+            status: "running",
+            url: "http://openbot-computer-bot:4100",
+            startedAt: "old-run",
+          });
+        }
+        if (path === "/computers") {
+          seenGets.push(path);
+          return Response.json({
+            computers: [
+              {
+                botId: "bot",
+                status: "running",
+                url: "http://openbot-computer-bot:4100",
+                startedAt: "current-run",
+              },
+            ],
+          });
+        }
+        if (path.endsWith("/stop")) return Response.json({ stopped: true });
+        if (path.endsWith("/reset")) return Response.json({ reset: true });
+        if (path.endsWith("/restore")) return Response.json({ restored: true });
+        return Response.json({});
+      }) as unknown as typeof fetch,
+    });
+
+    for (const clear of [
+      () => provider.stop("bot"),
+      () => provider.reset("bot"),
+      () => provider.restoreSnapshot?.("bot"),
+    ]) {
+      await provider.locate("bot");
+      expect(await provider.sessionOf?.("bot")).toBe("old-run");
+      await clear();
+      expect(await provider.sessionOf?.("bot")).toBe("current-run");
+    }
+    expect(seenGets).toHaveLength(3);
+  });
+});
+
 describe("telling one run of a computer from the next, across replicas", () => {
   /*
    * A bot id of its own per test, because the map this reads is module scope.
