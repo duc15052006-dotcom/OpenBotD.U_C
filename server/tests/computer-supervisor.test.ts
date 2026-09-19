@@ -69,14 +69,12 @@ describe("locating a Bot's computer", () => {
       }) as unknown as typeof fetch,
     });
 
-    expect(
-      await client.restart?.("sales", { resourceProfile: "heavy" }),
-    ).toBe("http://openbot-computer-sales:4100");
+    expect(await client.restart?.("sales", { resourceProfile: "heavy" })).toBe(
+      "http://openbot-computer-sales:4100",
+    );
     expect(seenPath).toBe("/computers/sales/restart");
     expect(seenBody).toEqual({ resourceProfile: "heavy" });
-    expect(await client.sessionOf?.("sales")).toBe(
-      "2026-09-19T06:30:00.000Z",
-    );
+    expect(await client.sessionOf?.("sales")).toBe("2026-09-19T06:30:00.000Z");
   });
 
   test("falls back to a published port when there is no name to use", async () => {
