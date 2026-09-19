@@ -15,9 +15,9 @@ mod show_route_tests;
 mod test_support;
 
 use openbot_desktop_lib::{
-    acquire, deployment, deployment_release, engine, env as openbot_env, harness, host_access,
-    install, preparation, problem::Problem, provider, pull_metrics, quiet, stack, supervise,
-    telemetry, tray, update, windows as win,
+    acquire, close_behavior::CloseBehavior, deployment, deployment_release, engine,
+    env as openbot_env, harness, host_access, install, preparation, problem::Problem, provider,
+    pull_metrics, quiet, stack, supervise, telemetry, tray, update, windows as win,
 };
 
 const QUIT_CLEANUP_NOTICE_FILE: &str = ".openbot-quit-cleanup-notice";
@@ -3291,6 +3291,9 @@ fn chose(app: &tauri::AppHandle, item: &str) {
         // Stop without quitting: the stack is what costs something to leave running, and somebody
         // who wants it stopped does not necessarily want the application gone.
         "stop" => stop_from_menu(app.clone()),
+        "close-ask" => save_close_behavior(app, CloseBehavior::Ask),
+        "close-tray" => save_close_behavior(app, CloseBehavior::KeepRunning),
+        "close-exit" => save_close_behavior(app, CloseBehavior::Exit),
         // Exit rather than hide: quitting is a decision to stop, and the exit handler is what stops
         // the processes with it.
         "quit" => {
@@ -3302,6 +3305,45 @@ fn chose(app: &tauri::AppHandle, item: &str) {
 
 fn quit_menu_accelerator() -> Option<&'static str> {
     Some(QUIT_MENU_ACCELERATOR)
+}
+
+fn close_behavior_for<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> CloseBehavior {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|directory| CloseBehavior::read(&directory))
+        .unwrap_or_default()
+}
+
+fn save_close_behavior<R: tauri::Runtime>(app: &tauri::AppHandle<R>, behavior: CloseBehavior) {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+
+    let saved = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| error.to_string())
+        .and_then(|directory| behavior.write(&directory).map_err(|error| error.to_string()));
+    match saved {
+        Ok(()) => {
+            app.dialog()
+                .message(format!(
+                    "When the main window is closed: {}.",
+                    behavior.label()
+                ))
+                .title("Close behavior saved")
+                .kind(MessageDialogKind::Info)
+                .show(|_| {});
+        }
+        Err(error) => {
+            app.dialog()
+                .message(format!(
+                    "OpenBot could not save the close behavior. It will keep asking each time. {error}"
+                ))
+                .title("Close behavior not saved")
+                .kind(MessageDialogKind::Error)
+                .show(|_| {});
+        }
+    }
 }
 
 fn main() {
@@ -3372,24 +3414,32 @@ fn main() {
 
                 api.prevent_close();
                 let app = window.app_handle();
-                let keep_running = app
-                    .dialog()
-                    .message(
-                        "OpenBot is still running. Keep Agents and Computers running in the system tray, or exit OpenBot and stop all Agents?",
-                    )
-                    .title("Close OpenBot")
-                    .kind(MessageDialogKind::Warning)
-                    .buttons(MessageDialogButtons::OkCancelCustom(
-                        "Keep running in tray".into(),
-                        "Exit and stop all Agents".into(),
-                    ))
-                    .parent(window)
-                    .blocking_show();
+                match close_behavior_for(app) {
+                    CloseBehavior::KeepRunning => {
+                        let _ = window.hide();
+                    }
+                    CloseBehavior::Exit => app.exit(0),
+                    CloseBehavior::Ask => {
+                        let keep_running = app
+                            .dialog()
+                            .message(
+                                "OpenBot is still running. Keep Agents and Computers running in the system tray, or exit OpenBot and stop all Agents?",
+                            )
+                            .title("Close OpenBot")
+                            .kind(MessageDialogKind::Warning)
+                            .buttons(MessageDialogButtons::OkCancelCustom(
+                                "Keep running in tray".into(),
+                                "Exit and stop all Agents".into(),
+                            ))
+                            .parent(window)
+                            .blocking_show();
 
-                if keep_running {
-                    let _ = window.hide();
-                } else {
-                    app.exit(0);
+                        if keep_running {
+                            let _ = window.hide();
+                        } else {
+                            app.exit(0);
+                        }
+                    }
                 }
             }
         })
