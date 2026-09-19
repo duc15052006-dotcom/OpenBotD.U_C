@@ -492,7 +492,6 @@ async function copyOwnedVolume(
       CapDrop: ["ALL"],
       SecurityOpt: ["no-new-privileges:true"],
       PidsLimit: 64,
-      AutoRemove: true,
     },
   });
   try {
@@ -506,6 +505,8 @@ async function copyOwnedVolume(
   } catch (error) {
     if (error instanceof ComputerSnapshotError) throw error;
     throw new DockerUnavailableError(String(error));
+  } finally {
+    await helper.remove({ force: true, v: false }).catch(() => undefined);
   }
 }
 
