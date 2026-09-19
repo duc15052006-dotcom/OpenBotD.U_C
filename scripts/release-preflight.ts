@@ -354,6 +354,26 @@ function checkComputerSandboxBoundary(): void {
     );
   }
 
+  for (const evidence of [
+    'ne(auditEvents.eventType, "computer.stopped")',
+    'ne(auditEvents.eventType, "computer.reset")',
+    '"used while it was being suspended; restored"',
+    'reason: "activity_raced_idle_sleep"',
+  ]) {
+    if (!culler.includes(evidence)) {
+      fail(`computer: Sleep/Wake race recovery is missing ${evidence}`);
+    }
+  }
+  for (const evidence of [
+    "recoveredFromSleepRace",
+    "after.state !== \"ready\"",
+    "idle sleep raced this Start/Wake request",
+  ]) {
+    if (!gateway.includes(evidence)) {
+      fail(`computer: Start/Wake race recovery is missing ${evidence}`);
+    }
+  }
+
   const workspace = read("agent-computer/src/workspace.ts");
   for (const evidence of [
     "totalBytes: 4 * 1024 * 1024 * 1024",
