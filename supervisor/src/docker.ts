@@ -686,13 +686,23 @@ export async function restoreCleanSnapshot(
   }
 
   const target = liveVolumes(names);
-  for (let index = 0; index < snapshot.volumes.length; index += 1) {
-    await copyOwnedVolume(
-      names,
-      image,
-      snapshot.volumes[index]!,
-      target[index]!,
-    );
+  try {
+    for (let index = 0; index < snapshot.volumes.length; index += 1) {
+      await copyOwnedVolume(
+        names,
+        image,
+        snapshot.volumes[index]!,
+        target[index]!,
+      );
+    }
+  } catch (error) {
+    // Never leave a mixed profile/workspace/quarantine set after a failed restore. The clean
+    // snapshot remains untouched, so a later retry can restore all three volumes from one coherent
+    // recovery point instead of starting a Computer on partially restored state.
+    for (const volume of target) {
+      await removeOwnedVolume(names, volume).catch(() => false);
+    }
+    throw error;
   }
   return true;
 }
