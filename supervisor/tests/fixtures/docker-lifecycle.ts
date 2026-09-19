@@ -223,6 +223,30 @@ describe("a name held by somebody else", () => {
   }, 90_000);
 });
 
+describe("fleet lifecycle timestamps", () => {
+  test("reports the current run start after a stopped Computer wakes", async () => {
+    await withDocker().supervisor.ensure(names, {
+      image: IMAGE,
+      environment: [],
+    });
+    await withDocker().supervisor.stop(names);
+    await withDocker().supervisor.ensure(names, {
+      image: IMAGE,
+      environment: [],
+    });
+
+    const inspected = await withDocker()
+      .docker.getContainer(names.container)
+      .inspect();
+    const listed = (await withDocker().supervisor.listOwned()).find(
+      (computer) => computer.botId === BOT,
+    );
+
+    expect(inspected.State?.StartedAt).toBeTruthy();
+    expect(listed?.startedAt).toBe(inspected.State?.StartedAt);
+  }, 90_000);
+});
+
 describe("a computer that never answers", () => {
   test("fails instead of being handed out as ready", async () => {
     // A wait that cannot fail is a sleep: every computer that never came up was reported ready, and
