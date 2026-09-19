@@ -16,6 +16,19 @@ test("includes durable Routine behavior in the framework Bot system guidance", (
   );
 });
 
+test("includes NOTE 21-2 autonomous workflow boundaries in the LangGraph adapter", () => {
+  const messages = toLangChainMessages(input([]));
+  const system = messages.find((message) => message instanceof SystemMessage);
+  expect(String(system?.content)).toContain("projectId + sceneId");
+  expect(String(system?.content)).toContain(
+    "An approved prompt is an execution input, not something to grade",
+  );
+  expect(String(system?.content)).toContain(
+    "Never claim you will automatically wake",
+  );
+});
+
+
 /**
  * A tool call nobody answered does not end the conversation.
  *
