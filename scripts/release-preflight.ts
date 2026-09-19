@@ -491,6 +491,20 @@ function checkComputerSandboxBoundary(): void {
     fail("computer: gateway does not prefer atomic provider restart");
   }
 
+  const supervisorDocker = read("supervisor/src/docker.ts");
+  const listOwnedSource =
+    supervisorDocker
+      .split("export async function listOwned()", 2)[1]
+      ?.split("const startingBots", 1)[0] ?? "";
+  if (
+    listOwnedSource.includes("container.Created") ||
+    !listOwnedSource.includes("inspectOwned(parsed.names)")
+  ) {
+    fail(
+      "computer: fleet lifecycle timestamp must come from the current Docker run, not container creation",
+    );
+  }
+
   const workspace = read("agent-computer/src/workspace.ts");
   for (const evidence of [
     "totalBytes: 4 * 1024 * 1024 * 1024",
