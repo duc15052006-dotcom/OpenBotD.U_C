@@ -629,6 +629,10 @@ async function copyOwnedVolume(
     Labels: labelsFor(names),
     HostConfig: {
       Binds: [`${source}:/source:ro`, `${target}:/target`],
+      // If the supervisor process dies after starting this helper, Docker still removes it when
+      // the bounded copy exits. Otherwise an orphan helper can keep snapshot/live volumes "in use"
+      // and make a later Reset or Restore fail even though no Agent Computer is running.
+      AutoRemove: true,
       NetworkMode: "none",
       ReadonlyRootfs: true,
       CapDrop: ["ALL"],
