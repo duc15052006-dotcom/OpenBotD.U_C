@@ -1494,7 +1494,6 @@ describe("acting on a ref the server cannot resolve", () => {
   });
 });
 
-
 describe("per-Agent Computer resource profiles", () => {
   test("resolves the saved preset before locating the Computer", async () => {
     const { provider, fetchImpl, locateOptions } = fakeComputer();
