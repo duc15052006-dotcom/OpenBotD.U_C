@@ -224,7 +224,9 @@ describe("a ref outliving the computer that produced it", () => {
     await snapshots.save("bot-race", {
       snapshotId: SNAPSHOT.snapshotId,
       url: SNAPSHOT.url,
-      elements: new Map(SNAPSHOT.elements.map((element) => [element.ref, element])),
+      elements: new Map(
+        SNAPSHOT.elements.map((element) => [element.ref, element]),
+      ),
       session: FIRST_RUN,
     });
     const { store, rows } = fakeAudit();
