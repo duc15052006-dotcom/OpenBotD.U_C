@@ -255,14 +255,16 @@ export function createTurnRunner(options: {
     abortGraceMs = DEFAULT_ABORT_GRACE_MS,
   } = options;
 
-  return async (input) => {
-    const { ownerUserId, agentId, threadId, instruction } = input;
+  return async (turnInput) => {
+    const { ownerUserId, agentId, threadId, instruction } = turnInput;
     const source =
-      "workflowId" in input && input.workflowId ? "workflow" : "routine";
+      "workflowId" in turnInput && turnInput.workflowId
+        ? "workflow"
+        : "routine";
     const sourceId =
       source === "workflow"
-        ? (input as { workflowId: string }).workflowId
-        : (input as { routineId: string }).routineId;
+        ? (turnInput as { workflowId: string }).workflowId
+        : (turnInput as { routineId: string }).routineId;
     const initiator: AuditInitiator =
       source === "workflow"
         ? { kind: "workflow", id: sourceId }
