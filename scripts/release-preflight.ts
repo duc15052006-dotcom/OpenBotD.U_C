@@ -1415,6 +1415,63 @@ function checkFirstCoworkerHandoff(): void {
   }
 }
 
+function checkDurableAgentWake(): void {
+  const tools = read("server/src/plugins/builtin-routines.ts");
+  const store = read("server/src/routines/store.ts");
+  const sweep = read("server/src/routines/sweep.ts");
+  const schema = read("server/src/db/schema/coworker.ts");
+  const migration = read("server/drizzle/0042_routine_one_shot_wake.sql");
+
+  for (const evidence of [
+    'name: "schedule_wake"',
+    '"Absolute future RFC3339 timestamp including Z or a numeric UTC offset."',
+    '"createOneShot"',
+  ]) {
+    if (!tools.includes(evidence)) {
+      fail(`routines: durable one-shot wake tool is missing ${evidence}`);
+    }
+  }
+
+  for (const evidence of [
+    'scheduleKind: routineScheduleKind("schedule_kind")',
+    '"recurring"',
+    '"once"',
+  ]) {
+    if (!schema.includes(evidence)) {
+      fail(`routines: one-shot schedule schema is missing ${evidence}`);
+    }
+  }
+
+  for (const evidence of [
+    "async createOneShot(",
+    "async consumeOneShot(",
+    'scheduleKind === "once"',
+  ]) {
+    if (!store.includes(evidence)) {
+      fail(`routines: durable one-shot store invariant is missing ${evidence}`);
+    }
+  }
+
+  for (const evidence of [
+    'routine.scheduleKind === "once" || lateBy <= graceMs',
+    "consumeOneShot(",
+    'scheduleKind: routine.scheduleKind',
+  ]) {
+    if (!sweep.includes(evidence)) {
+      fail(`routines: one-shot wake/recovery invariant is missing ${evidence}`);
+    }
+  }
+
+  for (const evidence of [
+    'CREATE TYPE "public"."routine_schedule_kind" AS ENUM(\'recurring\', \'once\')',
+    'ADD COLUMN "schedule_kind" routine_schedule_kind',
+  ]) {
+    if (!migration.includes(evidence)) {
+      fail(`routines: one-shot wake migration is missing ${evidence}`);
+    }
+  }
+}
+
 function checkVersionSources(): void {
   const pkg = json("package.json");
   const version = pkg.version;
@@ -1445,6 +1502,7 @@ checkDesktopUpdatePath();
 checkDesktopCredentialBoundary();
 checkProviderConnectionTest();
 checkFirstCoworkerHandoff();
+checkDurableAgentWake();
 checkVersionSources();
 
 if (failures.length > 0) {
