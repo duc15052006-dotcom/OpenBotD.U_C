@@ -890,12 +890,10 @@ export function createWorkflowStore(database: Database): WorkflowStore {
             "Only an active workflow can enter a wait.",
           );
         }
-        const [clock] = await transaction
-          .select({
-            future: sql<boolean>`${input.waitUntil} > now()`,
-          })
-          .execute();
-        if (clock?.future !== true) {
+        const clocks = (await transaction.execute(
+          sql`select ${input.waitUntil} > now() as "future"`,
+        )) as unknown as Array<{ future: boolean }>;
+        if (clocks[0]?.future !== true) {
           throw new WorkflowRefusedError(
             "A waiting workflow step needs a future wake time.",
           );
