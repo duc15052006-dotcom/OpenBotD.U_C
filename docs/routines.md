@@ -49,6 +49,17 @@ floor: a conversation is an easy place to accumulate standing work without notic
 person's own list stops being something they can hold in their head. Switching one off frees a slot;
 deleting one is not required.
 
+## Concurrent-run caps
+
+Unattended runs are refused before dispatch when the deployment already has 20 routine runs in flight
+or the same Bot already has 4. The count and run opening are serialized in PostgreSQL, so two worker
+replicas cannot both observe one remaining slot and cross the cap.
+
+A refused occurrence is recorded immediately as a `skipped` routine run with a readable reason and
+its queue item is finished. It is not left waiting behind a busy Bot, and it does not consume dispatch
+retry attempts. Old open rows are still reaped by the existing abandoned-run recovery before the
+consumer admits new work.
+
 ## The fatigue rule
 
 A routine that fails posts exactly one message about it — the first failure after a success, not
@@ -131,11 +142,9 @@ cap and the fatigue rule; the worker that fires them. Four follow-ups are tracke
 [#193](https://github.com/CopilotKit/OpenBot/issues/193) and deliberately not in this pass; the first
 of them has since been closed. Audit rows now say what started the run they came out of, so a
 routine's action is told apart from the same person's own by reading the row rather than by
-correlating timestamps against `routine_runs`. See [Architecture](architecture.md#what-started-a-run). Still open:
-there is no admin view of
-other people's routines, only the owner-scoped page each person sees for their own; there is no
-per-deployment or per-Bot cap on how many routines may be running at once beyond the sweep's own claim
-limit; and a tenant package cannot yet ship routines the way it ships agents, channels or skills.
+correlating timestamps against `routine_runs`. See [Architecture](architecture.md#what-started-a-run). Still open: there is no admin view of other people's routines, only the owner-scoped page each
+person sees for their own; and a tenant package cannot yet ship routines the way it ships agents,
+channels or skills.
 
 ## See also
 
