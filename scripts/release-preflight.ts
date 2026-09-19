@@ -170,6 +170,7 @@ function checkComputerSandboxBoundary(): void {
   for (const evidence of [
     'SecurityOpt: ["no-new-privileges:true"]',
     'CapDrop: ["ALL"]',
+    'RestartPolicy: { Name: "no" }',
     "Memory: options.memoryBytes",
     "NanoCpus: options.nanoCpus",
     "PidsLimit: options.pidsLimit ?? 512",
@@ -181,6 +182,12 @@ function checkComputerSandboxBoundary(): void {
       fail(`computer: per-Agent confinement is missing ${evidence}`);
     }
   }
+  if (supervisor.includes('RestartPolicy: { Name: "unless-stopped" }')) {
+    fail(
+      "computer: Docker may autorestart an Agent Computer outside the OpenBot app lifecycle",
+    );
+  }
+
 
   for (const evidence of [
     "computerMemoryBytes(process.env.COMPUTER_MEMORY_BYTES)",
