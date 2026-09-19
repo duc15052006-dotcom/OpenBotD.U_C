@@ -295,6 +295,23 @@ describe("fleet lifecycle timestamps", () => {
   }, 90_000);
 });
 
+describe("idempotent Stop result", () => {
+  test("reports true only when the Computer was running before Stop", async () => {
+    await withDocker().supervisor.ensure(names, {
+      image: IMAGE,
+      environment: [],
+    });
+
+    expect(await withDocker().supervisor.stop(names)).toBe(true);
+    expect(await withDocker().supervisor.stop(names)).toBe(false);
+
+    const inspected = await withDocker()
+      .docker.getContainer(names.container)
+      .inspect();
+    expect(inspected.State?.Running).toBe(false);
+  }, 90_000);
+});
+
 describe("a computer that never answers", () => {
   test("fails instead of being handed out as ready", async () => {
     // A wait that cannot fail is a sleep: every computer that never came up was reported ready, and
