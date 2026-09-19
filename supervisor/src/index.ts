@@ -243,7 +243,10 @@ app.post("/computers/:botId/restart", async (context) => {
         : { identity: identity.reason }),
     });
   } catch (error) {
-    if (error instanceof NameHeldError || error instanceof ComputerCapacityError) {
+    if (
+      error instanceof NameHeldError ||
+      error instanceof ComputerCapacityError
+    ) {
       return context.json({ error: error.message }, 409);
     }
     if (
