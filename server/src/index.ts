@@ -109,6 +109,8 @@ import { grantedSkills, grantedTools, REFUSAL_MARKER } from "./plugins/tools";
 import { createTurnRunner } from "./routines/run-turn";
 import { createRoutineRunner } from "./routines/runner";
 import { createRoutineStore } from "./routines/store";
+import { createWorkflowStore } from "./workflows/store";
+import { sweepWorkflowWaits } from "./workflows/wake";
 import { createIntentRouter } from "./routing/classify";
 import { createModelCompleter } from "./routing/model";
 import {
@@ -416,6 +418,7 @@ const pluginStore = createPluginStore({
  */
 const routineStore = createRoutineStore(database);
 useRoutineTools(routineStore);
+const workflowStore = createWorkflowStore(database);
 
 /**
  * Other Bots this person deliberately put in the same live channel as this Bot.
@@ -1281,6 +1284,38 @@ if (config.handoff.maxDepth > 0 && config.handoff.maxPerRun > 0) {
   );
   repeatAfterEach(kick, 2_000);
 }
+
+/*
+ * Durable workflow waits.
+ *
+ * This is a recovery/execution bridge, not a second scheduler or lease system. The workflow store
+ * decides which exact persisted waits are due using Postgres' clock; the shared work_items queue
+ * owns claiming, leases, retries and idempotency. A stale wake is harmless because resumption
+ * compare-and-sets the exact wait timestamp before changing the step.
+ */
+const workflowWake = {
+  store: workflowStore,
+  queue: createWorkQueue(database),
+  owner: workOwner("workflow-wake"),
+};
+
+repeatAfterEach(async () => {
+  try {
+    const report = await sweepWorkflowWaits(workflowWake);
+    if (
+      report.queued > 0 ||
+      report.resumed.length > 0 ||
+      report.skipped.length > 0
+    ) {
+      console.info(JSON.stringify({ type: "workflow-wake", ...report }));
+    }
+  } catch (error) {
+    console.warn(
+      "[workflows] due waits could not be resumed:",
+      error instanceof Error ? error.message : error,
+    );
+  }
+}, 5_000);
 
 /*
  * And dropping the hops that are over, whether or not the capability is switched on.
