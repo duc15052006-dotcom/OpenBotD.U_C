@@ -1123,14 +1123,19 @@ export function createComputerGateway(
         );
       }
       const result = await provider.restoreSnapshot(botId);
-      await snapshots.clear(botId);
-      await pageFrames?.clear(botId);
+      /*
+       * The persistent state has changed at this point. Record that fact before clearing stale refs
+       * and page frames: a database failure during either cleanup must not erase the only audit row
+       * saying who restored the Bot and when.
+       */
       await writeControlEvent(auditStore, "computer.snapshot_restored", {
         botId,
         actor,
         reason:
           "profile, workspace and quarantine were restored from the clean snapshot; Computer remains stopped",
       });
+      await snapshots.clear(botId);
+      await pageFrames?.clear(botId);
       return result;
     },
 
