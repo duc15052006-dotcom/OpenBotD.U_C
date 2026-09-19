@@ -146,7 +146,11 @@ describe("workflow wait input", () => {
     useWorkflowTools({
       async waitStep(_identity, _id, _stepKey, input) {
         received = input.waitUntil;
-        return { ...step, status: "waiting" as const, waitUntil: input.waitUntil };
+        return {
+          ...step,
+          status: "waiting" as const,
+          waitUntil: input.waitUntil,
+        };
       },
     } as WorkflowTools);
 
