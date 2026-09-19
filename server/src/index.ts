@@ -63,6 +63,7 @@ import { createChannelTitler } from "./channels/titler";
 import { createSandboxedStore } from "./components/sandboxed";
 import { createComponentStore } from "./components/store";
 import { createComputerGateway } from "./computer/gateway";
+import { createComputerLifecycleReader } from "./computer/lifecycle";
 import { createPageFrameStore } from "./computer/page-frames";
 import { startPolicyListener } from "./computer/policy-listener";
 import {
@@ -337,6 +338,7 @@ const computerGateway = computerProvider
       // So wiping a profile takes the pictures of its signed-in pages with it, which is what the
       // sentence on that button already promised.
       pageFrames: pageFrameStore,
+      lifecycleReader: createComputerLifecycleReader(database),
       allowPrivateHosts: config.computer?.allowPrivateHosts,
       token: config.computer?.token,
     })
