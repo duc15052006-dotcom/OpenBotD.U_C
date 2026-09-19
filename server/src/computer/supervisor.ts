@@ -15,6 +15,7 @@
 
 import type { ComputerLocation, ComputerProvider } from "./provider";
 import type { ComputerStatus } from "./schema";
+import type { ComputerResourceProfile } from "./resource-profile";
 
 type SupervisorComputerLocation = {
   botId: string;
@@ -75,14 +76,22 @@ export function createDockerSupervisorProvider(
    */
   const sessions = new Map<string, string>();
 
-  async function call(path: string, method = "POST"): Promise<unknown> {
+  async function call(
+    path: string,
+    method = "POST",
+    requestBody?: unknown,
+  ): Promise<unknown> {
     let response: Response;
     try {
       response = await doFetch(`${base}${path}`, {
         method,
-        headers: options.token
-          ? { authorization: `Bearer ${options.token}` }
-          : {},
+        headers: {
+          ...(options.token
+            ? { authorization: `Bearer ${options.token}` }
+            : {}),
+          ...(requestBody === undefined ? {} : { "content-type": "application/json" }),
+        },
+        ...(requestBody === undefined ? {} : { body: JSON.stringify(requestBody) }),
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (error) {
@@ -203,9 +212,16 @@ export function createDockerSupervisorProvider(
       }
     },
 
-    async locate(botId: string): Promise<string> {
+    async locate(
+      botId: string,
+      request?: { resourceProfile?: ComputerResourceProfile },
+    ): Promise<string> {
       const state = (await call(
         `/computers/${encodeURIComponent(botId)}/ensure`,
+        "POST",
+        request?.resourceProfile
+          ? { resourceProfile: request.resourceProfile }
+          : undefined,
       )) as SupervisorComputerLocation;
       // Recorded on every ensure, so a replaced container is visible to whatever asks next.
       if (state?.startedAt) sessions.set(botId, state.startedAt);

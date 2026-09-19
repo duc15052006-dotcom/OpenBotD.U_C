@@ -2,6 +2,7 @@ import { queryOptions } from "@tanstack/react-query";
 import { client, tryClient } from "@/lib/client";
 
 export type AgentVisibility = "public" | "private";
+export type ComputerResourceProfile = "light" | "normal" | "heavy";
 
 /**
  * A coworker as the browser sees it.
@@ -29,6 +30,8 @@ export type AgentProfile = {
   builtIn: boolean;
   /** Whether a key is set for it. Never the key itself. */
   hasAuth: boolean;
+  /** CPU/RAM preset applied to this Agent's isolated Computer. */
+  computerResourceProfile: ComputerResourceProfile;
   /**
    * Whether this coworker holds a credential for calling tools back.
    *

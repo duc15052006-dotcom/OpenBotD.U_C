@@ -339,6 +339,8 @@ const computerGateway = computerProvider
       pageFrames: pageFrameStore,
       allowPrivateHosts: config.computer?.allowPrivateHosts,
       token: config.computer?.token,
+      resourceProfile: (botId) =>
+        agentProfileStore.computerResourceProfile(botId),
     })
   : undefined;
 

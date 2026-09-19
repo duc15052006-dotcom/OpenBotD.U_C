@@ -17,6 +17,10 @@ import { namesFor } from "./names";
 import { computerMaxActive } from "./computer-max-active";
 import { computerMemoryBytes } from "./computer-memory-bytes";
 import { computerNanoCpus } from "./computer-nano-cpus";
+import {
+  parseComputerResourceProfile,
+  RESOURCE_PROFILES,
+} from "./resource-profile";
 import { listenPort } from "./listen-port";
 
 /**
@@ -111,6 +115,23 @@ app.post("/computers/:botId/ensure", async (context) => {
   const parsed = resolve(context.req.param("botId"));
   if (!parsed.ok) return context.json({ error: parsed.reason }, 400);
 
+  const body = (await context.req.json().catch(() => ({}))) as {
+    resourceProfile?: unknown;
+  };
+  const requestedProfile =
+    body.resourceProfile === undefined
+      ? null
+      : parseComputerResourceProfile(body.resourceProfile);
+  if (body.resourceProfile !== undefined && !requestedProfile) {
+    return context.json(
+      { error: "Resource profile must be light, normal, or heavy." },
+      400,
+    );
+  }
+  const profileResources = requestedProfile
+    ? RESOURCE_PROFILES[requestedProfile]
+    : null;
+
   try {
     // Registered before the computer is handed out, so it can prove which Bot it is from its first
     // request.
@@ -121,8 +142,16 @@ app.post("/computers/:botId/ensure", async (context) => {
       environment: environmentFor(parsed.names.botId),
       ...(network ? { network } : {}),
       ...(runtime ? { runtime } : {}),
-      ...(memoryBytes ? { memoryBytes } : {}),
-      ...(nanoCpus ? { nanoCpus } : {}),
+      ...(profileResources
+        ? { memoryBytes: profileResources.memoryBytes }
+        : memoryBytes
+          ? { memoryBytes }
+          : {}),
+      ...(profileResources
+        ? { nanoCpus: profileResources.nanoCpus }
+        : nanoCpus
+          ? { nanoCpus }
+          : {}),
       ...(maxActiveComputers ? { maxActiveComputers } : {}),
       ...(spireSocketVolume ? { spireSocketVolume } : {}),
     });
