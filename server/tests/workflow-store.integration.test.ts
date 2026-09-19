@@ -326,13 +326,7 @@ describe("durable ready-step dispatch", () => {
 
     await store.startStep(who, plan.id, "script");
     await expect(
-      store.startReadyStep(
-        who,
-        plan.id,
-        "script",
-        queued?.readyAt as Date,
-        0,
-      ),
+      store.startReadyStep(who, plan.id, "script", queued?.readyAt as Date, 0),
     ).rejects.toThrow(/another attempt/);
   });
 
@@ -354,9 +348,9 @@ describe("durable ready-step dispatch", () => {
         candidate.workflowId === plan.id && candidate.stepKey === "script",
     );
     expect(after).toBeDefined();
-    expect((after?.readyAt.getTime() ?? 0) > (before?.readyAt.getTime() ?? 0)).toBe(
-      true,
-    );
+    expect(
+      (after?.readyAt.getTime() ?? 0) > (before?.readyAt.getTime() ?? 0),
+    ).toBe(true);
   });
 });
 
