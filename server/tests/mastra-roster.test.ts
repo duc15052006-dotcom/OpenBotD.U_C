@@ -77,6 +77,27 @@ describe("duplicating a Mastra Bot", () => {
       configuration: { endpoint: "http://a.test" },
     });
   });
+
+  test("an explicitly selected resource profile follows the duplicate", () => {
+    expect(
+      runForDuplicate(
+        {
+          type: "remote_ag_ui",
+          configuration: {
+            endpoint: "http://a.test",
+            computerResourceProfile: "heavy",
+          },
+        },
+        undefined,
+      ),
+    ).toEqual({
+      type: "remote_ag_ui",
+      configuration: {
+        endpoint: "http://a.test",
+        computerResourceProfile: "heavy",
+      },
+    });
+  });
 });
 
 describe("which endpoints get this deployment's token", () => {
