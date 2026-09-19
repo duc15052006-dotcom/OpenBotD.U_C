@@ -337,13 +337,10 @@ function stepsArg(value: unknown): WorkflowStepInput[] | FailedResult {
   return steps;
 }
 
-function absoluteFuture(value: string | undefined): Date | undefined {
+function absoluteTimestamp(value: string | undefined): Date | undefined {
   if (!value || !/(?:Z|[+-]\d{2}:\d{2})$/i.test(value)) return undefined;
   const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime()) || parsed.getTime() <= Date.now()) {
-    return undefined;
-  }
-  return parsed;
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
 }
 
 function compactPlan(plan: WorkflowPlan | null) {
@@ -437,7 +434,13 @@ export async function callTool(
       return result(await tools.startStep(identity, id, stepKey));
     }
     if (toolName === "wait_workflow_step") {
-      const waitUntil = absoluteFuture(stringArg(args, "waitUntil"));
+      /*
+       * Parse shape here, but do not decide "future" from this process clock. The workflow store
+       * validates the exact timestamp against PostgreSQL inside the same transaction that changes
+       * the step. Otherwise a laptop/VM clock skew can refuse a timestamp the durable scheduler
+       * itself still considers future.
+       */
+      const waitUntil = absoluteTimestamp(stringArg(args, "waitUntil"));
       if (!waitUntil) {
         return failure(
           "waitUntil must be an absolute future RFC3339 timestamp with Z or a numeric UTC offset.",
