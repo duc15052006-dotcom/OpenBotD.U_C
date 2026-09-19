@@ -487,7 +487,6 @@ function checkComputerSandboxBoundary(): void {
   if (!supervisorClient.includes("/restart")) {
     fail("computer: server supervisor client does not use atomic restart");
   }
-  const gateway = read("server/src/computer/gateway.ts");
   if (!gateway.includes("provider.restart")) {
     fail("computer: gateway does not prefer atomic provider restart");
   }
