@@ -322,7 +322,8 @@ export const CATALOGUE: readonly CatalogueEntry[] = Object.freeze([
       "add_workflow_asset",
       "remove_workflow_asset",
     ]),
-    docsUrl: "https://github.com/CopilotKit/OpenBot/blob/main/docs/workflows.md",
+    docsUrl:
+      "https://github.com/CopilotKit/OpenBot/blob/main/docs/workflows.md",
   },
 ]);
 
