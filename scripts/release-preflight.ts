@@ -1472,6 +1472,50 @@ function checkDurableAgentWake(): void {
   }
 }
 
+function checkDurableWorkflowState(): void {
+  const schema = read("server/src/db/schema/coworker.ts");
+  const store = read("server/src/workflows/store.ts");
+  const migration = read("server/drizzle/0043_workflow_state.sql");
+
+  for (const evidence of [
+    'workflowRunStatus = pgEnum("workflow_run_status"',
+    'workflowStepStatus = pgEnum("workflow_step_status"',
+    "export const workflowRuns = pgTable(",
+    "export const workflowSteps = pgTable(",
+    'dependsOn: text("depends_on").array().notNull().default([])',
+  ]) {
+    if (!schema.includes(evidence)) {
+      fail(`workflows: durable state schema is missing ${evidence}`);
+    }
+  }
+
+  for (const evidence of [
+    "eq(workflowRuns.ownerUserId, identity.ownerUserId)",
+    "eq(workflowRuns.agentId, identity.agentId)",
+    "pg_advisory_xact_lock",
+    "which must be an earlier step in the same workflow",
+    "eq(workflowSteps.waitUntil, expectedWaitUntil)",
+    "lte(workflowSteps.waitUntil, sql`now()`)",
+    "dueWaitingSteps(limit)",
+  ]) {
+    if (!store.includes(evidence)) {
+      fail(`workflows: durable recovery boundary is missing ${evidence}`);
+    }
+  }
+
+  for (const evidence of [
+    'CREATE TYPE "public"."workflow_run_status"',
+    'CREATE TYPE "public"."workflow_step_status"',
+    'CREATE TABLE "workflow_runs"',
+    'CREATE TABLE "workflow_steps"',
+    "workflow_steps_workflow_key_idx",
+  ]) {
+    if (!migration.includes(evidence)) {
+      fail(`workflows: durable workflow migration is missing ${evidence}`);
+    }
+  }
+}
+
 function checkVersionSources(): void {
   const pkg = json("package.json");
   const version = pkg.version;
@@ -1503,6 +1547,7 @@ checkDesktopCredentialBoundary();
 checkProviderConnectionTest();
 checkFirstCoworkerHandoff();
 checkDurableAgentWake();
+checkDurableWorkflowState();
 checkVersionSources();
 
 if (failures.length > 0) {
