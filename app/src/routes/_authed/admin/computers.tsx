@@ -31,6 +31,7 @@ import { Separator } from "@/components/ui/separator";
 import { useBotNames } from "@/lib/agents/bot-names";
 import { agentListQueryOptions } from "@/lib/agents/queries";
 import {
+  computerSnapshotMutationOptions,
   setComputerStateMutationOptions,
   stopAllComputersMutationOptions,
 } from "@/lib/computers/mutations";
@@ -53,6 +54,10 @@ function ComputersPage() {
   const [busy, setBusy] = useState<string | null>(null);
   /** Reset deletes the browser profile, so it requires confirmation. */
   const [confirming, setConfirming] = useState<string | null>(null);
+  const [snapshotConfirming, setSnapshotConfirming] = useState<{
+    botId: string;
+    action: "snapshot" | "restore";
+  } | null>(null);
   /** Computer whose persistent workspace is open in the file manager. */
   const [filesFor, setFilesFor] = useState<string | null>(null);
   /** Computer whose browser is being watched or driven by the administrator. */
@@ -66,6 +71,9 @@ function ComputersPage() {
   const hostAccess = useQuery(hostAccessQueryOptions());
   const agents = useQuery(agentListQueryOptions());
   const setState = useMutation(setComputerStateMutationOptions(queryClient));
+  const snapshotState = useMutation(
+    computerSnapshotMutationOptions(queryClient),
+  );
   const stopAll = useMutation(stopAllComputersMutationOptions(queryClient));
   const requestGrant = useMutation(
     requestHostFolderGrantMutationOptions(queryClient),
@@ -87,9 +95,11 @@ function ComputersPage() {
     ? "The computers could not be listed."
     : setState.error
       ? setState.error.message
-      : stopAll.error
-        ? stopAll.error.message
-        : null;
+      : snapshotState.error
+        ? snapshotState.error.message
+        : stopAll.error
+          ? stopAll.error.message
+          : null;
   const hostProblem = hostAccess.error
     ? hostAccess.error.message
     : requestGrant.error
@@ -107,6 +117,12 @@ function ComputersPage() {
     setBusy(botId);
     setConfirming(null);
     setState.mutate({ action, botId }, { onSettled: () => setBusy(null) });
+  };
+
+  const runSnapshot = (botId: string, action: "snapshot" | "restore") => {
+    setBusy(botId);
+    setSnapshotConfirming(null);
+    snapshotState.mutate({ action, botId }, { onSettled: () => setBusy(null) });
   };
 
   const showScreen = async (botId: string, running: boolean) => {
@@ -306,6 +322,36 @@ function ComputersPage() {
                       Quarantine
                     </Button>
                     <Button
+                      disabled={computer.running || busy === computer.botId}
+                      onClick={() =>
+                        setSnapshotConfirming({
+                          botId: computer.botId,
+                          action: "snapshot",
+                        })
+                      }
+                      size="sm"
+                      variant="outline"
+                    >
+                      Snapshot
+                    </Button>
+                    <Button
+                      disabled={
+                        computer.running ||
+                        busy === computer.botId ||
+                        computer.snapshotAvailable !== true
+                      }
+                      onClick={() =>
+                        setSnapshotConfirming({
+                          botId: computer.botId,
+                          action: "restore",
+                        })
+                      }
+                      size="sm"
+                      variant="outline"
+                    >
+                      Restore snapshot
+                    </Button>
+                    <Button
                       disabled={busy === computer.botId}
                       onClick={() => setConfirming(computer.botId)}
                       size="sm"
@@ -348,6 +394,62 @@ function ComputersPage() {
           open
         />
       ) : null}
+
+      <Dialog
+        onOpenChange={(open) => {
+          if (!open) setSnapshotConfirming(null);
+        }}
+        open={snapshotConfirming !== null}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {snapshotConfirming?.action === "restore"
+                ? `Restore ${nameFor(snapshotConfirming.botId)} from snapshot?`
+                : snapshotConfirming
+                  ? `Create a clean snapshot for ${nameFor(snapshotConfirming.botId)}?`
+                  : ""}
+            </DialogTitle>
+            <DialogDescription>
+              {snapshotConfirming?.action === "restore"
+                ? "This replaces the current browser profile, logins, workspace and quarantine with the saved clean snapshot. The Computer stays stopped after restore; Wake it when you are ready."
+                : "The Computer must already be stopped. This replaces any older clean snapshot with the current browser profile, workspace and quarantine."}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              onClick={() => setSnapshotConfirming(null)}
+              size="sm"
+              variant="ghost"
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={
+                !snapshotConfirming || busy === snapshotConfirming.botId
+              }
+              onClick={() => {
+                if (snapshotConfirming) {
+                  runSnapshot(
+                    snapshotConfirming.botId,
+                    snapshotConfirming.action,
+                  );
+                }
+              }}
+              size="sm"
+              variant={
+                snapshotConfirming?.action === "restore"
+                  ? "destructive"
+                  : "default"
+              }
+            >
+              {snapshotConfirming?.action === "restore"
+                ? "Restore snapshot"
+                : "Create snapshot"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/*
        * A DIALOG RATHER THAN AN INLINE CONFIRM. Resetting signs a Bot out of everything it has ever
@@ -400,9 +502,11 @@ function ComputersPage() {
         <strong>Quarantine</strong> scans and explicitly exports untrusted
         downloads, <strong>Restart</strong> cycles it without deleting saved
         state, and <strong>Stop</strong> releases runtime resources while
-        keeping its profile and workspace. <strong>Reset</strong> deletes its
-        profile, workspace and quarantine and starts clean. Lifecycle actions
-        are recorded in{" "}
+        keeping its profile and workspace. <strong>Snapshot</strong> saves one
+        clean recovery point while stopped, and{" "}
+        <strong>Restore snapshot</strong> replaces current persistent state from
+        it. <strong>Reset</strong> deletes its profile, workspace and quarantine
+        and starts clean. Lifecycle actions are recorded in{" "}
         <Link className="underline" to="/admin/audit">
           Audit
         </Link>

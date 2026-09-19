@@ -5,12 +5,15 @@ import { environmentFor } from "./environment";
 import {
   ComputerCapacityError,
   ComputerNotAnsweringError,
+  ComputerSnapshotError,
+  createCleanSnapshot,
   DockerUnavailableError,
   ensure,
   listOwned,
   NameHeldError,
   reachable,
   reset,
+  restoreCleanSnapshot,
   stop,
 } from "./docker";
 import { registerEntry } from "./identity";
@@ -166,6 +169,50 @@ app.post("/computers/:botId/stop", async (context) => {
     );
     return context.json({ stopped });
   } catch (error) {
+    if (error instanceof DockerUnavailableError) {
+      return context.json({ error: error.message }, 503);
+    }
+    throw error;
+  }
+});
+
+app.post("/computers/:botId/snapshot", async (context) => {
+  const parsed = resolve(context.req.param("botId"));
+  if (!parsed.ok) return context.json({ error: parsed.reason }, 400);
+  try {
+    const created = await lifecycleLock.run(parsed.names.botId, () =>
+      createCleanSnapshot(parsed.names, image),
+    );
+    return context.json({ snapshot: created });
+  } catch (error) {
+    if (
+      error instanceof NameHeldError ||
+      error instanceof ComputerSnapshotError
+    ) {
+      return context.json({ error: error.message }, 409);
+    }
+    if (error instanceof DockerUnavailableError) {
+      return context.json({ error: error.message }, 503);
+    }
+    throw error;
+  }
+});
+
+app.post("/computers/:botId/restore", async (context) => {
+  const parsed = resolve(context.req.param("botId"));
+  if (!parsed.ok) return context.json({ error: parsed.reason }, 400);
+  try {
+    const restored = await lifecycleLock.run(parsed.names.botId, () =>
+      restoreCleanSnapshot(parsed.names, image),
+    );
+    return context.json({ restored });
+  } catch (error) {
+    if (
+      error instanceof NameHeldError ||
+      error instanceof ComputerSnapshotError
+    ) {
+      return context.json({ error: error.message }, 409);
+    }
     if (error instanceof DockerUnavailableError) {
       return context.json({ error: error.message }, 503);
     }

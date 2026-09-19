@@ -259,6 +259,8 @@ export const auditEventTypes = [
   "computer.restarted",
   "computer.slept",
   "computer.stopped",
+  "computer.snapshot_created",
+  "computer.snapshot_restored",
   "computer.reset",
   // Untrusted downloads stay quarantined through scanning and explicit human approval. These rows
   // record the security decision without copying file contents or scanner output into the trail.

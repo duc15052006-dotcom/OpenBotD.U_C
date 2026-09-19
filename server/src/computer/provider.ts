@@ -17,6 +17,7 @@ export type ComputerLocation = {
   url?: string;
   startedAt?: string;
   egress?: string | null;
+  snapshotAvailable?: boolean;
 };
 
 /** A description of how a provider separates one Bot's computer from another. */
@@ -79,6 +80,9 @@ export interface ComputerProvider {
   stop(botId: string): Promise<{ wasRunning: boolean }>;
   /** Remove the computer state for this Bot if it exists. */
   reset(botId: string): Promise<{ cleared: boolean }>;
+  /** Optional clean snapshot support for providers that own durable per-Bot storage. */
+  snapshot?(botId: string): Promise<{ created: boolean }>;
+  restoreSnapshot?(botId: string): Promise<{ restored: boolean }>;
   /** List the computers that this provider owns. */
   list(): Promise<ComputerLocation[]>;
   /** Prepare provider resources before the first computer request. */

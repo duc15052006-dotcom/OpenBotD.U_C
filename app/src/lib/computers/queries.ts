@@ -56,6 +56,8 @@ export type ComputerProfile = {
   startedAt: string | null;
   /** Absent when the provider does not report egress at all, which is not the same as none. */
   egress?: string | null;
+  /** True when the supervisor reports a complete owned clean snapshot for this Bot. */
+  snapshotAvailable?: boolean;
   /** Present only when a running computer answered the lightweight metrics probe. */
   metrics?: ComputerResourceMetrics;
 };

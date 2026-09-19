@@ -238,6 +238,7 @@ export interface ComputerGateway {
       lifecycle: "running" | "idle" | "sleeping" | "stopped";
       startedAt: string | null;
       egress?: string | null;
+      snapshotAvailable?: boolean;
       metrics?: ComputerResourceMetrics;
     }[];
   }>;
@@ -259,6 +260,14 @@ export interface ComputerGateway {
     alreadyStopped: string[];
     failed: { botId: string; error: string }[];
   }>;
+  createComputerSnapshot(
+    botId: string,
+    actor: ActionActor,
+  ): Promise<{ created: boolean }>;
+  restoreComputerSnapshot(
+    botId: string,
+    actor: ActionActor,
+  ): Promise<{ restored: boolean }>;
   resetComputer(
     botId: string,
     actor: ActionActor,
@@ -869,6 +878,9 @@ export function createComputerGateway(
             }),
             startedAt: computer.startedAt ?? null,
             egress: computer.egress,
+            ...(computer.snapshotAvailable !== undefined
+              ? { snapshotAvailable: computer.snapshotAvailable }
+              : {}),
             ...(metrics[index] ? { metrics: metrics[index] } : {}),
           };
         }),
@@ -1036,6 +1048,40 @@ export function createComputerGateway(
           )
           .map(({ botId, error }) => ({ botId, error })),
       };
+    },
+
+    async createComputerSnapshot(botId: string, actor: ActionActor) {
+      if (!provider.snapshot) {
+        throw new ComputerUnavailableError(
+          "This Computer provider does not support clean snapshots.",
+        );
+      }
+      const result = await provider.snapshot(botId);
+      await writeControlEvent(auditStore, "computer.snapshot_created", {
+        botId,
+        actor,
+        reason:
+          "a clean snapshot of profile, workspace and quarantine was created",
+      });
+      return result;
+    },
+
+    async restoreComputerSnapshot(botId: string, actor: ActionActor) {
+      if (!provider.restoreSnapshot) {
+        throw new ComputerUnavailableError(
+          "This Computer provider does not support clean snapshot restore.",
+        );
+      }
+      const result = await provider.restoreSnapshot(botId);
+      await snapshots.clear(botId);
+      await pageFrames?.clear(botId);
+      await writeControlEvent(auditStore, "computer.snapshot_restored", {
+        botId,
+        actor,
+        reason:
+          "profile, workspace and quarantine were restored from the clean snapshot; Computer remains stopped",
+      });
+      return result;
     },
 
     /**
@@ -1516,6 +1562,8 @@ async function writeControlEvent(
     | "computer.woke"
     | "computer.restarted"
     | "computer.stopped"
+    | "computer.snapshot_created"
+    | "computer.snapshot_restored"
     | "computer.reset"
     | "computer.quarantine_scanned"
     | "computer.quarantine_approved"

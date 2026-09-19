@@ -24,6 +24,7 @@ type SupervisorComputerLocation = {
   /** Where to reach it, decided by the supervisor rather than assembled here. */
   url?: string;
   startedAt?: string;
+  snapshotAvailable?: boolean;
 };
 
 export type SupervisorOptions = {
@@ -124,6 +125,9 @@ export function createDockerSupervisorProvider(
           ? { url: hostForPort(computer.port) }
           : {}),
       ...(computer.startedAt ? { startedAt: computer.startedAt } : {}),
+      ...(computer.snapshotAvailable !== undefined
+        ? { snapshotAvailable: computer.snapshotAvailable }
+        : {}),
     }));
   }
 
@@ -249,6 +253,20 @@ export function createDockerSupervisorProvider(
         `/computers/${encodeURIComponent(botId)}/reset`,
       )) as { reset?: boolean } | null;
       return { cleared: result?.reset === true };
+    },
+
+    async snapshot(botId: string): Promise<{ created: boolean }> {
+      const result = (await call(
+        `/computers/${encodeURIComponent(botId)}/snapshot`,
+      )) as { snapshot?: boolean } | null;
+      return { created: result?.snapshot === true };
+    },
+
+    async restoreSnapshot(botId: string): Promise<{ restored: boolean }> {
+      const result = (await call(
+        `/computers/${encodeURIComponent(botId)}/restore`,
+      )) as { restored?: boolean } | null;
+      return { restored: result?.restored === true };
     },
 
     list,

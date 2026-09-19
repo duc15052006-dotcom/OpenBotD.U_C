@@ -515,6 +515,30 @@ export function createComputerRoutes(
     act(context, (botId, actor) => gateway.stopComputer(botId, actor)),
   );
 
+  routes.post("/:botId/computers/snapshot", (context) =>
+    act(context, (botId, actor, body) => {
+      if (body?.confirm !== "SNAPSHOT" || body?.botId !== botId) {
+        return {
+          error:
+            "Snapshot requires explicit confirmation for this Bot. Confirm SNAPSHOT and the exact Bot id.",
+        };
+      }
+      return gateway.createComputerSnapshot(botId, actor);
+    }),
+  );
+
+  routes.post("/:botId/computers/restore", (context) =>
+    act(context, (botId, actor, body) => {
+      if (body?.confirm !== "RESTORE" || body?.botId !== botId) {
+        return {
+          error:
+            "Restore requires explicit confirmation for this Bot. Confirm RESTORE and the exact Bot id.",
+        };
+      }
+      return gateway.restoreComputerSnapshot(botId, actor);
+    }),
+  );
+
   /**
    * Delete the Computer's persistent profile and workspace. Every login and saved file goes with
    * it, which is the point and also the danger.

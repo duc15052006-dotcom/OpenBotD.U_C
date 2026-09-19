@@ -1,8 +1,7 @@
 /**
  * What a Bot id is allowed to be, and what it becomes.
  *
- * This is a security boundary. Every id that arrives here is turned into a container name, three volume
- * names and a label filter. The supervisor only accepts plain Bot identifiers, so callers cannot
+ * This is a security boundary. Every id that arrives here is turned into a container name, three live volume names plus three snapshot volume names and a label filter. The supervisor only accepts plain Bot identifiers, so callers cannot
  * name an existing container, database volume, API server resource, or host tool through this API.
  *
  * So an id must be a plain identifier and nothing else: letters, digits, hyphen and underscore. No
@@ -50,6 +49,12 @@ export type ComputerNames = {
   profileVolume: string;
   workspaceVolume: string;
   quarantineVolume: string;
+  snapshotProfileVolume: string;
+  snapshotWorkspaceVolume: string;
+  snapshotQuarantineVolume: string;
+  snapshotAltProfileVolume: string;
+  snapshotAltWorkspaceVolume: string;
+  snapshotAltQuarantineVolume: string;
 };
 
 export type NameResult =
@@ -91,6 +96,12 @@ export function namesFor(botId: unknown): NameResult {
       profileVolume: `${NAMESPACE}-profile-${botId}`,
       workspaceVolume: `${NAMESPACE}-workspace-${botId}`,
       quarantineVolume: `${NAMESPACE}-quarantine-${botId}`,
+      snapshotProfileVolume: `${NAMESPACE}-snapshot-profile-${botId}`,
+      snapshotWorkspaceVolume: `${NAMESPACE}-snapshot-workspace-${botId}`,
+      snapshotQuarantineVolume: `${NAMESPACE}-snapshot-quarantine-${botId}`,
+      snapshotAltProfileVolume: `${NAMESPACE}-snapshot-alt-profile-${botId}`,
+      snapshotAltWorkspaceVolume: `${NAMESPACE}-snapshot-alt-workspace-${botId}`,
+      snapshotAltQuarantineVolume: `${NAMESPACE}-snapshot-alt-quarantine-${botId}`,
     },
   };
 }

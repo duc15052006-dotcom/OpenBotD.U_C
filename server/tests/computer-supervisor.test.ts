@@ -228,6 +228,36 @@ describe("Docker supervisor provider", () => {
     expect(await provider.reset("bot")).toEqual({ cleared: true });
   });
 
+  test("snapshot calls the supervisor snapshot verb", async () => {
+    const seen: string[] = [];
+    const provider = createDockerSupervisorProvider({
+      baseUrl: "http://supervisor:4300",
+      fetchImpl: (async (url: string | URL | Request) => {
+        seen.push(new URL(String(url)).pathname);
+        return Response.json({ snapshot: true });
+      }) as unknown as typeof fetch,
+    });
+
+    expect(await provider.snapshot?.("bot")).toEqual({ created: true });
+    expect(seen).toContain("/computers/bot/snapshot");
+  });
+
+  test("restore calls the supervisor restore verb", async () => {
+    const seen: string[] = [];
+    const provider = createDockerSupervisorProvider({
+      baseUrl: "http://supervisor:4300",
+      fetchImpl: (async (url: string | URL | Request) => {
+        seen.push(new URL(String(url)).pathname);
+        return Response.json({ restored: true });
+      }) as unknown as typeof fetch,
+    });
+
+    expect(await provider.restoreSnapshot?.("bot")).toEqual({
+      restored: true,
+    });
+    expect(seen).toContain("/computers/bot/restore");
+  });
+
   test("reset reports false when container was not present to clear", async () => {
     const provider = createDockerSupervisorProvider({
       baseUrl: "http://supervisor:4300",
