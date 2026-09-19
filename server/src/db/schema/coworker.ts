@@ -216,10 +216,7 @@ export const workflowRuns = pgTable(
     updatedAt: updatedAt(),
   },
   (table) => [
-    index("workflow_runs_owner_status_idx").on(
-      table.ownerUserId,
-      table.status,
-    ),
+    index("workflow_runs_owner_status_idx").on(table.ownerUserId, table.status),
     index("workflow_runs_agent_status_idx").on(table.agentId, table.status),
   ],
 );
@@ -265,4 +262,3 @@ export const workflowSteps = pgTable(
     index("workflow_steps_status_wait_idx").on(table.status, table.waitUntil),
   ],
 );
-
