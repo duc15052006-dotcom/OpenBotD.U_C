@@ -248,9 +248,11 @@ describe("legacy restart-policy recovery", () => {
       .docker.getContainer(names.container)
       .inspect();
 
-    await withDocker().docker.getContainer(names.container).update({
-      RestartPolicy: { Name: "unless-stopped" },
-    });
+    await withDocker()
+      .docker.getContainer(names.container)
+      .update({
+        RestartPolicy: { Name: "unless-stopped" },
+      });
     const legacy = await withDocker()
       .docker.getContainer(names.container)
       .inspect();
