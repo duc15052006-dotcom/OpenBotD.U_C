@@ -243,14 +243,16 @@ export async function listTools(): Promise<McpTool[]> {
 
 export const listNeedsCredential = false;
 
-const failure = (message: string): McpCallResult => ({
+type FailedResult = McpCallResult & { isError: true };
+
+const failure = (message: string): FailedResult => ({
   text: message,
   isError: true,
   truncated: false,
 });
 
 function result(value: unknown): McpCallResult {
-  const text = JSON.stringify(value, null, 2);
+  const text = JSON.stringify(value, null, 2) ?? "null";
   if (text.length <= MAX_RESULT_CHARS) {
     return { text, isError: false, truncated: false };
   }
@@ -272,12 +274,12 @@ function stringArg(
 function requiredString(
   args: Record<string, unknown>,
   key: string,
-): string | McpCallResult {
+): string | FailedResult {
   const value = stringArg(args, key);
   return value ?? failure(`A workflow call needs ${key}.`);
 }
 
-function identityOf(connection: Connection): WorkflowIdentity | McpCallResult {
+function identityOf(connection: Connection): WorkflowIdentity | FailedResult {
   const ownerUserId = connection.actorId?.trim();
   if (!ownerUserId) {
     return failure(
@@ -291,7 +293,7 @@ function identityOf(connection: Connection): WorkflowIdentity | McpCallResult {
   return { ownerUserId, agentId };
 }
 
-function isFailure(value: unknown): value is McpCallResult {
+function isFailure(value: unknown): value is FailedResult {
   return (
     typeof value === "object" &&
     value !== null &&
@@ -300,7 +302,7 @@ function isFailure(value: unknown): value is McpCallResult {
   );
 }
 
-function stepsArg(value: unknown): WorkflowStepInput[] | McpCallResult {
+function stepsArg(value: unknown): WorkflowStepInput[] | FailedResult {
   if (!Array.isArray(value)) return failure("A workflow needs a steps array.");
   const steps: WorkflowStepInput[] = [];
   for (const raw of value) {
@@ -438,12 +440,11 @@ export async function callTool(
           "waitUntil must be an absolute future RFC3339 timestamp with Z or a numeric UTC offset.",
         );
       }
+      const provider = stringArg(args, "provider");
       return result(
         await tools.waitStep(identity, id, stepKey, {
           waitUntil,
-          ...(stringArg(args, "provider")
-            ? { provider: stringArg(args, "provider") }
-            : {}),
+          ...(provider ? { provider } : {}),
         }),
       );
     }
@@ -479,11 +480,12 @@ export async function callTool(
           "mediaKind must be image, video, audio, file or text.",
         );
       }
+      const label = stringArg(args, "label");
       const input: WorkflowAssetInput = {
         direction,
         mediaKind,
         ref,
-        ...(stringArg(args, "label") ? { label: stringArg(args, "label") } : {}),
+        ...(label ? { label } : {}),
       };
       return result(await tools.addAsset(identity, id, stepKey, input));
     }
