@@ -920,12 +920,15 @@ fn forbidden_resolved_probe_ip(ip: std::net::IpAddr) -> bool {
                 || (octets[0] == 100 && (64..=127).contains(&octets[1]))
         }
         std::net::IpAddr::V6(ip) => {
+            let first = ip.segments()[0];
             ip.is_unspecified()
-                || ip.is_unicast_link_local()
+                // fe80::/10. Written explicitly because Ipv6Addr::is_unicast_link_local is newer
+                // than this desktop crate's Rust 1.77 MSRV.
+                || (first & 0xffc0) == 0xfe80
                 || ip.is_multicast()
                 // Unique-local IPv6 can expose machine-local infrastructure. Local model servers
                 // remain available over loopback and ordinary private IPv4.
-                || (ip.segments()[0] & 0xfe00) == 0xfc00
+                || (first & 0xfe00) == 0xfc00
         }
     }
 }
