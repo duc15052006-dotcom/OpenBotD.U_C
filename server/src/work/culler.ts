@@ -12,7 +12,8 @@
  * Idleness is read from the audit trail, which is a record of what a Bot did rather than a question
  * put to the thing that did it.
  */
-import { and, inArray, like, sql } from "drizzle-orm";
+import { and, inArray, like, ne, sql } from "drizzle-orm";
+import { recordAuditEvent, type AuditStore } from "../audit";
 import type { ComputerProvider } from "../computer/provider";
 import type { Database } from "../db/client";
 import { auditEvents } from "../db/schema";
@@ -24,6 +25,7 @@ export type CullerOptions = {
   database: Database;
   queue: WorkQueue;
   provider: ComputerProvider;
+  auditStore: AuditStore;
   /** A computer untouched for this long is idle. */
   idleAfterMs: number;
   /** Who this replica is, for the lease. */
@@ -62,7 +64,13 @@ async function lastActedAt(
   const rows = await database
     .select({ bot, last: sql<string>`max(${auditEvents.createdAt})` })
     .from(auditEvents)
-    .where(and(like(auditEvents.eventType, "computer.%"), inArray(bot, botIds)))
+    .where(
+      and(
+        like(auditEvents.eventType, "computer.%"),
+        ne(auditEvents.eventType, "computer.slept"),
+        inArray(bot, botIds),
+      ),
+    )
     .groupBy(bot);
 
   return new Map(
@@ -183,6 +191,21 @@ export async function suspendClaimedComputers(
       }
 
       await options.provider.stop(botId);
+      await recordAuditEvent(options.auditStore, {
+        eventType: "computer.slept",
+        targetType: "computer",
+        targetId: botId,
+        initiator: { kind: "deployment" },
+        payload: {
+          bot: botId,
+          reason: "idle_timeout",
+          idleSince:
+            typeof item.payload.idleSince === "string"
+              ? item.payload.idleSince
+              : null,
+          idleAfterMs: options.idleAfterMs,
+        },
+      });
       await options.queue.finish({
         kind: CULL_KIND,
         key: item.key,

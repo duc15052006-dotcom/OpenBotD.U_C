@@ -888,18 +888,21 @@ describe("the computer gateway", () => {
         {
           botId: "bot-proxied",
           running: true,
+          lifecycle: "running",
           startedAt: "2026-08-20T12:00:00.000Z",
           egress: "198.51.100.42",
         },
         {
           botId: "bot-direct",
           running: false,
+          lifecycle: "stopped",
           startedAt: "2026-08-20T11:00:00.000Z",
           egress: null,
         },
         {
           botId: "bot-unknown-egress",
           running: false,
+          lifecycle: "stopped",
           startedAt: "2026-08-20T10:00:00.000Z",
           egress: undefined,
         },

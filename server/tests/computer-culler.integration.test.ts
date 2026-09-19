@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
+import { createAuditStore } from "../src/audit";
 import { and, eq, like } from "drizzle-orm";
 import type {
   ComputerLocation,
@@ -25,6 +26,7 @@ import { TEST_POOL, testDatabaseUrl } from "./support/database";
  */
 const database = createDatabase(testDatabaseUrl(), TEST_POOL);
 const queue = createWorkQueue(database);
+const auditStore = createAuditStore(database);
 const suite = randomUUID().slice(0, 8);
 const botOf = (name: string) => `cull-${suite}-${name}`;
 
@@ -88,6 +90,7 @@ describe("suspending computers nobody is using", () => {
       database,
       queue,
       provider,
+      auditStore,
       idleAfterMs,
       owner: "replica-1",
       now,
@@ -98,6 +101,17 @@ describe("suspending computers nobody is using", () => {
 
     expect(report.suspended).toEqual([botId]);
     expect(stopped).toEqual([botId]);
+    const slept = await database
+      .select({ eventType: auditEvents.eventType })
+      .from(auditEvents)
+      .where(
+        and(
+          eq(auditEvents.targetId, botId),
+          eq(auditEvents.eventType, "computer.slept"),
+        ),
+      )
+      .limit(1);
+    expect(slept).toEqual([{ eventType: "computer.slept" }]);
   });
 
   test("a computer used a minute ago is left alone", async () => {
@@ -111,6 +125,7 @@ describe("suspending computers nobody is using", () => {
       database,
       queue,
       provider,
+      auditStore,
       idleAfterMs,
       owner: "replica-1",
       now,
@@ -135,6 +150,7 @@ describe("suspending computers nobody is using", () => {
       database,
       queue,
       provider,
+      auditStore,
       idleAfterMs,
       owner: "replica-1",
       now,
@@ -160,6 +176,7 @@ describe("suspending computers nobody is using", () => {
       database,
       queue,
       provider,
+      auditStore,
       idleAfterMs,
       owner: "replica-1",
       now,
@@ -182,6 +199,7 @@ describe("suspending computers nobody is using", () => {
           database,
           queue,
           provider,
+          auditStore,
           idleAfterMs,
           owner: "replica-1",
           now,
@@ -202,7 +220,7 @@ describe("suspending computers nobody is using", () => {
         url: "http://c",
       })),
     );
-    const base = { database, queue, provider, idleAfterMs, now };
+    const base = { database, queue, provider, auditStore, idleAfterMs, now };
 
     await offerIdleComputers({ ...base, owner: "replica-1" });
     const [first, second] = await Promise.all([
@@ -236,6 +254,7 @@ describe("suspending computers nobody is using", () => {
         database,
         queue,
         provider,
+        auditStore,
         idleAfterMs,
         owner: "replica-1",
         now: at(whenIso),

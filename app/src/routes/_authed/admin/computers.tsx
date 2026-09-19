@@ -225,13 +225,7 @@ function ComputersPage() {
                       {nameFor(computer.botId)}
                     </ItemTitle>
                     <ItemDescription>
-                      {computer.running
-                        ? computer.metrics?.browserRunning === false
-                          ? "Computer awake · Browser sleeping after idle"
-                          : computer.metrics?.browserRunning === true
-                            ? `Browser running since ${new Date(computer.startedAt ?? "").toLocaleTimeString()}`
-                            : "Computer running · Browser state unavailable"
-                        : "Computer stopped. Its profile and workspace remain saved."}
+                      {computerLifecycleDescription(computer)}
                       {" · "}
                       {computer.egress === undefined
                         ? "Egress not reported"
@@ -274,7 +268,13 @@ function ComputersPage() {
                         size="sm"
                         variant="outline"
                       >
-                        {busy === computer.botId ? "Starting…" : "Start"}
+                        {busy === computer.botId
+                          ? computer.lifecycle === "sleeping"
+                            ? "Waking…"
+                            : "Starting…"
+                          : computer.lifecycle === "sleeping"
+                            ? "Wake"
+                            : "Start"}
                       </Button>
                     )}
                     <Button
@@ -605,6 +605,34 @@ function summaryFor(
   if (waiting > 0)
     parts.push(`${waiting} pending ${waiting === 1 ? "request" : "requests"}`);
   return parts.length > 0 ? parts.join(" · ") : "No folders approved.";
+}
+
+function computerLifecycleDescription(computer: {
+  running: boolean;
+  lifecycle?: "running" | "idle" | "sleeping" | "stopped";
+  startedAt: string | null;
+  metrics?: { browserRunning?: boolean };
+}): string {
+  const lifecycle =
+    computer.lifecycle ??
+    (computer.running
+      ? computer.metrics?.browserRunning === false
+        ? "idle"
+        : "running"
+      : "stopped");
+
+  switch (lifecycle) {
+    case "idle":
+      return "Idle · Computer awake, browser sleeping until the next task";
+    case "sleeping":
+      return "Sleeping after idle · profile and workspace saved · next task wakes it";
+    case "stopped":
+      return "Stopped manually · profile and workspace remain saved";
+    case "running":
+      return computer.startedAt
+        ? `Running since ${new Date(computer.startedAt).toLocaleTimeString()}`
+        : "Running";
+  }
 }
 
 function formatBytes(bytes: number): string {

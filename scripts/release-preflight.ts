@@ -312,7 +312,9 @@ function checkComputerSandboxBoundary(): void {
   for (const evidence of [
     "KILL ALL COMPUTERS",
     "ComputerScreenDialog",
-    "Browser sleeping",
+    "Idle · Computer awake",
+    "Sleeping after idle",
+    '"Waking…"',
     "Reset",
   ]) {
     if (!computersPage.includes(evidence)) {
@@ -321,6 +323,35 @@ function checkComputerSandboxBoundary(): void {
   }
   if (!computerRoutes.includes('routes.post("/stop-all"')) {
     fail("computer: admin Kill All Computers route is missing");
+  }
+
+  const lifecycle = read("server/src/computer/lifecycle.ts");
+  const culler = read("server/src/work/culler.ts");
+  const gateway = read("server/src/computer/gateway.ts");
+  for (const evidence of [
+    '"running"',
+    '"idle"',
+    '"sleeping"',
+    '"stopped"',
+    'latestEvent === "computer.slept"',
+  ]) {
+    if (!lifecycle.includes(evidence)) {
+      fail(`computer: explicit lifecycle state is missing ${evidence}`);
+    }
+  }
+  for (const evidence of [
+    'eventType: "computer.slept"',
+    'initiator: { kind: "deployment" }',
+    'reason: "idle_timeout"',
+  ]) {
+    if (!culler.includes(evidence)) {
+      fail(`computer: durable idle Sleep provenance is missing ${evidence}`);
+    }
+  }
+  if (!gateway.includes('woke ? "computer.woke" : "computer.started"')) {
+    fail(
+      "computer: waking from automatic Sleep is not distinguished from Start",
+    );
   }
 
   const workspace = read("agent-computer/src/workspace.ts");

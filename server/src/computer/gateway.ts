@@ -36,6 +36,8 @@ export {
   WorkspaceRequestError,
 } from "./client";
 
+import type { ComputerLifecycleReader } from "./lifecycle";
+import { computerLifecycleState } from "./lifecycle";
 import type { PageFrameStore } from "./page-frames";
 import {
   type ActionPolicy,
@@ -126,6 +128,8 @@ export type ComputerGatewayOptions = {
    * this deployment makes in as many words.
    */
   pageFrames?: PageFrameStore;
+  /** Durable provenance that distinguishes automatic Sleep from an explicit Stop. */
+  lifecycleReader?: ComputerLifecycleReader;
 };
 
 export interface ComputerGateway {
@@ -231,6 +235,7 @@ export interface ComputerGateway {
     computers: {
       botId: string;
       running: boolean;
+      lifecycle: "running" | "idle" | "sleeping" | "stopped";
       startedAt: string | null;
       egress?: string | null;
       metrics?: ComputerResourceMetrics;
@@ -837,15 +842,36 @@ export function createComputerGateway(
       };
 
       const metrics = await Promise.all(computers.map(metricsFor));
+      let lifecycleEvents = new Map();
+      if (options.lifecycleReader) {
+        try {
+          lifecycleEvents = await options.lifecycleReader.latest(
+            computers
+              .filter((computer) => computer.status !== "running")
+              .map((computer) => computer.botId),
+          );
+        } catch {
+          // Lifecycle provenance is presentation metadata. A temporary audit-read failure must not
+          // hide the fleet; a stopped Computer falls back to "stopped" until the next refresh.
+        }
+      }
       return {
         isolation: provider.isolation,
-        computers: computers.map((computer, index) => ({
-          botId: computer.botId,
-          running: computer.status === "running",
-          startedAt: computer.startedAt ?? null,
-          egress: computer.egress,
-          ...(metrics[index] ? { metrics: metrics[index] } : {}),
-        })),
+        computers: computers.map((computer, index) => {
+          const running = computer.status === "running";
+          return {
+            botId: computer.botId,
+            running,
+            lifecycle: computerLifecycleState({
+              running,
+              browserRunning: metrics[index]?.browserRunning,
+              latestEvent: lifecycleEvents.get(computer.botId),
+            }),
+            startedAt: computer.startedAt ?? null,
+            egress: computer.egress,
+            ...(metrics[index] ? { metrics: metrics[index] } : {}),
+          };
+        }),
       };
     },
 
@@ -862,18 +888,32 @@ export function createComputerGateway(
         botId,
         state: "unreachable" as const,
       }));
+      const priorLifecycle =
+        before.state === "ready" || !options.lifecycleReader
+          ? undefined
+          : await options.lifecycleReader
+              .latest([botId])
+              .then((events) => events.get(botId))
+              .catch(() => undefined);
       const url = await locate(botId);
       const started = before.state !== "ready";
       // Refs belong to the browser run that produced them. Waking a stopped computer may replace
       // that run, so never let an old accessibility ref survive into the new process.
       if (started) await snapshots.clear(botId);
-      await writeControlEvent(auditStore, "computer.started", {
-        botId,
-        actor,
-        reason: started
-          ? "the computer was started or resumed"
-          : "the computer was already running",
-      });
+      const woke = started && priorLifecycle === "computer.slept";
+      await writeControlEvent(
+        auditStore,
+        woke ? "computer.woke" : "computer.started",
+        {
+          botId,
+          actor,
+          reason: woke
+            ? "the computer woke from automatic idle sleep"
+            : started
+              ? "the computer was started or resumed"
+              : "the computer was already running",
+        },
+      );
       return { started, url };
     },
 
@@ -1449,6 +1489,7 @@ async function writeControlEvent(
     | "computer.secret_requested"
     | "computer.secret_supplied"
     | "computer.started"
+    | "computer.woke"
     | "computer.restarted"
     | "computer.stopped"
     | "computer.reset"
