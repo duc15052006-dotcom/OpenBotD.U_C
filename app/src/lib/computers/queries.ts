@@ -46,9 +46,13 @@ export type QuarantineList = {
   downloads: QuarantineEntry[];
 };
 
+export type ComputerLifecycle = "running" | "idle" | "sleeping" | "stopped";
+
 export type ComputerProfile = {
   botId: string;
   running: boolean;
+  /** Optional during rolling upgrades; derive from running/metrics when an older server omits it. */
+  lifecycle?: ComputerLifecycle;
   startedAt: string | null;
   /** Absent when the provider does not report egress at all, which is not the same as none. */
   egress?: string | null;
