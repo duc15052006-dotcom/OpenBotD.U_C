@@ -13,14 +13,30 @@ that is what the conversation is for. The same Bot can list what is standing, ch
 one, all by being asked.
 
 **The prerequisite:** a Bot can only do this once an administrator has granted it to. Routines is a
-catalogue entry like any other — `create_routine`, `update_routine` and `delete_routine` are its write
-tools — and enabling the entry does not hand any Bot access to it. Each tool is granted per Bot at
+catalogue entry like any other — `create_routine`, `schedule_wake`, `update_routine` and
+`delete_routine` are its write tools — and enabling the entry does not hand any Bot access to it. Each tool is granted per Bot at
 `/admin/plugins/routines`, exactly as a Google Drive or Notion tool would be. An administrator decides
 which Bots may schedule future work at all, before deciding what that work is; a Bot with none of the
 three tools can still be asked and will say it cannot.
 
 The routine belongs to whoever asked for it and runs as them. See
 [Who a routine runs as](#who-a-routine-runs-as).
+
+## One-time wake-ups
+
+`schedule_wake` is the non-recurring form: “continue this render check at 14:30” persists one exact
+future RFC3339 timestamp instead of a cron loop. It uses the same PostgreSQL work queue, leases and
+headless turn path as routines, so there is no second scheduler and no busy-waiting process to keep
+alive while an external website is generating.
+
+One-time wakes deliberately differ from recurring missed-window policy. If the app, worker or machine
+is down past the requested time, the wake remains due and runs when the worker comes back; late is
+better than silently losing the continuation. The consumer atomically marks that exact wake consumed
+before dispatch. A dispatch failure can therefore retry the already-consumed queue item without
+re-arming the schedule, while a wake switched off or deleted before consumption does not run.
+
+The instruction is still one firing’s work, not a promise to wait. Browser/login/MFA/CAPTCHA and
+per-Bot permission boundaries are unchanged when the wake resumes.
 
 ## The 15-minute floor and the 20-enabled cap
 
@@ -46,9 +62,9 @@ runs. The fatigue rule answers a different question: is this routine worth firin
 token that expired in March fails cleanly, once, every single night, and no number of retries of any
 one night's attempt will fix that — only switching it off, and saying so, does.
 
-## Missed windows are skipped, not replayed
+## Recurring missed windows are skipped, not replayed
 
-A routine's next run is a stamp, not a queue. If nothing was watching the clock — a worker that was
+A recurring routine's next run is a stamp, not a queue. If nothing was watching the clock — a worker that was
 never started, or one that was down for a month — a routine's stamp falls behind, and the deployment
 does not owe it every occurrence it missed: catching up is a silent drain, not a burst. A deployment
 whose worker comes back after a quiet month drains that backlog by advancing the stamp forward without
