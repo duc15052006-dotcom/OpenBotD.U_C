@@ -12,13 +12,10 @@ export const COMPUTER_LIFECYCLE_EVENTS = [
   "computer.reset",
 ] as const;
 
-export type ComputerLifecycleEvent =
-  (typeof COMPUTER_LIFECYCLE_EVENTS)[number];
+export type ComputerLifecycleEvent = (typeof COMPUTER_LIFECYCLE_EVENTS)[number];
 
 export type ComputerLifecycleReader = {
-  latest(
-    botIds: string[],
-  ): Promise<Map<string, ComputerLifecycleEvent>>;
+  latest(botIds: string[]): Promise<Map<string, ComputerLifecycleEvent>>;
 };
 
 /**
