@@ -519,6 +519,19 @@ function checkComputerSandboxBoundary(): void {
     fail("computer: gateway does not prefer atomic provider restart");
   }
 
+  for (const evidence of [
+    "Promise<LocatedAction>",
+    "const located = ref ? await locateForAction(botId) : undefined;",
+    'if (ref && located && "error" in located)',
+    "throw located.error;",
+  ]) {
+    if (!gateway.includes(evidence)) {
+      fail(
+        `computer: cited actions can lose their checked Computer run through ${evidence}`,
+      );
+    }
+  }
+
   const supervisorDocker = read("supervisor/src/docker.ts");
   const listOwnedSource =
     supervisorDocker

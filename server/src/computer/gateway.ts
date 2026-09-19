@@ -377,19 +377,23 @@ export function createComputerGateway(
     );
   }
 
+  type LocatedAction =
+    | { address: string; error?: never }
+    | { address?: never; error: unknown };
+
   /**
-   * This action's own `/ensure`, or nothing when it cannot be made.
+   * This action's own `/ensure`, including the failure when it cannot be made.
    *
-   * A computer that cannot be located is not a verdict this may reach on its own. The action still
-   * has to be decided and recorded, and the attempt failing is what writes the failure row beside the
-   * decision; throwing here would take the action off the trail entirely. So a failure answers
-   * "unknown", which leaves the generation check where it was and leaves the address to the attempt.
+   * A locate failure is not a policy verdict, so the action still gets its decision and failure audit
+   * rows. But a cited action must never hide that failure as `undefined` and then let `post` locate
+   * again: the second locate can name a different Computer run from the one the snapshot check tried
+   * to bind. Carry the first failure forward so the audited attempt fails without a second lookup.
    */
-  async function locateForAction(botId: string): Promise<string | undefined> {
+  async function locateForAction(botId: string): Promise<LocatedAction> {
     try {
-      return await locate(botId);
-    } catch {
-      return undefined;
+      return { address: await locate(botId) };
+    } catch (error) {
+      return { error };
     }
   }
 
@@ -543,9 +547,14 @@ export function createComputerGateway(
      * the policy has even seen it. The address that comes back is the one the attempt then uses, so
      * this costs no extra call for the actions that do need it.
      */
-    const address = ref ? await locateForAction(botId) : undefined;
-    const { session } = ref ? await sessionOf(botId) : { session: undefined };
-    const element = resolve(stored, ref, snapshotId, session);
+    const located = ref ? await locateForAction(botId) : undefined;
+    const address = located?.address;
+    const { session } =
+      ref && address ? await sessionOf(botId) : { session: undefined };
+    const element =
+      ref && located && "error" in located
+        ? undefined
+        : resolve(stored, ref, snapshotId, session);
     // For a navigation the relevant page is the one being opened, not the one already loaded. Using
     // the stored URL would mean `page.host == "..."` could never match the destination, which is the
     // only thing a rule about navigation would ever want to say.
@@ -651,6 +660,9 @@ export function createComputerGateway(
        * was written would be a way to act without appearing on the trail. The failure row beside it is
        * what stops the trail claiming a permitted action was carried out when nothing was sent.
        */
+      if (ref && located && "error" in located) {
+        throw located.error;
+      }
       if (ref && stored && !element) {
         throw new StaleSnapshotError(
           `${ref} is not on the page this computer is showing, so nothing can be checked against it before acting. Take a fresh snapshot and use the refs it returns.`,
