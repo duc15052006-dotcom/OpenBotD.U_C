@@ -1455,7 +1455,7 @@ function checkDurableAgentWake(): void {
   for (const evidence of [
     'routine.scheduleKind === "once" || lateBy <= graceMs',
     "consumeOneShot(",
-    'scheduleKind: routine.scheduleKind',
+    "scheduleKind: routine.scheduleKind",
   ]) {
     if (!sweep.includes(evidence)) {
       fail(`routines: one-shot wake/recovery invariant is missing ${evidence}`);
@@ -1463,7 +1463,7 @@ function checkDurableAgentWake(): void {
   }
 
   for (const evidence of [
-    'CREATE TYPE "public"."routine_schedule_kind" AS ENUM(\'recurring\', \'once\')',
+    "CREATE TYPE \"public\".\"routine_schedule_kind\" AS ENUM('recurring', 'once')",
     'ADD COLUMN "schedule_kind" routine_schedule_kind',
   ]) {
     if (!migration.includes(evidence)) {
