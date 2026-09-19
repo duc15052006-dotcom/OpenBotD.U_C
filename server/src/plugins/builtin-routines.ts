@@ -149,11 +149,13 @@ const TOOLS: readonly McpTool[] = Object.freeze([
         },
         runAt: {
           type: "string",
-          description: "Absolute future RFC3339 timestamp including Z or a numeric UTC offset.",
+          description:
+            "Absolute future RFC3339 timestamp including Z or a numeric UTC offset.",
         },
         channelId: {
           type: "string",
-          description: "Where the result is posted; omit only when there is one shared channel.",
+          description:
+            "Where the result is posted; omit only when there is one shared channel.",
         },
       },
       required: ["instruction", "runAt"],
