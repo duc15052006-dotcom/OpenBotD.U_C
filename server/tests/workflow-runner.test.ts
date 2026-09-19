@@ -26,7 +26,10 @@ function step(status: WorkflowStep["status"] = "running"): WorkflowStep {
   };
 }
 
-function plan(status: WorkflowPlan["status"] = "active", current = step()): WorkflowPlan {
+function plan(
+  status: WorkflowPlan["status"] = "active",
+  current = step(),
+): WorkflowPlan {
   return {
     id: "workflow-1",
     ownerUserId: "user-1",
@@ -51,11 +54,12 @@ const INPUT = {
 
 function channelStore(overrides: Partial<ChannelStore> = {}): ChannelStore {
   return {
-    get: async () => ({
-      id: "channel-1",
-      name: "Video",
-      threadId: "thread-1",
-    }) as never,
+    get: async () =>
+      ({
+        id: "channel-1",
+        name: "Video",
+        threadId: "thread-1",
+      }) as never,
     recordActivity: async () => undefined,
     ...overrides,
   } as ChannelStore;
@@ -73,7 +77,9 @@ describe("workflow autonomous continuation", () => {
       channelStore: channelStore(),
       runTurn: async (input) => {
         turnCalls.push(input);
-        return { replyText: "Still generating, so I scheduled the next check." };
+        return {
+          replyText: "Still generating, so I scheduled the next check.",
+        };
       },
     });
 
@@ -87,7 +93,9 @@ describe("workflow autonomous continuation", () => {
       threadId: "thread-1",
     });
     expect(turnCalls[0]?.instruction).toContain("Attempt: 2");
-    expect(turnCalls[0]?.instruction).toContain("Before repeating any external submission");
+    expect(turnCalls[0]?.instruction).toContain(
+      "Before repeating any external submission",
+    );
     expect(turnCalls[0]?.instruction).toContain("checkpoint the step durably");
   });
 
