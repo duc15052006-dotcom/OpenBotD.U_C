@@ -979,8 +979,9 @@ export function createComputerGateway(
     /**
      * Restart a computer while preserving its saved profile.
      *
-     * Stop first, then use the provider's normal ensure path to bring it back. This deliberately does
-     * not call reset: restart must never sign the Bot out or erase its workspace/browser profile.
+     * A supervisor-backed provider performs Stop -> Ensure under one per-Bot lock. Providers that do
+     * not expose that primitive retain the legacy stop-then-locate fallback. Neither path calls reset:
+     * restart must never sign the Bot out or erase its workspace/browser profile.
      */
     async restartComputer(botId: string, actor: ActionActor) {
       const resourceProfile = await options.resourceProfile?.(botId);
