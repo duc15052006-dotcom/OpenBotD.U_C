@@ -272,9 +272,9 @@ describe("one-time wake lifecycle", () => {
       instruction: "Continue.",
       runAt: new Date(Date.now() + 60 * 60_000),
     });
-    await expect(store.update(owner.id, wake.id, { cron: DAILY })).rejects.toThrow(
-      /exact time/,
-    );
+    await expect(
+      store.update(owner.id, wake.id, { cron: DAILY }),
+    ).rejects.toThrow(/exact time/);
   });
 
   test("consume is compare-and-set and records the exact committed wake", async () => {
@@ -1264,9 +1264,10 @@ describe("the sweep's by-id read of a routine before firing", () => {
   test("an existing enabled routine reads back enabled", async () => {
     const { routine } = await makeRoutine();
 
-    expect(await store.routineForFiring(routine.id)).toEqual({
+    expect(await store.routineForFiring(routine.id)).toMatchObject({
       id: routine.id,
       enabled: true,
+      scheduleKind: "recurring",
     });
   });
 
@@ -1274,9 +1275,10 @@ describe("the sweep's by-id read of a routine before firing", () => {
     const { owner, routine } = await makeRoutine();
     await store.setEnabled(owner.id, routine.id, false);
 
-    expect(await store.routineForFiring(routine.id)).toEqual({
+    expect(await store.routineForFiring(routine.id)).toMatchObject({
       id: routine.id,
       enabled: false,
+      scheduleKind: "recurring",
     });
   });
 
