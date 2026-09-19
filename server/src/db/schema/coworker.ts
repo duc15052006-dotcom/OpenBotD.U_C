@@ -276,7 +276,6 @@ export const workflowSteps = pgTable(
   ],
 );
 
-
 /**
  * Durable metadata for files/media used or produced by one workflow step.
  *
