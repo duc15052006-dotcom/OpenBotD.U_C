@@ -365,6 +365,7 @@ async function inspectOwned(names: ComputerNames): Promise<{
   token?: string;
   memoryBytes?: number;
   nanoCpus?: number;
+  restartPolicyName?: string;
 } | null> {
   try {
     const info = await docker.getContainer(names.container).inspect();
@@ -386,6 +387,9 @@ async function inspectOwned(names: ComputerNames): Promise<{
         : {}),
       ...(typeof info.HostConfig?.NanoCpus === "number"
         ? { nanoCpus: info.HostConfig.NanoCpus }
+        : {}),
+      ...(info.HostConfig?.RestartPolicy?.Name
+        ? { restartPolicyName: info.HostConfig.RestartPolicy.Name }
         : {}),
       /*
        * When this run of the container began, which is what tells two runs apart.
@@ -956,7 +960,11 @@ function hostConfig(names: ComputerNames, options: EnsureOptions) {
             [COMPUTER_PORT]: [{ HostIp: "127.0.0.1", HostPort: "" }],
           },
         }),
-    RestartPolicy: { Name: "unless-stopped" },
+    // OpenBot, not Docker, owns whether an Agent Computer is active. If the desktop app or host
+    // crashes, Docker must not resurrect a browser holding a person's logged-in session before
+    // OpenBot has reopened and explicitly ensured that Bot. Persistent volumes keep profile/workspace
+    // state; the next task or Wake starts the same Computer again through the normal lifecycle gate.
+    RestartPolicy: { Name: "no" },
     ...(options.network ? { NetworkMode: options.network } : {}),
     ...(options.runtime ? { Runtime: options.runtime } : {}),
 
@@ -1025,7 +1033,8 @@ export async function ensure(
         ((options.memoryBytes !== undefined &&
           existing.memoryBytes !== options.memoryBytes) ||
           (options.nanoCpus !== undefined &&
-            existing.nanoCpus !== options.nanoCpus))
+            existing.nanoCpus !== options.nanoCpus) ||
+          existing.restartPolicyName !== "no")
       ) {
         try {
           await docker.getContainer(names.container).update({
@@ -1035,6 +1044,7 @@ export async function ensure(
             ...(options.nanoCpus !== undefined
               ? { NanoCPUs: options.nanoCpus }
               : {}),
+            RestartPolicy: { Name: "no" },
           });
           existing = await inspectOwned(names);
           if (
@@ -1042,15 +1052,16 @@ export async function ensure(
             (options.memoryBytes !== undefined &&
               existing.memoryBytes !== options.memoryBytes) ||
             (options.nanoCpus !== undefined &&
-              existing.nanoCpus !== options.nanoCpus)
+              existing.nanoCpus !== options.nanoCpus) ||
+            existing.restartPolicyName !== "no"
           ) {
             throw new Error(
-              "Docker did not report the exact requested CPU/RAM limits after update.",
+              "Docker did not report the exact requested CPU/RAM limits and OpenBot-owned restart policy after update.",
             );
           }
         } catch (error) {
           throw new DockerUnavailableError(
-            `The resource profile for ${names.botId} could not be applied: ${String(error)}`,
+            `The resource profile or OpenBot-owned restart policy for ${names.botId} could not be applied: ${String(error)}`,
           );
         }
       }
