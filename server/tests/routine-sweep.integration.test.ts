@@ -315,6 +315,7 @@ describe("offering the firings that are due", () => {
     expect(firing?.payload).toEqual({
       routineId: routine.id,
       scheduledFor: "2001-01-01T09:25:00.000Z",
+      scheduleKind: "recurring",
     });
   });
 
