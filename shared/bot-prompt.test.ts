@@ -124,8 +124,20 @@ describe("AUTONOMOUS_WORKFLOW_GUIDANCE", () => {
     expect(AUTONOMOUS_WORKFLOW_GUIDANCE).toContain(
       "Never claim you will automatically wake, monitor in the background or receive a completion event",
     );
+  });
+
+  test("pins the NOTE 21-2 planning budget without pretending usage metering exists", () => {
+    for (const evidence of [
+      "1,000–5,000",
+      "15,000–40,000",
+      "50,000–100,000",
+      "1,000,000",
+      "when usage accounting is available",
+    ]) {
+      expect(AUTONOMOUS_WORKFLOW_GUIDANCE).toContain(evidence);
+    }
     expect(AUTONOMOUS_WORKFLOW_GUIDANCE).toContain(
-      "treat that stated limit as a hard workload constraint",
+      "stop and ask how they want to proceed rather than silently overspending",
     );
   });
 });
