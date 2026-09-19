@@ -1461,7 +1461,9 @@ function checkDurableAgentWake(): void {
     "nextRunFor(input.cron, timezone, new Date())",
   ]) {
     if (store.includes(forbidden)) {
-      fail(`routines: scheduling depends on the server clock through ${forbidden}`);
+      fail(
+        `routines: scheduling depends on the server clock through ${forbidden}`,
+      );
     }
   }
 
