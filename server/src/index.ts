@@ -110,6 +110,7 @@ import { grantedSkills, grantedTools, REFUSAL_MARKER } from "./plugins/tools";
 import { createTurnRunner } from "./routines/run-turn";
 import { createRoutineRunner } from "./routines/runner";
 import { createRoutineStore } from "./routines/store";
+import { sweepReadyWorkflowSteps } from "./workflows/ready";
 import { createWorkflowRunner } from "./workflows/runner";
 import { createWorkflowStore } from "./workflows/store";
 import { sweepWorkflowWaits } from "./workflows/wake";
@@ -1295,6 +1296,40 @@ if (config.handoff.maxDepth > 0 && config.handoff.maxPerRun > 0) {
   );
   repeatAfterEach(kick, 2_000);
 }
+
+/*
+ * Durable workflow ready-step execution.
+ *
+ * Creating a workflow and promoting dependencies only changes durable state. This bridge turns
+ * exact ready versions into headless Agent turns through the same shared work_items queue used by
+ * other background work. The ready timestamp and attempt form a compare-and-set token, so a manual
+ * start, retry, pause/resume re-arm or newer dependency transition makes older queue work harmless.
+ */
+const workflowReady = {
+  store: workflowStore,
+  queue: createWorkQueue(database),
+  owner: workOwner("workflow-ready"),
+  dispatch: (input: Parameters<typeof workflowRunner.run>[0]) =>
+    workflowRunner.run(input),
+};
+
+repeatAfterEach(async () => {
+  try {
+    const report = await sweepReadyWorkflowSteps(workflowReady);
+    if (
+      report.queued > 0 ||
+      report.started.length > 0 ||
+      report.skipped.length > 0
+    ) {
+      console.info(JSON.stringify({ type: "workflow-ready", ...report }));
+    }
+  } catch (error) {
+    console.warn(
+      "[workflows] ready steps could not be dispatched:",
+      error instanceof Error ? error.message : error,
+    );
+  }
+}, 5_000);
 
 /*
  * Durable workflow waits.
