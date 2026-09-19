@@ -339,6 +339,9 @@ const computerGateway = computerProvider
       // sentence on that button already promised.
       pageFrames: pageFrameStore,
       lifecycleReader: createComputerLifecycleReader(database),
+      // Resolve only the persisted bounded preset; callers never provide raw CPU/RAM numbers.
+      resourceProfile: (botId) =>
+        agentProfileStore.computerResourceProfile(botId),
       allowPrivateHosts: config.computer?.allowPrivateHosts,
       token: config.computer?.token,
     })
