@@ -1480,8 +1480,8 @@ function checkDurableWorkflowState(): void {
   for (const evidence of [
     'workflowRunStatus = pgEnum("workflow_run_status"',
     'workflowStepStatus = pgEnum("workflow_step_status"',
-    'export const workflowRuns = pgTable(',
-    'export const workflowSteps = pgTable(',
+    "export const workflowRuns = pgTable(",
+    "export const workflowSteps = pgTable(",
     'dependsOn: text("depends_on").array().notNull().default([])',
   ]) {
     if (!schema.includes(evidence)) {
@@ -1508,7 +1508,7 @@ function checkDurableWorkflowState(): void {
     'CREATE TYPE "public"."workflow_step_status"',
     'CREATE TABLE "workflow_runs"',
     'CREATE TABLE "workflow_steps"',
-    'workflow_steps_workflow_key_idx',
+    "workflow_steps_workflow_key_idx",
   ]) {
     if (!migration.includes(evidence)) {
       fail(`workflows: durable workflow migration is missing ${evidence}`);
