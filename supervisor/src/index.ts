@@ -190,6 +190,72 @@ app.post("/computers/:botId/ensure", async (context) => {
   }
 });
 
+app.post("/computers/:botId/restart", async (context) => {
+  const parsed = resolve(context.req.param("botId"));
+  if (!parsed.ok) return context.json({ error: parsed.reason }, 400);
+
+  const body = (await context.req.json().catch(() => ({}))) as {
+    resourceProfile?: unknown;
+  };
+  const requestedProfile =
+    body.resourceProfile === undefined
+      ? null
+      : parseComputerResourceProfile(body.resourceProfile);
+  if (body.resourceProfile !== undefined && !requestedProfile) {
+    return context.json(
+      { error: "Resource profile must be light, normal, or heavy." },
+      400,
+    );
+  }
+  const profileResources = requestedProfile
+    ? RESOURCE_PROFILES[requestedProfile]
+    : null;
+
+  try {
+    const identity = await registerEntry(parsed.names);
+    const state = await lifecycleLock.run(parsed.names.botId, async () => {
+      // One critical section for the whole cycle. A Reset/Stop/Ensure for this Bot cannot slip
+      // between these two calls and accidentally erase or supersede the state Restart preserves.
+      await stop(parsed.names);
+      return ensure(parsed.names, {
+        image,
+        environment: environmentFor(parsed.names.botId),
+        ...(network ? { network } : {}),
+        ...(runtime ? { runtime } : {}),
+        ...(profileResources
+          ? { memoryBytes: profileResources.memoryBytes }
+          : memoryBytes
+            ? { memoryBytes }
+            : {}),
+        ...(profileResources
+          ? { nanoCpus: profileResources.nanoCpus }
+          : nanoCpus
+            ? { nanoCpus }
+            : {}),
+        ...(maxActiveComputers ? { maxActiveComputers } : {}),
+        ...(spireSocketVolume ? { spireSocketVolume } : {}),
+      });
+    });
+    return context.json({
+      ...state,
+      ...(identity.registered
+        ? { spiffeId: identity.spiffeId }
+        : { identity: identity.reason }),
+    });
+  } catch (error) {
+    if (error instanceof NameHeldError || error instanceof ComputerCapacityError) {
+      return context.json({ error: error.message }, 409);
+    }
+    if (
+      error instanceof DockerUnavailableError ||
+      error instanceof ComputerNotAnsweringError
+    ) {
+      return context.json({ error: error.message }, 503);
+    }
+    throw error;
+  }
+});
+
 app.post("/computers/:botId/stop", async (context) => {
   const parsed = resolve(context.req.param("botId"));
   if (!parsed.ok) return context.json({ error: parsed.reason }, 400);
