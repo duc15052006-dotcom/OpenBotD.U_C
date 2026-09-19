@@ -8,6 +8,7 @@
 import type { RunAgentInput } from "@ag-ui/core";
 import type OpenAI from "openai";
 import {
+  AUTONOMOUS_WORKFLOW_GUIDANCE,
   COMPUTER_GUIDANCE,
   NO_ANSWER_CAME,
   ROUTINE_GUIDANCE,
@@ -21,7 +22,7 @@ export function toProviderMessages(
   input: RunAgentInput,
 ): OpenAI.Chat.ChatCompletionMessageParam[] {
   const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
-    { role: "system", content: `${COMPUTER_GUIDANCE}\n\n${ROUTINE_GUIDANCE}` },
+    { role: "system", content: `${COMPUTER_GUIDANCE}\n\n${ROUTINE_GUIDANCE}\n\n${AUTONOMOUS_WORKFLOW_GUIDANCE}` },
     // AG-UI application context is separate from history. The A2UI catalog and tool instructions
     // arrive here; omitting them leaves the model guessing component names and action schemas.
     ...(input.context ?? []).map(({ description, value }) => ({
