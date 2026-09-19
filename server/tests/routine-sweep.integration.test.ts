@@ -680,6 +680,77 @@ describe("consuming a claimed firing", () => {
     expect(again?.attempts).toBe(2);
   });
 
+  test("a one-time wake survives a long downtime and is consumed before dispatch", async () => {
+    const owner = await createUser();
+    const agentId = await createAgent(owner);
+    const channel = await createChannel(owner, [agentId]);
+    const wake = await store.createOneShot({
+      ownerUserId: owner.id,
+      agentId,
+      channelId: channel.id,
+      instruction: "Check the render and continue.",
+      runAt: new Date(Date.now() + 60 * 60_000),
+    });
+    const scheduledFor = await makeDueAt(
+      wake.id,
+      new Date("2001-01-01T09:25:00Z"),
+    );
+
+    const offered = await offerDueRoutines(
+      sweepOptions({ now: at("2001-02-01T09:25:00Z") }),
+    );
+    expect(offered.offered).toContain(wake.id);
+
+    const report = await dispatchClaimedRoutines(
+      sweepOptions({ now: at("2001-02-01T09:26:00Z") }),
+    );
+    expect(report.fired).toEqual([wake.id]);
+    expect(report.skipped).toEqual([]);
+    expect(dispatched).toHaveLength(1);
+
+    const row = await readRoutine(wake.id);
+    expect(row?.enabled).toBe(false);
+    expect(row?.scheduleKind).toBe("once");
+    expect(row?.lastRunAt?.toISOString()).toBe(scheduledFor.toISOString());
+  });
+
+  test("a consumed one-time wake retries a failed dispatch without re-arming its schedule", async () => {
+    const owner = await createUser();
+    const agentId = await createAgent(owner);
+    const channel = await createChannel(owner, [agentId]);
+    const wake = await store.createOneShot({
+      ownerUserId: owner.id,
+      agentId,
+      channelId: channel.id,
+      instruction: "Continue after the external wait.",
+      runAt: new Date(Date.now() + 60 * 60_000),
+    });
+    await makeDueAt(wake.id, new Date("2001-01-01T09:25:00Z"));
+    await offerDueRoutines(sweepOptions({ now: at("2001-01-01T09:26:00Z") }));
+
+    const first = await dispatchClaimedRoutines(
+      sweepOptions({
+        now: at("2001-01-01T09:26:00Z"),
+        dispatch: async () => {
+          throw new Error("temporary 503");
+        },
+      }),
+    );
+    expect(first.fired).toEqual([]);
+    expect(first.skipped[0]?.reason).toContain("503");
+    expect((await readRoutine(wake.id))?.enabled).toBe(false);
+
+    const [queued] = await firingsFor(wake.id);
+    await backdate(queued?.key as string, {
+      runAt: new Date("2001-01-01T09:27:00Z"),
+    });
+    const second = await dispatchClaimedRoutines(
+      sweepOptions({ now: at("2001-01-01T09:27:00Z") }),
+    );
+    expect(second.fired).toEqual([wake.id]);
+    expect(dispatched).toHaveLength(1);
+    expect((await readRoutine(wake.id))?.enabled).toBe(false);
+  });
   test("a routine switched off between the offer and the firing is finished without dispatching", async () => {
     const { owner, routine } = await makeRoutine();
     await offerFiring(
