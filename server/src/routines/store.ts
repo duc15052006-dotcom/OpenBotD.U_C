@@ -191,7 +191,9 @@ export type RoutineStore = {
   /** Enabled routines whose next run has arrived, oldest due first. */
   dueRoutines(
     limit: number,
-  ): Promise<{ id: string; nextRunAt: Date; scheduleKind: RoutineScheduleKind }[]>;
+  ): Promise<
+    { id: string; nextRunAt: Date; scheduleKind: RoutineScheduleKind }[]
+  >;
   /**
    * Compare-and-set the clock forward. False means another sweep got there first.
    *
@@ -315,7 +317,9 @@ function nextRunFor(cron: string, timezone: string, after: Date): Date {
 
 function validOneShotAt(runAt: Date): Date {
   if (!(runAt instanceof Date) || Number.isNaN(runAt.getTime())) {
-    throw new RoutineRefusedError("A one-time wake needs a valid date and time.");
+    throw new RoutineRefusedError(
+      "A one-time wake needs a valid date and time.",
+    );
   }
   if (runAt.getTime() <= Date.now()) {
     throw new RoutineRefusedError("A one-time wake has to be in the future.");
@@ -536,7 +540,11 @@ export function createRoutineStore(database: Database): RoutineStore {
      * refused rather than silently turning completed work back into scheduled work.
      */
     if (existing.scheduleKind === "recurring") {
-      if (patch.cron !== undefined || patch.timezone !== undefined || enabling) {
+      if (
+        patch.cron !== undefined ||
+        patch.timezone !== undefined ||
+        enabling
+      ) {
         values.nextRunAt = nextRunFor(cron, timezone, new Date());
       }
     } else if (enabling && existing.nextRunAt.getTime() <= Date.now()) {
