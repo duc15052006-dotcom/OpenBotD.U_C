@@ -1060,7 +1060,8 @@ export function createComputerGateway(
       await writeControlEvent(auditStore, "computer.snapshot_created", {
         botId,
         actor,
-        reason: "a clean snapshot of profile, workspace and quarantine was created",
+        reason:
+          "a clean snapshot of profile, workspace and quarantine was created",
       });
       return result;
     },
