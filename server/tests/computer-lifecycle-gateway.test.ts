@@ -6,11 +6,18 @@ import type { ComputerProvider } from "../src/computer/provider";
 
 function fixture(latestEvent: ComputerLifecycleEvent | undefined) {
   const events: AuditEventInput[] = [];
+  let located = false;
   const provider: ComputerProvider = {
     name: "fixture",
     isolation: "per-bot",
-    locate: async () => "http://127.0.0.1:4100",
-    status: async (botId) => ({ botId, state: "absent" }),
+    locate: async () => {
+      located = true;
+      return "http://127.0.0.1:4100";
+    },
+    status: async (botId) => ({
+      botId,
+      state: located ? "ready" : "absent",
+    }),
     stop: async () => ({ wasRunning: false }),
     reset: async () => ({ cleared: false }),
     list: async () => [],

@@ -68,6 +68,8 @@ async function lastActedAt(
       and(
         like(auditEvents.eventType, "computer.%"),
         ne(auditEvents.eventType, "computer.slept"),
+        ne(auditEvents.eventType, "computer.stopped"),
+        ne(auditEvents.eventType, "computer.reset"),
         inArray(bot, botIds),
       ),
     )
@@ -190,6 +192,10 @@ export async function suspendClaimedComputers(
         continue;
       }
 
+      const idleSince =
+        typeof item.payload.idleSince === "string"
+          ? new Date(item.payload.idleSince)
+          : since;
       await options.provider.stop(botId);
       await recordAuditEvent(options.auditStore, {
         eventType: "computer.slept",
@@ -206,6 +212,50 @@ export async function suspendClaimedComputers(
           idleAfterMs: options.idleAfterMs,
         },
       });
+
+      /*
+       * One last look AFTER the stop closes the only dangerous gap in the ordinary cull flow.
+       *
+       * The pre-stop recheck and provider.stop() are not one database transaction. A Start/Wake or
+       * governed action can arrive between them: it sees a running Computer, records new activity,
+       * and then the culler stops it underneath the caller. If activity advanced past the timestamp
+       * that justified this suspension, restore the Computer immediately. Manual Stop/Reset are
+       * excluded by lastActedAt above, so a person's explicit request to keep it down is never
+       * undone by this repair path.
+       */
+      const activityAfterStop = (
+        await lastActedAt(options.database, [botId])
+      ).get(botId);
+      const baseline = idleSince?.getTime();
+      if (
+        activityAfterStop &&
+        baseline !== undefined &&
+        Number.isFinite(baseline) &&
+        activityAfterStop.getTime() > baseline
+      ) {
+        await options.provider.locate(botId);
+        await recordAuditEvent(options.auditStore, {
+          eventType: "computer.woke",
+          targetType: "computer",
+          targetId: botId,
+          initiator: { kind: "deployment" },
+          payload: {
+            bot: botId,
+            reason: "activity_raced_idle_sleep",
+          },
+        });
+        await options.queue.finish({
+          kind: CULL_KIND,
+          key: item.key,
+          owner: options.owner,
+        });
+        report.skipped.push({
+          botId,
+          reason: "used while it was being suspended; restored",
+        });
+        continue;
+      }
+
       await options.queue.finish({
         kind: CULL_KIND,
         key: item.key,
