@@ -346,7 +346,6 @@ describe("deleted Agents leave no stale workflow", () => {
   });
 });
 
-
 describe("workflow asset ledger", () => {
   test("stores idempotent per-step workspace assets and removes them", async () => {
     const { owner, agentId, channel } = await setUp();
@@ -367,12 +366,14 @@ describe("workflow asset ledger", () => {
     });
 
     expect(duplicate.id).toBe(first.id);
-    expect((await store.listAssets(who, plan.id, "script")).map((asset) => ({
-      direction: asset.direction,
-      mediaKind: asset.mediaKind,
-      ref: asset.ref,
-      label: asset.label,
-    }))).toEqual([
+    expect(
+      (await store.listAssets(who, plan.id, "script")).map((asset) => ({
+        direction: asset.direction,
+        mediaKind: asset.mediaKind,
+        ref: asset.ref,
+        label: asset.label,
+      })),
+    ).toEqual([
       {
         direction: "input",
         mediaKind: "text",
