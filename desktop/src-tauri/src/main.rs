@@ -3322,7 +3322,11 @@ fn save_close_behavior<R: tauri::Runtime>(app: &tauri::AppHandle<R>, behavior: C
         .path()
         .app_config_dir()
         .map_err(|error| error.to_string())
-        .and_then(|directory| behavior.write(&directory).map_err(|error| error.to_string()));
+        .and_then(|directory| {
+            behavior
+                .write(&directory)
+                .map_err(|error| error.to_string())
+        });
     match saved {
         Ok(()) => {
             app.dialog()
