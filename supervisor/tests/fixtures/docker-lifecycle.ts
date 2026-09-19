@@ -238,6 +238,37 @@ describe("host restart ownership", () => {
   }, 90_000);
 });
 
+describe("legacy restart-policy recovery", () => {
+  test("migrates an existing Computer away from Docker autorestart without replacing it", async () => {
+    await withDocker().supervisor.ensure(names, {
+      image: IMAGE,
+      environment: [],
+    });
+    const before = await withDocker()
+      .docker.getContainer(names.container)
+      .inspect();
+
+    await withDocker().docker.getContainer(names.container).update({
+      RestartPolicy: { Name: "unless-stopped" },
+    });
+    const legacy = await withDocker()
+      .docker.getContainer(names.container)
+      .inspect();
+    expect(legacy.HostConfig?.RestartPolicy?.Name).toBe("unless-stopped");
+
+    await withDocker().supervisor.ensure(names, {
+      image: IMAGE,
+      environment: [],
+    });
+    const after = await withDocker()
+      .docker.getContainer(names.container)
+      .inspect();
+
+    expect(after.Id).toBe(before.Id);
+    expect(after.HostConfig?.RestartPolicy?.Name).toBe("no");
+  }, 90_000);
+});
+
 describe("fleet lifecycle timestamps", () => {
   test("reports the current run start after a stopped Computer wakes", async () => {
     await withDocker().supervisor.ensure(names, {
