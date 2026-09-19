@@ -3337,7 +3337,7 @@ fn save_close_behavior<R: tauri::Runtime>(app: &tauri::AppHandle<R>, behavior: C
         Err(error) => {
             app.dialog()
                 .message(format!(
-                    "OpenBot could not save the close behavior. It will keep asking each time. {error}"
+                    "OpenBot could not save the close behavior. The previously saved close behavior is still active; try again. {error}"
                 ))
                 .title("Close behavior not saved")
                 .kind(MessageDialogKind::Error)
