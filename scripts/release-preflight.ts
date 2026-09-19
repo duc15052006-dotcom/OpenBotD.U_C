@@ -1448,7 +1448,7 @@ function checkDurableAgentWake(): void {
     'scheduleKind === "once"',
     "databaseNow(transaction)",
     "requireDatabaseFuture(",
-    String.raw`\${at} > now()`,
+    "${at} > now()",
   ]) {
     if (!store.includes(evidence)) {
       fail(`routines: durable one-shot store invariant is missing ${evidence}`);
@@ -1532,7 +1532,7 @@ function checkDurableWorkflowState(): void {
     "eq(workflowSteps.waitUntil, expectedWaitUntil)",
     "greatest(",
     "date_trunc('milliseconds', now())",
-    String.raw`\${input.waitUntil} > now()`,
+    "${input.waitUntil} > now()",
   ]) {
     if (!store.includes(evidence)) {
       fail(`workflows: durable recovery boundary is missing ${evidence}`);
