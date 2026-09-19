@@ -88,6 +88,7 @@ const TOO_MANY_ENABLED = `You already have ${MAX_ENABLED_ROUTINES} routines swit
 const MAX_NAMED_CHANNELS = 5;
 
 export type RoutineRunOutcome = "succeeded" | "failed" | "skipped";
+export type RoutineScheduleKind = "recurring" | "once";
 
 export type Routine = {
   id: string;
@@ -95,6 +96,7 @@ export type Routine = {
   agentId: string;
   channelId: string;
   instruction: string;
+  scheduleKind: RoutineScheduleKind;
   cron: string;
   timezone: string;
   enabled: boolean;
@@ -119,6 +121,7 @@ export type RoutineSummary = {
    * and the sweep both derive from the expression itself.
    */
   schedule: string;
+  scheduleKind: RoutineScheduleKind;
   timezone: string;
   enabled: boolean;
   nextRunAt: Date;
