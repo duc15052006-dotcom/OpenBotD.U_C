@@ -934,7 +934,8 @@ export function createComputerGateway(
         await writeControlEvent(auditStore, "computer.woke", {
           botId,
           actor,
-          reason: "the computer was restored after idle sleep raced this Start/Wake request",
+          reason:
+            "the computer was restored after idle sleep raced this Start/Wake request",
         });
       }
       return { started: started || recoveredFromSleepRace, url };
