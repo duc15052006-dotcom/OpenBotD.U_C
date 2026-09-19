@@ -350,8 +350,7 @@ export const COMPUTER_LIFECYCLE_STATES = [
   "stopped",
 ] as const;
 
-export type ComputerLifecycleState =
-  (typeof COMPUTER_LIFECYCLE_STATES)[number];
+export type ComputerLifecycleState = (typeof COMPUTER_LIFECYCLE_STATES)[number];
 
 /** Lifecycle states a Bot's computer can be in, as the UI must render them. */
 export const COMPUTER_STATES = [
