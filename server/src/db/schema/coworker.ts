@@ -84,6 +84,11 @@ export const routineRunStatus = pgEnum("routine_run_status", [
   "skipped",
 ]);
 
+export const routineScheduleKind = pgEnum("routine_schedule_kind", [
+  "recurring",
+  "once",
+]);
+
 /**
  * A standing instruction one person gave one Bot, on a schedule.
  *
@@ -106,7 +111,14 @@ export const routines = pgTable(
      */
     channelId: text("channel_id").notNull(),
     instruction: text("instruction").notNull(),
-    /** Five-field cron. Validated at the tool boundary; never parsed by the client. */
+    /**
+     * Recurring routines advance through cron. One-time wakes keep their exact `next_run_at` and are
+     * consumed by the queue worker before dispatch, so a restart cannot turn one wait into a loop.
+     */
+    scheduleKind: routineScheduleKind("schedule_kind")
+      .notNull()
+      .default("recurring"),
+    /** Five-field cron for recurring rows. One-time rows keep an observability-only UTC expression. */
     cron: text("cron").notNull(),
     /** IANA zone the cron is read in. UTC when the person never said otherwise. */
     timezone: text("timezone").notNull().default("UTC"),
