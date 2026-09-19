@@ -71,7 +71,6 @@ describe("ROUTINE_GUIDANCE", () => {
   });
 });
 
-
 describe("AUTONOMOUS_WORKFLOW_GUIDANCE", () => {
   test("keeps the Agent goal-driven instead of hard-coding every task into one pipeline", () => {
     expect(AUTONOMOUS_WORKFLOW_GUIDANCE).toContain(
