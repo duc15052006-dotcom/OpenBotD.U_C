@@ -255,8 +255,12 @@ export const workflowSteps = pgTable(
     attempts: integer("attempts").notNull().default(0),
     /** Which external/model provider owns a pending wait, when there is one. Never a credential. */
     provider: text("provider"),
-    /** Exact durable wake target for a waiting step; execution wiring is a separate slice. */
+    /** Exact durable wake target for a waiting step. */
     waitUntil: timestamp("wait_until", { withTimezone: true }),
+    /** Exact wait stamp whose wake most recently moved this attempt back to running. */
+    resumedFromWaitUntil: timestamp("resumed_from_wait_until", {
+      withTimezone: true,
+    }),
     failureReason: text("failure_reason"),
     startedAt: timestamp("started_at", { withTimezone: true }),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
