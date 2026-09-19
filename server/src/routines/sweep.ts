@@ -367,51 +367,87 @@ export async function dispatchClaimedRoutines(
        * exist, and a switched-off one does not want its queued firing carried out later either. The
        * next occurrence is offered afresh if it is switched back on.
        */
-      const routine = await options.routineStore.routineForFiring(routineId);
-      if (!routine?.enabled) {
-        const reason = routine
-          ? "switched off between the offer and the firing"
-          : "deleted between the offer and the firing";
-        await finishOrSay(options, item.key, routineId, reason);
-        report.skipped.push({ routineId, reason });
-        continue;
-      }
-
-      /*
-       * AND THE WINDOW AGAIN, HERE, before any run row exists.
-       *
-       * The offer already enforced this window at offer time, and that is not enough: the queue's
-       * redelivery machinery can outlive it. A backlogged queue, or five releases at a minute each,
-       * and the item is claimed well after the occurrence it names — "here is your morning summary",
-       * in the afternoon, which is exactly what the stale-stamp policy above exists to prevent. So it
-       * is re-checked at the moment of acting, which is the culler's precedent ("Somebody came back",
-       * `culler.ts:~170`): the decision was made elsewhere and the world has moved since.
-       *
-       * BESIDE the deleted/disabled branch and before `insertRun`, so a skipped firing leaves no
-       * `routine_runs` row: a run opened with no outcome and nothing coming to give it one shows on
-       * the routines page as a firing that started and never ended.
-       *
-       * Finished, not released, for the same reason as above: re-delivery cannot make a past
-       * occurrence current. A missing or unreadable stamp is not treated as stale — the offer is the
-       * only writer of this payload and always writes one, so there is no window to enforce rather
-       * than a window that has passed, and dropping the firing on a payload this file wrote would be
-       * inventing a reason to lose it.
-       */
-      const now = options.now?.() ?? new Date();
       const stamp = item.payload.scheduledFor;
       const scheduledFor =
         typeof stamp === "string" ? new Date(stamp) : undefined;
-      if (
-        scheduledFor &&
-        !Number.isNaN(scheduledFor.getTime()) &&
-        now.getTime() - scheduledFor.getTime() > graceMs
-      ) {
-        const reason = "claimed too long after the occurrence it was due for";
+      let routine = await options.routineStore.routineForFiring(routineId);
+      if (!routine) {
+        const reason = "deleted between the offer and the firing";
         await finishOrSay(options, item.key, routineId, reason);
         report.skipped.push({ routineId, reason });
         continue;
       }
 
+      if (routine.scheduleKind === "once") {
+        if (!scheduledFor || Number.isNaN(scheduledFor.getTime())) {
+          const reason = "one-time wake has no valid scheduled time";
+          await finishOrSay(options, item.key, routineId, reason);
+          report.skipped.push({ routineId, reason });
+          continue;
+        }
+
+        const consumedThisWake = () =>
+          routine?.scheduleKind === "once" &&
+          !routine.enabled &&
+          routine.lastRunAt?.getTime() === scheduledFor.getTime();
+
+        if (!consumedThisWake()) {
+          if (!routine.enabled) {
+            const reason = "switched off between the offer and the firing";
+            await finishOrSay(options, item.key, routineId, reason);
+            report.skipped.push({ routineId, reason });
+            continue;
+          }
+          if (routine.nextRunAt.getTime() !== scheduledFor.getTime()) {
+            const reason = "one-time wake changed after it was offered";
+            await finishOrSay(options, item.key, routineId, reason);
+            report.skipped.push({ routineId, reason });
+            continue;
+          }
+
+          const consumed = await options.routineStore.consumeOneShot(
+            routineId,
+            scheduledFor,
+          );
+          if (!consumed) {
+            // Another consumer may have committed this same wake between our read and CAS. Re-read
+            // once: exact consumed state is recoverable; any other change is a cancellation.
+            routine = await options.routineStore.routineForFiring(routineId);
+            if (!consumedThisWake()) {
+              const reason = routine
+                ? "one-time wake changed before it could be consumed"
+                : "deleted between the offer and the firing";
+              await finishOrSay(options, item.key, routineId, reason);
+              report.skipped.push({ routineId, reason });
+              continue;
+            }
+          }
+        }
+      } else {
+        if (!routine.enabled) {
+          const reason = "switched off between the offer and the firing";
+          await finishOrSay(options, item.key, routineId, reason);
+          report.skipped.push({ routineId, reason });
+          continue;
+        }
+
+        /*
+         * Recurring occurrences have a grace window: replaying an old morning summary hours later is
+         * noise. One-time wakes deliberately do not — their purpose is to resume durable work after
+         * an external wait, app restart or machine downtime, so late is better than silently lost.
+         */
+        const now = options.now?.() ?? new Date();
+        if (
+          scheduledFor &&
+          !Number.isNaN(scheduledFor.getTime()) &&
+          now.getTime() - scheduledFor.getTime() > graceMs
+        ) {
+          const reason = "claimed too long after the occurrence it was due for";
+          await finishOrSay(options, item.key, routineId, reason);
+          report.skipped.push({ routineId, reason });
+          continue;
+        }
+      }
       /*
        * The run row first, then the dispatch, because the dispatch is told a run id and nothing else.
        * From the moment it resolves the run row owns the outcome: the queue's retries are for
