@@ -35,7 +35,7 @@ import { MAX_RESULT_CHARS, type McpCallResult, type McpTool } from "./mcp";
  */
 export type RoutineTools = Pick<
   RoutineStore,
-  "create" | "listFor" | "update" | "remove"
+  "create" | "createOneShot" | "listFor" | "update" | "remove"
 >;
 
 let installed: RoutineTools | null = null;
@@ -123,6 +123,40 @@ const TOOLS: readonly McpTool[] = Object.freeze([
         },
       },
       required: ["instruction", "cron"],
+    },
+  },
+  {
+    name: "schedule_wake",
+    description: [
+      "Schedule ONE durable wake-up to continue work at an exact future time.",
+      "",
+      "Use this when work should sleep instead of polling — for example while a website generates a video,",
+      "or when a multi-step plan should resume later. This is not a recurring cron routine and it fires once.",
+      "",
+      "Pass `runAt` as an absolute RFC3339 timestamp with `Z` or an explicit numeric offset, such as",
+      "`2026-09-20T14:30:00+07:00`. Write `instruction` as the work to do when the wake fires, not as a",
+      "promise to wait or wake. The wake is persisted by the same durable queue used by routines.",
+      "",
+      "The wake posts its result into a channel. Leave `channelId` out only when you and this person share",
+      "exactly one channel. Owner and Bot identity come from the connection and cannot be supplied here.",
+    ].join("\n"),
+    inputSchema: {
+      type: "object",
+      properties: {
+        instruction: {
+          type: "string",
+          description: "The work to continue when this one-time wake fires.",
+        },
+        runAt: {
+          type: "string",
+          description: "Absolute future RFC3339 timestamp including Z or a numeric UTC offset.",
+        },
+        channelId: {
+          type: "string",
+          description: "Where the result is posted; omit only when there is one shared channel.",
+        },
+      },
+      required: ["instruction", "runAt"],
     },
   },
   {
@@ -256,6 +290,12 @@ function stringArg(
 ): string | undefined {
   const value = args[key];
   return typeof value === "string" && value.trim() !== "" ? value : undefined;
+}
+
+function absoluteRunAt(value: string | undefined): Date | undefined {
+  if (!value || !/(?:Z|[+-]\d{2}:\d{2})$/i.test(value)) return undefined;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
 }
 
 /** The target channel as something a person would recognise. A broken one is named as broken. */
@@ -402,6 +442,33 @@ export async function callTool(
         ownerUserId,
         "That routine is set:",
         "That routine is set.",
+      );
+    }
+
+    if (toolName === "schedule_wake") {
+      const instruction = stringArg(args, "instruction");
+      if (!instruction) {
+        return failure("A one-time wake needs an instruction to carry out.");
+      }
+      const runAt = absoluteRunAt(stringArg(args, "runAt"));
+      if (!runAt) {
+        return failure(
+          "A one-time wake needs an absolute RFC3339 time with Z or a numeric UTC offset.",
+        );
+      }
+      const routine = await tools.createOneShot({
+        ownerUserId,
+        agentId,
+        instruction,
+        runAt,
+        channelId: stringArg(args, "channelId"),
+      });
+      return await describeWritten(
+        tools,
+        routine,
+        ownerUserId,
+        "That one-time wake is set:",
+        "That one-time wake is set.",
       );
     }
 
