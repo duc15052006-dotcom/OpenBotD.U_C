@@ -307,6 +307,35 @@ function checkComputerSandboxBoundary(): void {
     }
   }
 
+  const snapshotSupervisor = read("supervisor/src/docker.ts");
+  for (const evidence of [
+    "createCleanSnapshot",
+    "restoreCleanSnapshot",
+    'NetworkMode: "none"',
+    'CapDrop: ["ALL"]',
+    'SecurityOpt: ["no-new-privileges:true"]',
+    "ReadonlyRootfs: true",
+    "docker.listVolumes",
+    "Snapshot-only state after Reset",
+    "Stop the Computer before creating a clean snapshot.",
+    "Stop the Computer before restoring its clean snapshot.",
+  ]) {
+    if (!snapshotSupervisor.includes(evidence)) {
+      fail(`computer: clean snapshot boundary is missing ${evidence}`);
+    }
+  }
+  const snapshotRoutes = read("server/src/computer/routes.ts");
+  for (const evidence of [
+    'body?.confirm !== "SNAPSHOT"',
+    'body?.confirm !== "RESTORE"',
+    "gateway.createComputerSnapshot",
+    "gateway.restoreComputerSnapshot",
+  ]) {
+    if (!snapshotRoutes.includes(evidence)) {
+      fail(`computer: snapshot API confirmation is missing ${evidence}`);
+    }
+  }
+
   const computersPage = read("app/src/routes/_authed/admin/computers.tsx");
   const computerRoutes = read("server/src/computer/routes.ts");
   for (const evidence of [
