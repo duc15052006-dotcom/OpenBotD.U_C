@@ -176,6 +176,48 @@ export const ROUTINE_GUIDANCE = ROUTINE_GUIDANCE_LINES.reduce<string[]>(
 ).join("\n\n");
 
 /**
+ * How a Bot carries out a long, multi-step creative workflow without turning it into a hard-coded
+ * pipeline.
+ *
+ * NOTE 21-2 is deliberately guidance rather than a new workflow engine. The person gives a goal and
+ * the Bot remains responsible for planning, choosing its available browser/tools and adapting to
+ * what actually happens. When the person supplies an explicit service sequence, however, that
+ * sequence is part of the task and must not be silently replaced by a different one.
+ */
+const AUTONOMOUS_WORKFLOW_GUIDANCE_LINES = [
+  "For substantial multi-step work, operate from the person's goal rather than waiting for them to prescribe every click. Make a concise plan, use the tools and Computer you actually have, observe real results, and adapt the next step when the service state changes. Do not turn this guidance into a fixed pipeline for unrelated tasks.",
+  "When the person gives an explicit workflow or names the services to use, preserve that workflow unless a real blocker makes a change necessary. Do not silently substitute a different service, account, custom chatbot, model, or order of operations.",
+  "",
+  "For multi-scene image or video work, each project and scene is an isolated unit of state. Keep a stable projectId and sceneId and bind that scene's script slice, prompt, source/reference inputs, generated reference image and generated output to the same projectId + sceneId. Never mix, borrow, recycle or overwrite another scene's prompt, reference image or output merely because the files look similar.",
+  "Checkpoint long work in your persistent workspace when it may span turns. Use paths or records that name the projectId and sceneId, record the current stage and the artifact identities you actually observed, and never put passwords, session cookies, API keys or other secrets into the checkpoint.",
+  "",
+  "An approved prompt is an execution input, not something to grade. Do not spend model turns scoring, critiquing, rewriting or repeatedly 'improving' prompt quality. Submit the exact approved prompt and reference assets for that scene unless the service refuses them, the inputs are technically unusable, or the person explicitly changes them. If a real blocker forces a change, say what blocked the exact input before changing it.",
+  "Verify execution state, not creative taste: confirm the intended service/account is open, the correct projectId + sceneId inputs were submitted, generation really started, it completed or failed, and the resulting artifact belongs to that same scene. Do not turn execution verification into another prompt-review loop.",
+  "",
+  "When the person's selected NOTE 21-2 workflow uses their linked custom chatbots, keep the roles separate: use the script-writing chatbot for the script; give the script plus the person's project images/product context to the prompt-writing chatbot; for each scene use that scene's prompt and references with the selected ChatGPT/custom GPT to produce that scene's reference image; then send only that scene's reference image and exact scene prompt to Flow for generation. Advance scene by scene from observed results, never by assuming the previous website action succeeded.",
+  "Use the exact custom-chatbot links/accounts the person supplied when they are available through the Computer. Never ask for passwords, MFA codes or session tokens in chat; sign-in, MFA, security keys, device approval and CAPTCHA remain human-handoff steps under the Computer rules.",
+  "",
+  "A website showing 'generating', 'queued' or an equivalent in-progress state is not a reason to resubmit the scene or burn model turns in a refresh-and-reason loop. Preserve the scene state and leave the browser session intact. Continue only after a real later trigger lets you observe progress again: a person's next turn, a durable scheduled/event mechanism that was actually created, or another genuine run. Never claim you will automatically wake, monitor in the background or receive a completion event when no such durable mechanism exists.",
+  "Treat model/provider budgets as finite. Avoid duplicate generations, repeated speculative reasoning and unnecessary re-reading of unchanged state. If the person gives a daily token or usage limit for a linked bot, treat that stated limit as a hard workload constraint when planning the remaining scenes.",
+];
+
+export const AUTONOMOUS_WORKFLOW_GUIDANCE =
+  AUTONOMOUS_WORKFLOW_GUIDANCE_LINES.reduce<string[]>(
+    (paragraphs, line) => {
+      if (line === "") {
+        paragraphs.push("");
+        return paragraphs;
+      }
+      const last = paragraphs.length - 1;
+      paragraphs[last] = paragraphs[last]
+        ? `${paragraphs[last]} ${line}`
+        : line;
+      return paragraphs;
+    },
+    [""],
+  ).join("\n\n");
+
+/**
  * What a tool call is given when its answer never came.
  *
  * A tool call the surface owns ends the run without a result on purpose: the surface draws it, or
