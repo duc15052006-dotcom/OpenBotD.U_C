@@ -70,6 +70,9 @@ export const agentKeys = {
   instructions: (agentId: string) =>
     ["agents", "instructions", agentId] as const,
   knowledge: (agentId: string) => ["agents", "knowledge", agentId] as const,
+  memory: (agentId: string) => ["agents", "memory", agentId] as const,
+  memoryHistory: (agentId: string) =>
+    ["agents", "memory", agentId, "history"] as const,
 };
 
 /** Keep the browser counter aligned with the server-enforced prompt limit. */
@@ -98,6 +101,33 @@ export type AgentKnowledgeSettings = {
     documentCharacters: number;
     totalCharacters: number;
   };
+};
+
+export const AGENT_MEMORY_LIMIT = 8_000;
+
+export type AgentMemorySettings = {
+  memory: string;
+  revisionId: string | null;
+  canManage: boolean;
+};
+
+export type AgentMemoryHistoryEntry = {
+  id: string;
+  createdAt: string;
+  kind: "edit" | "undo";
+  sourceRevisionId?: string;
+  characters: number;
+  preview: string;
+};
+
+export type AgentMemoryHistory = {
+  revisions: AgentMemoryHistoryEntry[];
+  canManage: boolean;
+};
+
+export type AgentMemoryDiff = {
+  revision: AgentMemoryHistoryEntry;
+  lines: Array<{ type: "same" | "added" | "removed"; text: string }>;
 };
 
 export type AgentModelProvider = "openai" | "anthropic" | "google";
@@ -224,6 +254,37 @@ export function agentKnowledgeQueryOptions(agentId: string) {
         fallback: "Could not load Agent knowledge",
       }),
   });
+}
+
+export function agentMemoryQueryOptions(agentId: string) {
+  return queryOptions({
+    queryKey: agentKeys.memory(agentId),
+    queryFn: (): Promise<AgentMemorySettings> =>
+      client(`${agentApiPath(agentId)}/memory`, "memory", {
+        fallback: "Could not load Agent memory",
+      }),
+  });
+}
+
+export function agentMemoryHistoryQueryOptions(agentId: string) {
+  return queryOptions({
+    queryKey: agentKeys.memoryHistory(agentId),
+    queryFn: (): Promise<AgentMemoryHistory> =>
+      client(`${agentApiPath(agentId)}/memory/history`, "history", {
+        fallback: "Could not load Agent memory history",
+      }),
+  });
+}
+
+export function loadAgentMemoryDiff(
+  agentId: string,
+  revisionId: string,
+): Promise<AgentMemoryDiff> {
+  return client(
+    `${agentApiPath(agentId)}/memory/history/${encodeURIComponent(revisionId)}`,
+    "diff",
+    { fallback: "Could not compare that memory revision" },
+  );
 }
 
 export function agentHandoffQueryOptions(agentId: string) {
