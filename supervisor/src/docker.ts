@@ -956,7 +956,11 @@ function hostConfig(names: ComputerNames, options: EnsureOptions) {
             [COMPUTER_PORT]: [{ HostIp: "127.0.0.1", HostPort: "" }],
           },
         }),
-    RestartPolicy: { Name: "unless-stopped" },
+    // OpenBot, not Docker, owns whether an Agent Computer is active. If the desktop app or host
+    // crashes, Docker must not resurrect a browser holding a person's logged-in session before
+    // OpenBot has reopened and explicitly ensured that Bot. Persistent volumes keep profile/workspace
+    // state; the next task or Wake starts the same Computer again through the normal lifecycle gate.
+    RestartPolicy: { Name: "no" },
     ...(options.network ? { NetworkMode: options.network } : {}),
     ...(options.runtime ? { Runtime: options.runtime } : {}),
 
