@@ -141,6 +141,30 @@ describe("workflow identity boundary", () => {
 });
 
 describe("workflow wait input", () => {
+  test("does not use the process clock to reject a database-future timestamp", async () => {
+    let received: Date | undefined;
+    useWorkflowTools({
+      async waitStep(_identity, _id, _stepKey, input) {
+        received = input.waitUntil;
+        return { ...step, status: "waiting" as const, waitUntil: input.waitUntil };
+      },
+    } as WorkflowTools);
+
+    const originalNow = Date.now;
+    Date.now = () => new Date("2100-01-01T00:00:00.000Z").getTime();
+    try {
+      const result = await callTool(CONNECTION, "wait_workflow_step", {
+        id: "workflow_1",
+        stepKey: "render",
+        waitUntil: "2099-01-01T00:00:00.000Z",
+      });
+      expect(result.isError).toBe(false);
+      expect(received?.toISOString()).toBe("2099-01-01T00:00:00.000Z");
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
   test("refuses a local timestamp with no explicit offset", async () => {
     useWorkflowTools({} as WorkflowTools);
     const result = await callTool(CONNECTION, "wait_workflow_step", {
