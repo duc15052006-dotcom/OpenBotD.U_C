@@ -366,7 +366,7 @@ function checkComputerSandboxBoundary(): void {
   }
   for (const evidence of [
     "recoveredFromSleepRace",
-    "after.state !== \"ready\"",
+    'after.state !== "ready"',
     "idle sleep raced this Start/Wake request",
   ]) {
     if (!gateway.includes(evidence)) {
