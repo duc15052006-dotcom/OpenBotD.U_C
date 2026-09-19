@@ -77,6 +77,11 @@ function statusOf(error: unknown): number | undefined {
   return (error as { statusCode?: number }).statusCode;
 }
 
+/** The gateway's `wasRunning` flag describes active state before Stop, not container existence. */
+export function wasRunningBeforeStop(status: string): boolean {
+  return status.toLowerCase() === "running";
+}
+
 /** One poll interval, used both by the health wait and by the retry that follows a lost race. */
 function pause(ms: number): Promise<void> {
   const { promise, resolve } = Promise.withResolvers<void>();
@@ -1168,7 +1173,7 @@ export async function ensure(
 export async function stop(names: ComputerNames): Promise<boolean> {
   const existing = await inspectOwned(names);
   if (!existing) return false;
-  const wasRunning = existing.status.toLowerCase() === "running";
+  const wasRunning = wasRunningBeforeStop(existing.status);
   try {
     // Long enough for Chromium to flush its profile, matching the compose grace period.
     await docker.getContainer(names.container).stop({ t: 30 });
