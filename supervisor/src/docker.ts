@@ -255,9 +255,6 @@ export async function listOwned(): Promise<ComputerState[]> {
         botId,
         container: (container.Names?.[0] ?? "").replace(/^\//, ""),
         status: container.State,
-        ...(container.Created
-          ? { startedAt: new Date(container.Created * 1000).toISOString() }
-          : {}),
         ...(portOf(container.Ports) ? { port: portOf(container.Ports) } : {}),
       });
     }
@@ -281,10 +278,24 @@ export async function listOwned(): Promise<ComputerState[]> {
     return Promise.all(
       [...byBot.values()].map(async (computer) => {
         const parsed = namesFor(computer.botId);
-        const snapshotAvailable = parsed.ok
-          ? await hasCompleteSnapshot(parsed.names).catch(() => false)
-          : false;
-        return { ...computer, snapshotAvailable };
+        const [snapshotAvailable, currentRun] = await Promise.all([
+          parsed.ok
+            ? hasCompleteSnapshot(parsed.names).catch(() => false)
+            : Promise.resolve(false),
+          parsed.ok && computer.status === "running"
+            ? inspectOwned(parsed.names).catch(() => null)
+            : Promise.resolve(null),
+        ]);
+        return {
+          ...computer,
+          // Docker's list endpoint exposes container creation time, not when this run started.
+          // After Stop -> Wake/Restart the container is the same but State.StartedAt changes; the
+          // fleet UI and cross-replica session fallback must describe the live run, never its birth.
+          ...(currentRun?.startedAt
+            ? { startedAt: currentRun.startedAt }
+            : {}),
+          snapshotAvailable,
+        };
       }),
     );
   } catch (error) {
