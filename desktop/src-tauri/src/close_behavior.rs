@@ -55,12 +55,6 @@ impl CloseBehavior {
     }
 }
 
-fn temporary_path(path: &Path) -> PathBuf {
-    let mut temporary = path.as_os_str().to_owned();
-    temporary.push(format!(".{}.tmp", std::process::id()));
-    PathBuf::from(temporary)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
