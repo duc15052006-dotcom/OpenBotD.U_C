@@ -771,13 +771,7 @@ export function createWorkflowStore(database: Database): WorkflowStore {
       });
     },
 
-    async startReadyStep(
-      identity,
-      id,
-      key,
-      expectedReadyAt,
-      expectedAttempt,
-    ) {
+    async startReadyStep(identity, id, key, expectedReadyAt, expectedAttempt) {
       if (
         !(expectedReadyAt instanceof Date) ||
         Number.isNaN(expectedReadyAt.getTime()) ||
