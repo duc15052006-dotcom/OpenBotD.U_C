@@ -354,6 +354,29 @@ describe("durable ready-step dispatch", () => {
   });
 });
 
+describe("database-clock workflow waits", () => {
+  test("accepts a database-future wait when the server clock is skewed forward", async () => {
+    const { owner, agentId, channel } = await setUp();
+    const who = identity(owner, agentId);
+    const plan = await store.create(planInput(owner, agentId, channel.id));
+    await store.startStep(who, plan.id, "script");
+
+    const realNow = Date.now;
+    const waitUntil = new Date(realNow() + 60_000);
+    Date.now = () => realNow() + 24 * 60 * 60_000;
+    try {
+      const waiting = await store.waitStep(who, plan.id, "script", {
+        waitUntil,
+        provider: "video-generator",
+      });
+      expect(waiting.status).toBe("waiting");
+      expect(waiting.waitUntil?.getTime()).toBe(waitUntil.getTime());
+    } finally {
+      Date.now = realNow;
+    }
+  });
+});
+
 describe("durable waits", () => {
   test("resume re-arms a due wait so a wake finished during pause cannot wedge it", async () => {
     const { owner, agentId, channel } = await setUp();
