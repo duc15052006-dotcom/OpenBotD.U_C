@@ -686,7 +686,10 @@ export function createWorkflowStore(database: Database): WorkflowStore {
         await transaction
           .update(workflowSteps)
           .set({
-            waitUntil: sql<Date>`date_trunc('milliseconds', now())`,
+            waitUntil: sql<Date>`greatest(
+              date_trunc('milliseconds', now()),
+              date_trunc('milliseconds', ${workflowSteps.waitUntil}) + interval '1 millisecond'
+            )`,
             resumedFromWaitUntil: null,
             updatedAt: sql`now()`,
           })
@@ -707,7 +710,10 @@ export function createWorkflowStore(database: Database): WorkflowStore {
           .update(workflowSteps)
           .set({
             resumedFromWaitUntil: null,
-            updatedAt: sql<Date>`date_trunc('milliseconds', now())`,
+            updatedAt: sql<Date>`greatest(
+              date_trunc('milliseconds', now()),
+              date_trunc('milliseconds', ${workflowSteps.updatedAt}) + interval '1 millisecond'
+            )`,
           })
           .where(
             and(
@@ -1031,7 +1037,10 @@ export function createWorkflowStore(database: Database): WorkflowStore {
               .update(workflowSteps)
               .set({
                 status: "ready",
-                updatedAt: sql<Date>`date_trunc('milliseconds', now())`,
+                updatedAt: sql<Date>`greatest(
+                  date_trunc('milliseconds', now()),
+                  date_trunc('milliseconds', ${workflowSteps.updatedAt}) + interval '1 millisecond'
+                )`,
               })
               .where(
                 and(
@@ -1150,7 +1159,10 @@ export function createWorkflowStore(database: Database): WorkflowStore {
             failureReason: null,
             finishedAt: null,
             resumedFromWaitUntil: null,
-            updatedAt: sql<Date>`date_trunc('milliseconds', now())`,
+            updatedAt: sql<Date>`greatest(
+              date_trunc('milliseconds', now()),
+              date_trunc('milliseconds', ${workflowSteps.updatedAt}) + interval '1 millisecond'
+            )`,
           })
           .where(
             and(
