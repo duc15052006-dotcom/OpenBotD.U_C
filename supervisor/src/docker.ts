@@ -683,14 +683,16 @@ export async function createCleanSnapshot(
   const current = newestCompleteSnapshot(slots);
   const target = slots[current?.index === 0 ? 1 : 0];
 
-  // Preserve the currently valid recovery point until the replacement is complete. A failed
-  // browser/runtime copy therefore loses only the new attempt, never the last known-good snapshot.
-  for (const volume of target.volumes) {
-    await removeOwnedVolume(names, volume);
-    await ensureOwnedVolume(names, volume);
-  }
-
   try {
+    // Preserve the currently valid recovery point until the replacement is complete. Preparation is
+    // part of the same fail-closed boundary as copying: if creating volume 2/3 fails, cleanup below
+    // removes the whole target slot instead of leaving a partial snapshot that later recovery has to
+    // distinguish from a complete recovery point.
+    for (const volume of target.volumes) {
+      await removeOwnedVolume(names, volume);
+      await ensureOwnedVolume(names, volume);
+    }
+
     const source = liveVolumes(names);
     for (const [index, sourceVolume] of source.entries()) {
       const targetVolume = target.volumes[index];
