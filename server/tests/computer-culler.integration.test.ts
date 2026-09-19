@@ -165,6 +165,101 @@ describe("suspending computers nobody is using", () => {
     expect(report.skipped[0]?.reason).toContain("used again");
   });
 
+  test("activity that lands while idle sleep is stopping the Computer restores it", async () => {
+    const botId = botOf("race-restored");
+    await database.insert(auditEvents).values(ran(botId, minutesAgo(45)));
+    const stopped: string[] = [];
+    const located: string[] = [];
+    const provider: ComputerProvider = {
+      name: "race",
+      isolation: "per-bot",
+      locate: async (id) => {
+        located.push(id);
+        return "http://unused";
+      },
+      status: async (id) => ({ botId: id, state: "ready" }),
+      stop: async (id) => {
+        stopped.push(id);
+        // A Start/Wake or governed action was recorded after the culler's last idle check but
+        // before the stop completed.
+        await database.insert(auditEvents).values(ran(id, now()));
+        return { wasRunning: true };
+      },
+      reset: async () => ({ cleared: false }),
+      list: async () => [{ botId, status: "running", url: "http://c" }],
+    };
+    const options = {
+      database,
+      queue,
+      provider,
+      auditStore,
+      idleAfterMs,
+      owner: "replica-1",
+      now,
+    };
+
+    await offerIdleComputers(options);
+    const report = await suspendClaimedComputers(options);
+
+    expect(stopped).toEqual([botId]);
+    expect(located).toEqual([botId]);
+    expect(report.suspended).toEqual([]);
+    expect(report.skipped[0]?.reason).toContain("restored");
+    const woke = await database
+      .select({ eventType: auditEvents.eventType })
+      .from(auditEvents)
+      .where(
+        and(
+          eq(auditEvents.targetId, botId),
+          eq(auditEvents.eventType, "computer.woke"),
+        ),
+      )
+      .limit(1);
+    expect(woke).toEqual([{ eventType: "computer.woke" }]);
+  });
+
+  test("a manual Stop racing the culler is never undone as activity", async () => {
+    const botId = botOf("manual-stop-race");
+    await database.insert(auditEvents).values(ran(botId, minutesAgo(45)));
+    const located: string[] = [];
+    const provider: ComputerProvider = {
+      name: "manual-stop-race",
+      isolation: "per-bot",
+      locate: async (id) => {
+        located.push(id);
+        return "http://unused";
+      },
+      status: async (id) => ({ botId: id, state: "ready" }),
+      stop: async (id) => {
+        await database.insert(auditEvents).values({
+          eventType: "computer.stopped",
+          targetType: "computer",
+          targetId: id,
+          payload: { bot: id, reason: "manual stop raced culler" },
+          createdAt: now(),
+        });
+        return { wasRunning: true };
+      },
+      reset: async () => ({ cleared: false }),
+      list: async () => [{ botId, status: "running", url: "http://c" }],
+    };
+    const options = {
+      database,
+      queue,
+      provider,
+      auditStore,
+      idleAfterMs,
+      owner: "replica-1",
+      now,
+    };
+
+    await offerIdleComputers(options);
+    const report = await suspendClaimedComputers(options);
+
+    expect(located).toEqual([]);
+    expect(report.suspended).toEqual([botId]);
+  });
+
   test("a computer nothing is known about is left alone", async () => {
     // No audit row and no start time. Suspending on no evidence is how a session disappears.
     const botId = botOf("unknown");
