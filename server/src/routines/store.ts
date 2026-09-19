@@ -612,6 +612,44 @@ export function createRoutineStore(database: Database): RoutineStore {
       return toRoutine(row);
     },
 
+    async createOneShot(input) {
+      const instruction = validInstruction(input.instruction);
+      const nextRunAt = validOneShotAt(input.runAt);
+      const channelId = await resolveChannel(
+        input.ownerUserId,
+        input.agentId,
+        input.channelId,
+      );
+
+      const [row] = await withEnabledCapLock(
+        input.ownerUserId,
+        async (transaction) => {
+          if (
+            (await countEnabled(transaction, input.ownerUserId)) >=
+            MAX_ENABLED_ROUTINES
+          ) {
+            throw new RoutineRefusedError(TOO_MANY_ENABLED);
+          }
+          return await transaction
+            .insert(routines)
+            .values({
+              id: `routine_${crypto.randomUUID()}`,
+              ownerUserId: input.ownerUserId,
+              agentId: input.agentId,
+              channelId,
+              instruction,
+              scheduleKind: "once",
+              cron: oneShotCron(nextRunAt),
+              timezone: "UTC",
+              nextRunAt,
+            })
+            .returning();
+        },
+      );
+      if (!row) throw new Error("inserting a one-time wake returned no row");
+      return toRoutine(row);
+    },
+
     async listFor(ownerUserId) {
       /*
        * The last-run join reads `routine_runs`, which only the sweep's half of this file writes to:
@@ -672,7 +710,11 @@ export function createRoutineStore(database: Database): RoutineStore {
           id: routine.id,
           agentId: routine.agentId,
           instruction: routine.instruction,
-          schedule: describeCron(routine.cron),
+          schedule:
+            routine.scheduleKind === "once"
+              ? `Once at ${routine.nextRunAt.toISOString()}`
+              : describeCron(routine.cron),
+          scheduleKind: routine.scheduleKind,
           timezone: routine.timezone,
           enabled: routine.enabled,
           nextRunAt: routine.nextRunAt,
@@ -722,7 +764,11 @@ export function createRoutineStore(database: Database): RoutineStore {
        * it returns ids and stamps and nothing a person wrote.
        */
       return await database
-        .select({ id: routines.id, nextRunAt: routines.nextRunAt })
+        .select({
+          id: routines.id,
+          nextRunAt: routines.nextRunAt,
+          scheduleKind: routines.scheduleKind,
+        })
         .from(routines)
         .where(
           and(
@@ -741,11 +787,20 @@ export function createRoutineStore(database: Database): RoutineStore {
 
     async advanceNextRun(id, from, computeFrom) {
       const [row] = await database
-        .select({ cron: routines.cron, timezone: routines.timezone })
+        .select({
+          cron: routines.cron,
+          timezone: routines.timezone,
+          scheduleKind: routines.scheduleKind,
+        })
         .from(routines)
         .where(eq(routines.id, id))
         .limit(1);
       if (!row) return false;
+      if (row.scheduleKind !== "recurring") {
+        throw new RoutineRefusedError(
+          "A one-time wake cannot be advanced as a recurring routine.",
+        );
+      }
 
       // `computeFrom` moves only where the next occurrence is measured from, never what the CAS
       // compares against: the sweep uses it to make a month-stale clock current in one pass, and
