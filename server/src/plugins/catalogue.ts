@@ -299,6 +299,30 @@ export const CATALOGUE: readonly CatalogueEntry[] = Object.freeze([
     ]),
     docsUrl: "https://github.com/CopilotKit/OpenBot/blob/main/docs/routines.md",
   },
+  {
+    key: "workflows",
+    title: "Workflows",
+    vendor: "OpenBot",
+    summary:
+      "Durable multi-step plans with dependency, wait, retry and per-step asset state.",
+    host: "builtin://workflows",
+    path: "/",
+    transport: "builtin-workflows",
+    auth: Object.freeze({ kind: "builtin" }),
+    writeTools: Object.freeze([
+      "create_workflow",
+      "pause_workflow",
+      "resume_workflow",
+      "cancel_workflow",
+      "start_workflow_step",
+      "wait_workflow_step",
+      "complete_workflow_step",
+      "fail_workflow_step",
+      "retry_workflow_step",
+      "add_workflow_asset",
+      "remove_workflow_asset",
+    ]),
+    docsUrl: "https://github.com/CopilotKit/OpenBot/blob/main/docs/workflows.md",
 ]);
 
 const BY_KEY = new Map(CATALOGUE.map((entry) => [entry.key, entry]));
