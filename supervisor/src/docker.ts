@@ -753,13 +753,17 @@ export async function restoreCleanSnapshot(
     }
   }
 
-  for (const volume of liveVolumes(names)) {
-    await removeOwnedVolume(names, volume);
-    await ensureOwnedVolume(names, volume);
-  }
-
   const target = liveVolumes(names);
   try {
+    // Preparation is part of the restore transaction too. If replacing the second/third live volume
+    // fails, the first one may already have been recreated empty; cleanup below must remove the
+    // whole live set rather than leave a mixed profile/workspace/quarantine that a later Ensure
+    // could mistake for coherent state.
+    for (const volume of target) {
+      await removeOwnedVolume(names, volume);
+      await ensureOwnedVolume(names, volume);
+    }
+
     for (const [index, snapshotVolume] of snapshot.volumes.entries()) {
       const targetVolume = target[index];
       if (!targetVolume) {
@@ -770,9 +774,9 @@ export async function restoreCleanSnapshot(
       await copyOwnedVolume(names, image, snapshotVolume, targetVolume);
     }
   } catch (error) {
-    // Never leave a mixed profile/workspace/quarantine set after a failed restore. The clean
-    // snapshot remains untouched, so a later retry can restore all three volumes from one coherent
-    // recovery point instead of starting a Computer on partially restored state.
+    // Never leave a mixed profile/workspace/quarantine set after a failed restore, including a
+    // failure while the destination volumes themselves are being replaced. The clean snapshot stays
+    // untouched, so a later retry can restore all three from one coherent recovery point.
     for (const volume of target) {
       await removeOwnedVolume(names, volume).catch(() => false);
     }
