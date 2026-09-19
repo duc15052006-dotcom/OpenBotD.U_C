@@ -301,6 +301,34 @@ describe("the computer gateway", () => {
     expect(rows.at(-1)?.eventType).toBe("computer.restarted");
   });
 
+  test("uses the provider atomic restart primitive when it is available", async () => {
+    const { provider, fetchImpl, calls } = fakeComputer();
+    let restartOptions: unknown;
+    provider.restart = async (botId, options) => {
+      calls.push(`restart:${botId}`);
+      restartOptions = options;
+      return "http://agent-computer:4100";
+    };
+    const { store, rows } = fakeAudit();
+    const gateway = createComputerGateway({
+      provider,
+      fetchImpl,
+      auditStore: store,
+      policy: () => PERMISSIVE,
+      resourceProfile: async () => "heavy",
+    });
+
+    const result = await gateway.restartComputer("bot-1", ACTOR);
+
+    expect(result).toEqual({
+      restarted: true,
+      url: "http://agent-computer:4100/",
+    });
+    expect(calls).toEqual(["restart:bot-1"]);
+    expect(restartOptions).toEqual({ resourceProfile: "heavy" });
+    expect(rows.at(-1)?.eventType).toBe("computer.restarted");
+  });
+
   test("starting an already-ready computer is idempotent and audited", async () => {
     const { gateway, calls, rows } = await gatewayWith(PERMISSIVE);
 

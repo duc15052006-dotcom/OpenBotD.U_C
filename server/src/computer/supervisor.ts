@@ -148,6 +148,20 @@ export function createDockerSupervisorProvider(
     }));
   }
 
+  function addressFromState(
+    botId: string,
+    state: SupervisorComputerLocation,
+  ): string {
+    // Restart and ensure both return the exact run they created. Remember that identity before
+    // handing the address back so stale accessibility refs cannot cross a lifecycle boundary.
+    if (state?.startedAt) sessions.set(botId, state.startedAt);
+    if (state?.url) return state.url;
+    if (state?.port) return hostForPort(state.port);
+    throw new SupervisorError(
+      `The computer for ${botId} started but reported no address, so it cannot be reached.`,
+    );
+  }
+
   function statusFromLocation(
     botId: string,
     location: SupervisorComputerLocation | undefined,
@@ -235,15 +249,21 @@ export function createDockerSupervisorProvider(
           ? { resourceProfile: request.resourceProfile }
           : undefined,
       )) as SupervisorComputerLocation;
-      // Recorded on every ensure, so a replaced container is visible to whatever asks next.
-      if (state?.startedAt) sessions.set(botId, state.startedAt);
-      // The supervisor says where it is, because only it knows whether these computers sit on a
-      // shared network or answer on a published port.
-      if (state?.url) return state.url;
-      if (state?.port) return hostForPort(state.port);
-      throw new SupervisorError(
-        `The computer for ${botId} started but reported no address, so it cannot be reached.`,
-      );
+      return addressFromState(botId, state);
+    },
+
+    async restart(
+      botId: string,
+      request?: { resourceProfile?: ComputerResourceProfile },
+    ): Promise<string> {
+      const state = (await call(
+        `/computers/${encodeURIComponent(botId)}/restart`,
+        "POST",
+        request?.resourceProfile
+          ? { resourceProfile: request.resourceProfile }
+          : undefined,
+      )) as SupervisorComputerLocation;
+      return addressFromState(botId, state);
     },
 
     async status(botId: string): Promise<ComputerStatus> {

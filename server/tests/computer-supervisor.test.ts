@@ -52,6 +52,31 @@ describe("locating a Bot's computer", () => {
     expect(body).toEqual({ resourceProfile: "heavy" });
   });
 
+  test("restart uses one supervisor verb and carries the resource profile", async () => {
+    let seenPath = "";
+    let seenBody: unknown;
+    const client = createDockerSupervisorProvider({
+      baseUrl: "http://supervisor:4300",
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        seenPath = new URL(String(url)).pathname;
+        seenBody = init?.body ? JSON.parse(String(init.body)) : null;
+        return Response.json({
+          botId: "sales",
+          status: "running",
+          url: "http://openbot-computer-sales:4100",
+          startedAt: "2026-09-19T06:30:00.000Z",
+        });
+      }) as unknown as typeof fetch,
+    });
+
+    expect(await client.restart?.("sales", { resourceProfile: "heavy" })).toBe(
+      "http://openbot-computer-sales:4100",
+    );
+    expect(seenPath).toBe("/computers/sales/restart");
+    expect(seenBody).toEqual({ resourceProfile: "heavy" });
+    expect(await client.sessionOf?.("sales")).toBe("2026-09-19T06:30:00.000Z");
+  });
+
   test("falls back to a published port when there is no name to use", async () => {
     // A laptop: the server runs outside Docker, so the only way in is the published port.
     const client = clientWith(() =>
