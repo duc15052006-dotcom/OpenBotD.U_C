@@ -24,6 +24,7 @@ import {
 } from "rxjs";
 import { z } from "zod";
 import {
+  AUTONOMOUS_WORKFLOW_GUIDANCE,
   COMPUTER_GUIDANCE,
   PROVENANCE_GUIDANCE,
 } from "../../shared/bot-prompt";
@@ -179,6 +180,7 @@ export function standingRoleMessage(
        * "Investigate policies, transaction monitoring, and control evidence."
        */
       PROVENANCE_GUIDANCE,
+      AUTONOMOUS_WORKFLOW_GUIDANCE,
     ].join("\n\n"),
   };
 }
@@ -416,6 +418,12 @@ export function builtInAgentConfiguration(
        * it says comes from its own knowledge, and saying so is the only honest move available.
        */
       PROVENANCE_GUIDANCE,
+      /*
+       * Shared execution discipline for long autonomous work. It is conditional in its own wording:
+       * ordinary tasks remain ordinary tasks, while multi-scene workflows get stable state and exact
+       * prompt execution regardless of which tools happen to be granted on this turn.
+       */
+      AUTONOMOUS_WORKFLOW_GUIDANCE,
       ...(grantedToolGuidance(tools, connectedVendors)
         ? [grantedToolGuidance(tools, connectedVendors)]
         : []),
