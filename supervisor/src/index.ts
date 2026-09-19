@@ -185,7 +185,10 @@ app.post("/computers/:botId/snapshot", async (context) => {
     );
     return context.json({ snapshot: created });
   } catch (error) {
-    if (error instanceof NameHeldError || error instanceof ComputerSnapshotError) {
+    if (
+      error instanceof NameHeldError ||
+      error instanceof ComputerSnapshotError
+    ) {
       return context.json({ error: error.message }, 409);
     }
     if (error instanceof DockerUnavailableError) {
