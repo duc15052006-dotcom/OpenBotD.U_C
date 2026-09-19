@@ -36,6 +36,32 @@ describe("Computer lifecycle lock", () => {
     ]);
   });
 
+  test("keeps both halves of Restart ahead of a queued Reset", async () => {
+    const lock = createComputerLifecycleLock();
+    const events: string[] = [];
+    let releaseRestart!: () => void;
+    const restartStopped = new Promise<void>((resolve) => {
+      releaseRestart = resolve;
+    });
+
+    const restart = lock.run("bot-a", async () => {
+      events.push("restart:stop");
+      await restartStopped;
+      events.push("restart:ensure");
+    });
+    await tick();
+
+    const reset = lock.run("bot-a", async () => {
+      events.push("reset");
+    });
+    await tick();
+
+    expect(events).toEqual(["restart:stop"]);
+    releaseRestart();
+    await Promise.all([restart, reset]);
+    expect(events).toEqual(["restart:stop", "restart:ensure", "reset"]);
+  });
+
   test("does not serialize different Bots", async () => {
     const lock = createComputerLifecycleLock();
     const events: string[] = [];
