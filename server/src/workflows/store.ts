@@ -79,6 +79,7 @@ export type WorkflowStep = {
   attempts: number;
   provider: string | null;
   waitUntil: Date | null;
+  resumedFromWaitUntil: Date | null;
   failureReason: string | null;
   startedAt: Date | null;
   finishedAt: Date | null;
@@ -205,6 +206,7 @@ function toStep(row: WorkflowStepRow): WorkflowStep {
     attempts: row.attempts,
     provider: row.provider,
     waitUntil: row.waitUntil,
+    resumedFromWaitUntil: row.resumedFromWaitUntil,
     failureReason: row.failureReason,
     startedAt: row.startedAt,
     finishedAt: row.finishedAt,
@@ -663,6 +665,7 @@ export function createWorkflowStore(database: Database): WorkflowStore {
             finishedAt: null,
             failureReason: null,
             waitUntil: null,
+            resumedFromWaitUntil: null,
             updatedAt: sql`now()`,
           })
           .where(
@@ -713,6 +716,7 @@ export function createWorkflowStore(database: Database): WorkflowStore {
             status: "waiting",
             provider,
             waitUntil: input.waitUntil,
+            resumedFromWaitUntil: null,
             updatedAt: sql`now()`,
           })
           .where(
@@ -770,7 +774,8 @@ export function createWorkflowStore(database: Database): WorkflowStore {
         }
         if (
           current.status === "running" &&
-          current.waitUntil === null
+          current.waitUntil === null &&
+          current.resumedFromWaitUntil?.getTime() === expectedWaitUntil.getTime()
         ) {
           return toStep(current);
         }
@@ -779,6 +784,7 @@ export function createWorkflowStore(database: Database): WorkflowStore {
           .set({
             status: "running",
             waitUntil: null,
+            resumedFromWaitUntil: expectedWaitUntil,
             updatedAt: sql`now()`,
           })
           .where(
@@ -816,6 +822,7 @@ export function createWorkflowStore(database: Database): WorkflowStore {
             finishedAt: sql`now()`,
             waitUntil: null,
             failureReason: null,
+            resumedFromWaitUntil: null,
             updatedAt: sql`now()`,
           })
           .where(
