@@ -554,7 +554,9 @@ export function createTurnRunner(options: {
      */
     if (agent.pendingInterrupts.length > 0) {
       throw new Error(
-        `The turn stopped to ask a question, and this ${source} run has nobody to ask.`,
+        source === "routine"
+          ? "The turn stopped to ask a question, and a routine has nobody to ask."
+          : "The turn stopped to ask a question, and this workflow continuation has nobody to ask.",
       );
     }
     if (replyText.length === 0) {
