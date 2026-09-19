@@ -207,7 +207,10 @@ app.post("/computers/:botId/restore", async (context) => {
     );
     return context.json({ restored });
   } catch (error) {
-    if (error instanceof NameHeldError || error instanceof ComputerSnapshotError) {
+    if (
+      error instanceof NameHeldError ||
+      error instanceof ComputerSnapshotError
+    ) {
       return context.json({ error: error.message }, 409);
     }
     if (error instanceof DockerUnavailableError) {
