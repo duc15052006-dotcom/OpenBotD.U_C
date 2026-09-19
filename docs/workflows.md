@@ -47,7 +47,9 @@ because they share an owner.
 
 The destination channel is accepted only when the owner is a member and the Bot is in that same
 non-deleted channel. A missing, foreign or deleted channel is one refusal and does not reveal which
-part of the check failed.
+part of the check failed. The create tool may omit `channelId`: when the owner and Bot share exactly
+one live channel the store resolves it server-side; when they share several, creation is refused with
+the available channel choices so the Agent can ask the person instead of inventing an opaque id.
 
 Deleting an Agent cascades its workflow rows and steps, so a pending plan cannot survive as stale work
 for an identity that no longer exists.
