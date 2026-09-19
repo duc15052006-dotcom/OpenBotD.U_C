@@ -272,11 +272,10 @@ type RoutineRow = typeof routines.$inferSelect;
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
 
 async function databaseNow(transaction: Transaction): Promise<Date> {
-  const [row] = await transaction
-    .select({
-      now: sql<Date>`date_trunc('milliseconds', now())`,
-    })
-    .execute();
+  const rows = (await transaction.execute(
+    sql`select date_trunc('milliseconds', now()) as "now"`,
+  )) as unknown as Array<{ now: Date }>;
+  const row = rows[0];
   if (!row) throw new Error("database clock query returned no row");
   return row.now;
 }
@@ -286,12 +285,10 @@ async function requireDatabaseFuture(
   at: Date,
   message: string,
 ): Promise<void> {
-  const [row] = await transaction
-    .select({
-      future: sql<boolean>`${at} > now()`,
-    })
-    .execute();
-  if (row?.future !== true) throw new RoutineRefusedError(message);
+  const rows = (await transaction.execute(
+    sql`select ${at} > now() as "future"`,
+  )) as unknown as Array<{ future: boolean }>;
+  if (rows[0]?.future !== true) throw new RoutineRefusedError(message);
 }
 
 function toRoutine(row: RoutineRow): Routine {
