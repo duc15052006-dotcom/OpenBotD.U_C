@@ -313,6 +313,27 @@ function nextRunFor(cron: string, timezone: string, after: Date): Date {
   }
 }
 
+function validOneShotAt(runAt: Date): Date {
+  if (!(runAt instanceof Date) || Number.isNaN(runAt.getTime())) {
+    throw new RoutineRefusedError("A one-time wake needs a valid date and time.");
+  }
+  if (runAt.getTime() <= Date.now()) {
+    throw new RoutineRefusedError("A one-time wake has to be in the future.");
+  }
+  return runAt;
+}
+
+/** Observability only: one-shot rows are never advanced through this cron expression. */
+function oneShotCron(runAt: Date): string {
+  return [
+    runAt.getUTCMinutes(),
+    runAt.getUTCHours(),
+    runAt.getUTCDate(),
+    runAt.getUTCMonth() + 1,
+    "*",
+  ].join(" ");
+}
+
 /**
  * "A", "A, B", or five names and "and others" — a sentence, not a list a client renders.
  *
@@ -499,15 +520,29 @@ export function createRoutineStore(database: Database): RoutineStore {
 
     const cron = patch.cron ?? existing.cron;
     const timezone = patch.timezone ?? existing.timezone;
+    if (
+      existing.scheduleKind === "once" &&
+      (patch.cron !== undefined || patch.timezone !== undefined)
+    ) {
+      throw new RoutineRefusedError(
+        "A one-time wake has an exact time, not a cron schedule. Delete it and schedule a new wake to change that time.",
+      );
+    }
     if (patch.cron !== undefined) values.cron = patch.cron;
     if (patch.timezone !== undefined) values.timezone = timezone;
     /*
-     * Recomputed for a new cron, a new zone, and for switching back on. That last one is the subtle
-     * case: a routine switched off in June still holds June's `next_run_at`, and enabling it without
-     * recomputing hands the sweep a firing that was due months ago.
+     * Recurring schedules recompute when their cron/zone changes or they are switched back on. A
+     * one-time wake keeps its exact persisted stamp; re-enabling it after that stamp has passed is
+     * refused rather than silently turning completed work back into scheduled work.
      */
-    if (patch.cron !== undefined || patch.timezone !== undefined || enabling) {
-      values.nextRunAt = nextRunFor(cron, timezone, new Date());
+    if (existing.scheduleKind === "recurring") {
+      if (patch.cron !== undefined || patch.timezone !== undefined || enabling) {
+        values.nextRunAt = nextRunFor(cron, timezone, new Date());
+      }
+    } else if (enabling && existing.nextRunAt.getTime() <= Date.now()) {
+      throw new RoutineRefusedError(
+        "That one-time wake has already passed. Schedule a new wake instead.",
+      );
     }
 
     /*
