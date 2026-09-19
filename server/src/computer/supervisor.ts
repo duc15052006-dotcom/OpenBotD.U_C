@@ -13,7 +13,11 @@
  * honest about being one shared computer.
  */
 
-import type { ComputerLocation, ComputerProvider } from "./provider";
+import type {
+  ComputerHostCapacity,
+  ComputerLocation,
+  ComputerProvider,
+} from "./provider";
 import type { ComputerStatus } from "./schema";
 import type { ComputerResourceProfile } from "./resource-profile";
 
@@ -287,6 +291,10 @@ export function createDockerSupervisorProvider(
         `/computers/${encodeURIComponent(botId)}/restore`,
       )) as { restored?: boolean } | null;
       return { restored: result?.restored === true };
+    },
+
+    async capacity(): Promise<ComputerHostCapacity | undefined> {
+      return (await call("/capacity", "GET")) as ComputerHostCapacity;
     },
 
     list,

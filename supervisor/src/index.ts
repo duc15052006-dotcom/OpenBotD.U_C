@@ -9,6 +9,7 @@ import {
   createCleanSnapshot,
   DockerUnavailableError,
   ensure,
+  hostCapacity,
   listOwned,
   NameHeldError,
   reachable,
@@ -261,6 +262,21 @@ app.post("/computers/:botId/reset", async (context) => {
     if (error instanceof NameHeldError) {
       return context.json({ error: error.message }, 409);
     }
+    if (error instanceof DockerUnavailableError) {
+      return context.json({ error: error.message }, 503);
+    }
+    throw error;
+  }
+});
+
+app.get("/capacity", async (context) => {
+  try {
+    return context.json({
+      ...(await hostCapacity()),
+      maxActiveComputers: maxActiveComputers ?? null,
+      resourceProfiles: RESOURCE_PROFILES,
+    });
+  } catch (error) {
     if (error instanceof DockerUnavailableError) {
       return context.json({ error: error.message }, 503);
     }
