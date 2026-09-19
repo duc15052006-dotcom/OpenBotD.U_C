@@ -152,6 +152,46 @@ describe("workflow wake bridge", () => {
     expect(order).toEqual(["resume", "dispatch", "finish"]);
   });
 
+  test("renews the queue lease while a headless continuation is running", async () => {
+    let renewals = 0;
+    await dispatchClaimedWorkflowWaits({
+      owner: "worker-1",
+      leaseMs: 60,
+      renewEveryMs: 5,
+      queue: queueStub({
+        claim: async () => [
+          {
+            kind: WORKFLOW_WAIT_RESUME_KIND,
+            key: "wake-1",
+            attempts: 1,
+            payload: {
+              ownerUserId: "user-1",
+              agentId: "bot-1",
+              workflowId: "workflow-1",
+              stepKey: "render",
+              waitUntil: "2026-09-20T07:30:00.000Z",
+              attempts: 2,
+            },
+          },
+        ],
+        renew: async () => {
+          renewals += 1;
+          return true;
+        },
+      }),
+      store: {
+        dueWaitingSteps: async () => [],
+        resumeWaitingStep: async () => ({}) as never,
+      },
+      dispatch: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      },
+    });
+
+    // One renewal before the continuation plus heartbeat renewals while it is running.
+    expect(renewals).toBeGreaterThan(1);
+  });
+
   test("releases the same wake when headless dispatch fails", async () => {
     let released = 0;
     await dispatchClaimedWorkflowWaits({
