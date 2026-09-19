@@ -7,6 +7,22 @@ review chains, or plans that sleep and resume later.
 This layer deliberately reuses the deployment's existing scheduler and `work_items` queue. It does
 not create a second lease, timer, or coordinator.
 
+## Agent tools
+
+The durable store is exposed through the first-party **Workflows** plugin, not as an ungoverned
+internal shortcut. An administrator must enable the Workflows catalogue entry and grant its tools to
+a Bot before that Bot can create or mutate workflow state. Calls derive the owner and Bot from the
+active run connection; tool arguments cannot substitute another owner or Agent id.
+
+The tool surface can create/list/read workflows, pause/resume/cancel them, start/wait/complete/fail
+or retry steps, and add/list/remove per-step asset metadata. Waiting a step persists an exact future
+timestamp and lets the shared durable wake bridge resume it later instead of keeping a browser turn
+alive or polling in a loop.
+
+This surface changes workflow state only. It does not grant Browser, Files, Computer, connector or
+host access; execution of a step still uses the Bot's existing grants and policy at the time the
+action is attempted.
+
 ## State model
 
 A workflow run records its owner, Bot, destination channel, title and lifecycle:

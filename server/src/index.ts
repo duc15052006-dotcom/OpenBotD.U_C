@@ -101,6 +101,7 @@ import { hostAccessTools } from "./host-access/tools";
 import { createOnboardingStore } from "./people/onboarding";
 import { createPeopleStore } from "./people/store";
 import { useRoutineTools } from "./plugins/builtin-routines";
+import { useWorkflowTools } from "./plugins/builtin-workflows";
 import { useComposioClient } from "./plugins/composio";
 import { createComposioClient } from "./plugins/composio-adapter";
 import { redirectUriFor } from "./plugins/oauth";
@@ -419,6 +420,7 @@ const pluginStore = createPluginStore({
 const routineStore = createRoutineStore(database);
 useRoutineTools(routineStore);
 const workflowStore = createWorkflowStore(database);
+useWorkflowTools(workflowStore);
 
 /**
  * Other Bots this person deliberately put in the same live channel as this Bot.

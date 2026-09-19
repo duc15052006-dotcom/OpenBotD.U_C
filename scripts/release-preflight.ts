@@ -1479,6 +1479,9 @@ function checkDurableWorkflowState(): void {
   const wake = read("server/src/workflows/wake.ts");
   const server = read("server/src/index.ts");
   const assetMigration = read("server/drizzle/0044_workflow_assets.sql");
+  const builtin = read("server/src/plugins/builtin-workflows.ts");
+  const transport = read("server/src/plugins/transport.ts");
+  const catalogue = read("server/src/plugins/catalogue.ts");
 
   for (const evidence of [
     'workflowRunStatus = pgEnum("workflow_run_status"',
@@ -1552,6 +1555,47 @@ function checkDurableWorkflowState(): void {
   ]) {
     if (!assetMigration.includes(evidence)) {
       fail(`workflows: asset migration is missing ${evidence}`);
+    }
+  }
+
+  for (const evidence of ["useWorkflowTools(workflowStore)"]) {
+    if (!server.includes(evidence)) {
+      fail(
+        `workflows: builtin workflow tool store is not installed: ${evidence}`,
+      );
+    }
+  }
+  for (const evidence of [
+    '"builtin-workflows": builtinWorkflows',
+    '| "builtin-workflows"',
+  ]) {
+    if (!transport.includes(evidence)) {
+      fail(`workflows: builtin workflow transport is missing ${evidence}`);
+    }
+  }
+  for (const evidence of [
+    'key: "workflows"',
+    'transport: "builtin-workflows"',
+    '"create_workflow"',
+    '"cancel_workflow"',
+    '"add_workflow_asset"',
+  ]) {
+    if (!catalogue.includes(evidence)) {
+      fail(`workflows: governed catalogue surface is missing ${evidence}`);
+    }
+  }
+  for (const evidence of [
+    "connection.actorId",
+    "connection.botId",
+    '"create_workflow"',
+    '"wait_workflow_step"',
+    '"complete_workflow_step"',
+    '"retry_workflow_step"',
+    '"add_workflow_asset"',
+    '"list_workflow_assets"',
+  ]) {
+    if (!builtin.includes(evidence)) {
+      fail(`workflows: builtin tool boundary is missing ${evidence}`);
     }
   }
 
