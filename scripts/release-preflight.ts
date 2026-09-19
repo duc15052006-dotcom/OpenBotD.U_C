@@ -455,10 +455,15 @@ function checkComputerSandboxBoundary(): void {
   }
   for (const evidence of ["capacity?:", "resourceProfiles"]) {
     if (!computerQueries.includes(evidence)) {
-      fail(`computer: Computer Manager capacity contract is missing ${evidence}`);
+      fail(
+        `computer: Computer Manager capacity contract is missing ${evidence}`,
+      );
     }
   }
-  if (!computersPage.includes("computerStartWarning") || !computersPage.includes("Start anyway")) {
+  if (
+    !computersPage.includes("computerStartWarning") ||
+    !computersPage.includes("Start anyway")
+  ) {
     fail("computer: start-time host resource warning is missing");
   }
 

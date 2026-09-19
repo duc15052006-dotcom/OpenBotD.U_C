@@ -523,7 +523,11 @@ function ComputersPage() {
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button onClick={() => setConfirmingStart(null)} size="sm" variant="ghost">
+            <Button
+              onClick={() => setConfirmingStart(null)}
+              size="sm"
+              variant="ghost"
+            >
               Cancel
             </Button>
             <Button
@@ -893,7 +897,6 @@ function pendingLabel(request: HostAccessPendingOperation) {
   }
 }
 
-
 export function computerStartWarning(
   fleet:
     | {
@@ -915,25 +918,31 @@ export function computerStartWarning(
   const capacity = fleet?.capacity;
   if (!fleet || !capacity) return null;
   const running = fleet.computers.filter((computer) => computer.running);
-  if (capacity.maxActiveComputers && running.length + 1 >= capacity.maxActiveComputers) {
+  if (
+    capacity.maxActiveComputers &&
+    running.length + 1 >= capacity.maxActiveComputers
+  ) {
     return `This will use ${running.length + 1} of ${capacity.maxActiveComputers} active Computer slots.`;
   }
-  const quotaFor = (id: string) => capacity.resourceProfiles[profiles[id] ?? "normal"];
+  const quotaFor = (id: string) =>
+    capacity.resourceProfiles[profiles[id] ?? "normal"];
   const next = quotaFor(botId);
   if (capacity.memoryBytes && capacity.memoryBytes > 0) {
-    const projected = running.reduce(
-      (total, computer) => total + quotaFor(computer.botId).memoryBytes,
-      0,
-    ) + next.memoryBytes;
+    const projected =
+      running.reduce(
+        (total, computer) => total + quotaFor(computer.botId).memoryBytes,
+        0,
+      ) + next.memoryBytes;
     if (projected >= capacity.memoryBytes * 0.8) {
       return `Computer memory quotas would reach about ${Math.round((projected / capacity.memoryBytes) * 100)}% of the container engine's available RAM.`;
     }
   }
   if (capacity.logicalCpus && capacity.logicalCpus > 0) {
-    const projectedNanoCpus = running.reduce(
-      (total, computer) => total + quotaFor(computer.botId).nanoCpus,
-      0,
-    ) + next.nanoCpus;
+    const projectedNanoCpus =
+      running.reduce(
+        (total, computer) => total + quotaFor(computer.botId).nanoCpus,
+        0,
+      ) + next.nanoCpus;
     const hostNanoCpus = capacity.logicalCpus * 1_000_000_000;
     if (projectedNanoCpus >= hostNanoCpus * 0.8) {
       return `Computer CPU quotas would reach about ${Math.round((projectedNanoCpus / hostNanoCpus) * 100)}% of the container engine's logical CPU capacity.`;
