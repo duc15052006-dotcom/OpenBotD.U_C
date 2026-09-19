@@ -38,6 +38,20 @@ describe("locating a Bot's computer", () => {
     );
   });
 
+  test("sends the bounded resource profile to ensure", async () => {
+    let body: unknown;
+    const client = createDockerSupervisorProvider({
+      baseUrl: "http://supervisor:4300",
+      fetchImpl: (async (_url: string | URL | Request, init?: RequestInit) => {
+        body = init?.body ? JSON.parse(String(init.body)) : null;
+        return Response.json({ url: "http://openbot-computer-sales:4100" });
+      }) as unknown as typeof fetch,
+    });
+
+    await client.locate("sales", { resourceProfile: "heavy" });
+    expect(body).toEqual({ resourceProfile: "heavy" });
+  });
+
   test("falls back to a published port when there is no name to use", async () => {
     // A laptop: the server runs outside Docker, so the only way in is the published port.
     const client = clientWith(() =>
