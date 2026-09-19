@@ -349,13 +349,18 @@ function checkComputerSandboxBoundary(): void {
     snapshotSupervisor
       .split("export async function restoreCleanSnapshot(", 2)[1]
       ?.split("/**\n * Whether the computer that exists", 1)[0] ?? "";
-  const restoreTarget = restoreSupervisor.indexOf("const target = liveVolumes(names);");
+  const restoreTarget = restoreSupervisor.indexOf(
+    "const target = liveVolumes(names);",
+  );
   const restoreTry = restoreSupervisor.indexOf("try {", restoreTarget);
   const restorePrepare = restoreSupervisor.indexOf(
     "for (const volume of target)",
     restoreTry,
   );
-  const restoreCatch = restoreSupervisor.indexOf("} catch (error)", restorePrepare);
+  const restoreCatch = restoreSupervisor.indexOf(
+    "} catch (error)",
+    restorePrepare,
+  );
   if (
     restoreTarget < 0 ||
     restoreTry < restoreTarget ||
