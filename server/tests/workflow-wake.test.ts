@@ -40,6 +40,7 @@ describe("workflow wake bridge", () => {
             workflowId: "workflow-1",
             stepKey: "render",
             waitUntil,
+            attempts: 1,
           },
         ],
         resumeWaitingStep: async () => {
@@ -58,6 +59,7 @@ describe("workflow wake bridge", () => {
         workflowId: "workflow-1",
         stepKey: "render",
         waitUntil: "2026-09-20T07:30:00.000Z",
+        attempts: 1,
       },
     });
   });
@@ -73,6 +75,7 @@ describe("workflow wake bridge", () => {
         workflowId: "workflow-1",
         stepKey: "render",
         waitUntil: "2026-09-20T07:30:00.000Z",
+        attempts: 1,
       },
     };
     const calls: unknown[][] = [];
@@ -99,6 +102,90 @@ describe("workflow wake bridge", () => {
     expect((calls[0]?.[3] as Date | undefined)?.toISOString()).toBe(
       "2026-09-20T07:30:00.000Z",
     );
+    expect(calls[0]?.[4]).toBe(1);
+  });
+
+  test("dispatches the headless continuation before finishing the wake", async () => {
+    const order: string[] = [];
+    const item: WorkItem = {
+      kind: WORKFLOW_WAIT_RESUME_KIND,
+      key: "wake-1",
+      attempts: 1,
+      payload: {
+        ownerUserId: "user-1",
+        agentId: "bot-1",
+        workflowId: "workflow-1",
+        stepKey: "render",
+        waitUntil: "2026-09-20T07:30:00.000Z",
+        attempts: 2,
+      },
+    };
+
+    await dispatchClaimedWorkflowWaits({
+      owner: "worker-1",
+      queue: queueStub({
+        claim: async () => [item],
+        finish: async () => {
+          order.push("finish");
+          return true;
+        },
+      }),
+      store: {
+        dueWaitingSteps: async () => [],
+        resumeWaitingStep: async () => {
+          order.push("resume");
+          return {} as never;
+        },
+      },
+      dispatch: async (input) => {
+        order.push("dispatch");
+        expect(input).toEqual({
+          ownerUserId: "user-1",
+          agentId: "bot-1",
+          workflowId: "workflow-1",
+          stepKey: "render",
+          expectedAttempt: 2,
+        });
+      },
+    });
+
+    expect(order).toEqual(["resume", "dispatch", "finish"]);
+  });
+
+  test("releases the same wake when headless dispatch fails", async () => {
+    let released = 0;
+    await dispatchClaimedWorkflowWaits({
+      owner: "worker-1",
+      queue: queueStub({
+        claim: async () => [
+          {
+            kind: WORKFLOW_WAIT_RESUME_KIND,
+            key: "wake-1",
+            attempts: 1,
+            payload: {
+              ownerUserId: "user-1",
+              agentId: "bot-1",
+              workflowId: "workflow-1",
+              stepKey: "render",
+              waitUntil: "2026-09-20T07:30:00.000Z",
+              attempts: 2,
+            },
+          },
+        ],
+        release: async () => {
+          released += 1;
+          return true;
+        },
+      }),
+      store: {
+        dueWaitingSteps: async () => [],
+        resumeWaitingStep: async () => ({} as never),
+      },
+      dispatch: async () => {
+        throw new Error("gateway unavailable");
+      },
+    });
+    expect(released).toBe(1);
   });
 
   test("finishes a stale exact wake instead of retrying it", async () => {
@@ -118,6 +205,8 @@ describe("workflow wake bridge", () => {
               workflowId: "workflow-1",
               stepKey: "render",
               waitUntil: "2026-09-20T07:30:00.000Z",
+              attempts: 1,
+        attempts: 1,
             },
           },
         ],
@@ -163,6 +252,8 @@ describe("workflow wake bridge", () => {
               workflowId: "workflow-1",
               stepKey: "render",
               waitUntil: "2026-09-20T07:30:00.000Z",
+              attempts: 1,
+        attempts: 1,
             },
           },
         ],
