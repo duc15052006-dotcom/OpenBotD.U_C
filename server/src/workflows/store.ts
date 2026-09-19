@@ -635,8 +635,55 @@ export function createWorkflowStore(database: Database): WorkflowStore {
       return transitionRun(identity, id, "active", "paused");
     },
 
-    resume(identity, id) {
-      return transitionRun(identity, id, "paused", "active");
+    async resume(identity, id) {
+      await database.transaction(async (transaction) => {
+        await lockWorkflow(transaction, id);
+        const run = await loadOwned(transaction, identity, id);
+        if (run.status !== "paused") {
+          throw new WorkflowRefusedError(
+            "That workflow is not paused, so it cannot become active.",
+          );
+        }
+
+        await transaction
+          .update(workflowRuns)
+          .set({ status: "active", updatedAt: sql`now()` })
+          .where(
+            and(
+              eq(workflowRuns.id, id),
+              eq(workflowRuns.ownerUserId, identity.ownerUserId),
+              eq(workflowRuns.agentId, identity.agentId),
+              eq(workflowRuns.status, "paused"),
+            ),
+          );
+
+        /*
+         * A wake can race with Pause after it was offered but before it resumes the step. That
+         * exact queue item is then correctly finished as stale while the workflow is paused.
+         * Reusing its old wait timestamp on Resume would reuse the same deterministic queue key,
+         * which still points at the finished row and can never be claimed again.
+         *
+         * Re-arm only waits that became due while paused, with a fresh timestamp from Postgres'
+         * own clock. Millisecond truncation is deliberate: these stamps round-trip through JS Date
+         * and are later compared exactly by resumeWaitingStep.
+         */
+        await transaction
+          .update(workflowSteps)
+          .set({
+            waitUntil: sql<Date>`date_trunc('milliseconds', now())`,
+            resumedFromWaitUntil: null,
+            updatedAt: sql`now()`,
+          })
+          .where(
+            and(
+              eq(workflowSteps.workflowId, id),
+              eq(workflowSteps.status, "waiting"),
+              isNotNull(workflowSteps.waitUntil),
+              lte(workflowSteps.waitUntil, sql`now()`),
+            ),
+          );
+      });
+      return (await planFor(identity, id)) as WorkflowPlan;
     },
 
     cancel(identity, id) {
