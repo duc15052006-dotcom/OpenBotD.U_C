@@ -96,7 +96,7 @@ describe("workflow wake bridge", () => {
       ownerUserId: "user-1",
       agentId: "bot-1",
     });
-    expect((calls[0]?.[3] as Date).toISOString()).toBe(
+    expect((calls[0]?.[3] as Date | undefined)?.toISOString()).toBe(
       "2026-09-20T07:30:00.000Z",
     );
   });
