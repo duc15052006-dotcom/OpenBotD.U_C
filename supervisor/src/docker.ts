@@ -471,13 +471,16 @@ async function ownedVolumeSetState(
   names: ComputerNames,
   volumes: string[],
 ): Promise<"missing" | "complete" | "partial"> {
-  const states = await Promise.all(
-    volumes.map((volume) => volumeOwnership(names, volume)),
+  const entries = await Promise.all(
+    volumes.map(async (volume) => ({
+      volume,
+      state: await volumeOwnership(names, volume),
+    })),
   );
-  const foreign = states.findIndex((state) => state === "foreign");
-  if (foreign >= 0) throw new NameHeldError(volumes[foreign]!, "volume");
-  if (states.every((state) => state === "missing")) return "missing";
-  if (states.every((state) => state === "ours")) return "complete";
+  const foreign = entries.find((entry) => entry.state === "foreign");
+  if (foreign) throw new NameHeldError(foreign.volume, "volume");
+  if (entries.every((entry) => entry.state === "missing")) return "missing";
+  if (entries.every((entry) => entry.state === "ours")) return "complete";
   return "partial";
 }
 
@@ -497,8 +500,14 @@ async function snapshotSlotStates(
       const state = await ownedVolumeSetState(names, volumes);
       let createdAt = 0;
       if (state === "complete") {
+        const [primaryVolume] = volumes;
+        if (!primaryVolume) {
+          throw new ComputerSnapshotError(
+            "A clean snapshot slot has no primary volume.",
+          );
+        }
         try {
-          const info = (await docker.getVolume(volumes[0]!).inspect()) as {
+          const info = (await docker.getVolume(primaryVolume).inspect()) as {
             CreatedAt?: string;
           };
           const parsed = Date.parse(info.CreatedAt ?? "");
@@ -620,13 +629,14 @@ export async function createCleanSnapshot(
 
   try {
     const source = liveVolumes(names);
-    for (let index = 0; index < source.length; index += 1) {
-      await copyOwnedVolume(
-        names,
-        image,
-        source[index]!,
-        target.volumes[index]!,
-      );
+    for (const [index, sourceVolume] of source.entries()) {
+      const targetVolume = target.volumes[index];
+      if (!targetVolume) {
+        throw new ComputerSnapshotError(
+          "Snapshot destination volume mapping is incomplete.",
+        );
+      }
+      await copyOwnedVolume(names, image, sourceVolume, targetVolume);
     }
   } catch (error) {
     for (const volume of target.volumes) {
@@ -687,13 +697,14 @@ export async function restoreCleanSnapshot(
 
   const target = liveVolumes(names);
   try {
-    for (let index = 0; index < snapshot.volumes.length; index += 1) {
-      await copyOwnedVolume(
-        names,
-        image,
-        snapshot.volumes[index]!,
-        target[index]!,
-      );
+    for (const [index, snapshotVolume] of snapshot.volumes.entries()) {
+      const targetVolume = target[index];
+      if (!targetVolume) {
+        throw new ComputerSnapshotError(
+          "Restore destination volume mapping is incomplete.",
+        );
+      }
+      await copyOwnedVolume(names, image, snapshotVolume, targetVolume);
     }
   } catch (error) {
     // Never leave a mixed profile/workspace/quarantine set after a failed restore. The clean
