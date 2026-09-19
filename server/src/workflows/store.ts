@@ -775,7 +775,8 @@ export function createWorkflowStore(database: Database): WorkflowStore {
         if (
           current.status === "running" &&
           current.waitUntil === null &&
-          current.resumedFromWaitUntil?.getTime() === expectedWaitUntil.getTime()
+          current.resumedFromWaitUntil?.getTime() ===
+            expectedWaitUntil.getTime()
         ) {
           return toStep(current);
         }
