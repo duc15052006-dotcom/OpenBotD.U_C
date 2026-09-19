@@ -134,6 +134,13 @@ export type DueWorkflowWait = WorkflowIdentity & {
   attempts: number;
 };
 
+export type ReadyWorkflowStep = WorkflowIdentity & {
+  workflowId: string;
+  stepKey: string;
+  readyAt: Date;
+  attempts: number;
+};
+
 export class WorkflowNotFoundError extends Error {
   constructor() {
     super("That workflow does not exist.");
@@ -281,6 +288,13 @@ export type WorkflowStore = {
     id: string,
     key: string,
   ): Promise<WorkflowStep>;
+  startReadyStep(
+    identity: WorkflowIdentity,
+    id: string,
+    key: string,
+    expectedReadyAt: Date,
+    expectedAttempt: number,
+  ): Promise<WorkflowStep>;
   waitStep(
     identity: WorkflowIdentity,
     id: string,
@@ -311,6 +325,7 @@ export type WorkflowStore = {
     id: string,
     key: string,
   ): Promise<WorkflowStep>;
+  readySteps(limit: number): Promise<ReadyWorkflowStep[]>;
   dueWaitingSteps(limit: number): Promise<DueWorkflowWait[]>;
   addAsset(
     identity: WorkflowIdentity,
@@ -609,6 +624,7 @@ export function createWorkflowStore(database: Database): WorkflowStore {
             id: `workflow_step_${crypto.randomUUID()}`,
             workflowId: id,
             ...step,
+            updatedAt: sql<Date>`date_trunc('milliseconds', now())`,
           })),
         );
       });
@@ -682,6 +698,23 @@ export function createWorkflowStore(database: Database): WorkflowStore {
               lte(workflowSteps.waitUntil, sql`now()`),
             ),
           );
+
+        // Ready work has the same deterministic-key problem as an overdue wait: if a queued ready
+        // item was finished while the workflow was paused, resuming with the same stamp would
+        // collide with that finished queue row forever. Give every still-ready step a fresh,
+        // millisecond-stable dispatch stamp on Resume so the next sweep can offer it again.
+        await transaction
+          .update(workflowSteps)
+          .set({
+            resumedFromWaitUntil: null,
+            updatedAt: sql<Date>`date_trunc('milliseconds', now())`,
+          })
+          .where(
+            and(
+              eq(workflowSteps.workflowId, id),
+              eq(workflowSteps.status, "ready"),
+            ),
+          );
       });
       return (await planFor(identity, id)) as WorkflowPlan;
     },
@@ -726,6 +759,99 @@ export function createWorkflowStore(database: Database): WorkflowStore {
         if (!row) {
           throw new WorkflowRefusedError(
             "That workflow step is not ready to start.",
+          );
+        }
+        return toStep(row);
+      });
+    },
+
+    async startReadyStep(
+      identity,
+      id,
+      key,
+      expectedReadyAt,
+      expectedAttempt,
+    ) {
+      if (
+        !(expectedReadyAt instanceof Date) ||
+        Number.isNaN(expectedReadyAt.getTime()) ||
+        !Number.isInteger(expectedAttempt) ||
+        expectedAttempt < 0
+      ) {
+        throw new WorkflowRefusedError(
+          "A queued ready step needs an exact ready timestamp and attempt.",
+        );
+      }
+
+      return await database.transaction(async (transaction) => {
+        await lockWorkflow(transaction, id);
+        const run = await loadOwned(transaction, identity, id);
+        if (run.status !== "active") {
+          throw new WorkflowRefusedError(
+            "Only an active workflow can start a ready step.",
+          );
+        }
+
+        const wantedKey = stepKey(key);
+        const [current] = await transaction
+          .select()
+          .from(workflowSteps)
+          .where(
+            and(
+              eq(workflowSteps.workflowId, id),
+              eq(workflowSteps.key, wantedKey),
+            ),
+          )
+          .limit(1);
+        if (!current) {
+          throw new WorkflowRefusedError(
+            "That workflow step does not exist for this workflow.",
+          );
+        }
+
+        // A released queue item may come back after it already performed the ready->running CAS.
+        // Only the exact item that wrote this stamp may re-enter that same running attempt.
+        if (
+          current.status === "running" &&
+          current.attempts === expectedAttempt + 1 &&
+          current.resumedFromWaitUntil?.getTime() === expectedReadyAt.getTime()
+        ) {
+          return toStep(current);
+        }
+
+        if (current.attempts !== expectedAttempt) {
+          throw new WorkflowRefusedError(
+            "That workflow step moved to another attempt after this ready dispatch was scheduled.",
+          );
+        }
+
+        const [row] = await transaction
+          .update(workflowSteps)
+          .set({
+            status: "running",
+            attempts: sql`${workflowSteps.attempts} + 1`,
+            startedAt: sql`now()`,
+            finishedAt: null,
+            failureReason: null,
+            waitUntil: null,
+            // Reuse the durable per-attempt dispatch stamp. waitStep clears it, and a later wait
+            // wake replaces it with its own exact wait timestamp.
+            resumedFromWaitUntil: expectedReadyAt,
+            updatedAt: sql`now()`,
+          })
+          .where(
+            and(
+              eq(workflowSteps.workflowId, id),
+              eq(workflowSteps.key, wantedKey),
+              eq(workflowSteps.status, "ready"),
+              eq(workflowSteps.attempts, expectedAttempt),
+              eq(workflowSteps.updatedAt, expectedReadyAt),
+            ),
+          )
+          .returning();
+        if (!row) {
+          throw new WorkflowRefusedError(
+            "That ready step changed after this dispatch was scheduled.",
           );
         }
         return toStep(row);
@@ -903,7 +1029,10 @@ export function createWorkflowStore(database: Database): WorkflowStore {
           ) {
             await transaction
               .update(workflowSteps)
-              .set({ status: "ready", updatedAt: sql`now()` })
+              .set({
+                status: "ready",
+                updatedAt: sql<Date>`date_trunc('milliseconds', now())`,
+              })
               .where(
                 and(
                   eq(workflowSteps.id, step.id),
@@ -1020,7 +1149,8 @@ export function createWorkflowStore(database: Database): WorkflowStore {
             status: "ready",
             failureReason: null,
             finishedAt: null,
-            updatedAt: sql`now()`,
+            resumedFromWaitUntil: null,
+            updatedAt: sql<Date>`date_trunc('milliseconds', now())`,
           })
           .where(
             and(
@@ -1148,6 +1278,42 @@ export function createWorkflowStore(database: Database): WorkflowStore {
           );
         }
       });
+    },
+
+    async readySteps(limit) {
+      if (!Number.isInteger(limit) || limit <= 0 || limit > 500) {
+        throw new WorkflowRefusedError(
+          "A ready-step scan limit must be between 1 and 500.",
+        );
+      }
+      const rows = await database
+        .select({
+          ownerUserId: workflowRuns.ownerUserId,
+          agentId: workflowRuns.agentId,
+          workflowId: workflowRuns.id,
+          stepKey: workflowSteps.key,
+          readyAt: workflowSteps.updatedAt,
+          attempts: workflowSteps.attempts,
+        })
+        .from(workflowSteps)
+        .innerJoin(workflowRuns, eq(workflowRuns.id, workflowSteps.workflowId))
+        .where(
+          and(
+            eq(workflowRuns.status, "active"),
+            eq(workflowSteps.status, "ready"),
+          ),
+        )
+        .orderBy(asc(workflowSteps.updatedAt), asc(workflowSteps.id))
+        .limit(limit);
+
+      return rows.map((row) => ({
+        ownerUserId: row.ownerUserId,
+        agentId: row.agentId,
+        workflowId: row.workflowId,
+        stepKey: row.stepKey,
+        readyAt: row.readyAt,
+        attempts: row.attempts,
+      }));
     },
 
     async dueWaitingSteps(limit) {
