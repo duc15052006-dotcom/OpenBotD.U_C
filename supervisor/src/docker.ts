@@ -1166,7 +1166,9 @@ export async function ensure(
 
 /** Stop this Bot's computer. Its storage is untouched, so its logins survive. */
 export async function stop(names: ComputerNames): Promise<boolean> {
-  if (!(await inspectOwned(names))) return false;
+  const existing = await inspectOwned(names);
+  if (!existing) return false;
+  const wasRunning = existing.status.toLowerCase() === "running";
   try {
     // Long enough for Chromium to flush its profile, matching the compose grace period.
     await docker.getContainer(names.container).stop({ t: 30 });
@@ -1176,7 +1178,9 @@ export async function stop(names: ComputerNames): Promise<boolean> {
       throw new DockerUnavailableError(String(error));
     }
   }
-  return true;
+  // The gateway/audit contract is "was it running before this Stop?", not "did a container exist?".
+  // Docker keeps stopped containers so existence alone would report a second idempotent Stop as work.
+  return wasRunning;
 }
 
 /**
