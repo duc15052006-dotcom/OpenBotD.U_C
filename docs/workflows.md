@@ -54,8 +54,15 @@ for an identity that no longer exists.
 
 ## Dependencies and retries
 
-Root steps begin `ready`; dependent steps begin `blocked`. Starting a step is a compare-and-set from
-`ready` to `running` and increments its durable attempt count.
+Root steps begin `ready`; dependent steps begin `blocked`. Ready steps are discovered by a bounded
+recovery sweep and offered to the existing durable `work_items` queue. The queued identity includes
+the exact ready timestamp and current attempt count; starting is a compare-and-set from that exact
+`ready` version to `running` and increments the durable attempt count.
+
+The same exact queue item may be retried after a worker/model interruption. A dispatch stamp on the
+running attempt lets only that item re-enter the same attempt; a manual start, a newer retry, or any
+other state transition makes the old item stale. Long headless turns renew their queue lease while
+they run so a second replica cannot claim the same autonomous step mid-turn.
 
 Completing a step promotes only blocked steps whose complete dependency set has succeeded. Workflow
 transitions are serialized with a PostgreSQL transaction-scoped advisory lock, so two steps finishing
@@ -63,7 +70,29 @@ at the same time cannot leave a dependent step permanently blocked.
 
 A running step may fail without destroying the workflow. It becomes `failed`, keeps its attempt
 history and failure reason, and can be moved back to `ready` only when all of its dependencies still
-succeeded. The next start increments the same attempt counter.
+succeeded. The retry transition mints a fresh monotonic ready stamp so an older finished queue item
+cannot suppress the new attempt. The next start increments the same attempt counter.
+
+When a ready-step queue item has already started its exact attempt but autonomous dispatch keeps
+failing until the queue retry budget is exhausted, that exact running attempt is failed with a
+visible retry-budget reason instead of being left permanently `running`.
+
+## Autonomous step execution
+
+Creating a workflow no longer requires a person or Agent turn to manually start each root or newly
+unblocked step. Every active `ready` step is offered idempotently to the shared durable queue and
+runs through the same governed headless Agent path used for resumed waits. The Agent receives the
+workflow id, step key, durable attempt number and stored instruction, then must checkpoint the step
+before its turn ends: complete it, put it into a future wait, or fail it with a concrete reason.
+
+This is execution orchestration, not a permission shortcut. The headless turn rebuilds the Agent for
+the workflow owner and Bot, uses the workflow's existing channel/thread, and receives only the tools
+and permissions that Agent currently has. Browser, Files, Computer and connector policy remain
+unchanged.
+
+Completing one step can promote dependent steps to `ready`; those new ready versions are then picked
+up by the same durable bridge. This is what lets a multi-step DAG continue autonomously instead of
+stopping after each dependency boundary.
 
 ## Durable waits
 
@@ -98,8 +127,11 @@ host filesystem path into a workflow.
 
 ## Pause, resume and cancel
 
-Pause and resume change only the workflow gate; they do not erase steps, attempts, provider state or
-wait timestamps. A paused workflow cannot start or resume work.
+Pause and resume keep the workflow's steps, attempts and provider state durable. A paused workflow
+cannot start or resume work. On Resume, any still-ready step receives a fresh monotonic ready stamp,
+and any overdue waiting step receives a fresh exact wake timestamp. That re-arms work whose old
+deterministic queue item may have been finished while the workflow was paused, without replaying a
+newer or manually-started attempt.
 
 Cancel marks the run terminal and cancels every still-blocked, ready, running or waiting step in one
 serialized transaction. Completed or previously failed steps remain as evidence of what happened.
