@@ -1,8 +1,5 @@
 import type { WorkflowStore } from "./store";
-import {
-  DEFAULT_MAX_ATTEMPTS,
-  type WorkQueue,
-} from "../work/queue";
+import { DEFAULT_MAX_ATTEMPTS, type WorkQueue } from "../work/queue";
 
 export const WORKFLOW_WAIT_RESUME_KIND = "workflow_wait_resume";
 
@@ -149,7 +146,9 @@ export async function dispatchClaimedWorkflowWaits(
       report.resumed.push({ workflowId, stepKey });
     } catch (error) {
       const reason =
-        error instanceof Error ? error.message : "workflow wait could not resume";
+        error instanceof Error
+          ? error.message
+          : "workflow wait could not resume";
 
       // A changed/cancelled/stale wait is final for this exact timestamp. The
       // store's compare-and-set refusal is what makes an old queue item harmless.
