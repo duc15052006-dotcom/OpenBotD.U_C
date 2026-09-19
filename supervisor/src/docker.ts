@@ -6,6 +6,7 @@ import {
   NAMESPACE,
   NAMESPACE_LABEL,
   OWNER_LABEL,
+  namesFor,
 } from "./names";
 
 /**
@@ -87,6 +88,8 @@ export type ComputerState = {
   botId: string;
   container: string;
   status: string;
+  /** True only when all three owned clean-snapshot volumes are present. */
+  snapshotAvailable?: boolean;
   /** When this computer started, so a surface can say how long it has been up. */
   startedAt?: string;
   /** Its published port, when it has one. Absent on a shared network, where nothing is published. */
@@ -142,6 +145,13 @@ export class DockerUnavailableError extends Error {
       `The supervisor could not reach Docker (${cause}). A computer cannot be started without it.`,
     );
     this.name = "DockerUnavailableError";
+  }
+}
+
+export class ComputerSnapshotError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ComputerSnapshotError";
   }
 }
 
@@ -210,15 +220,28 @@ export async function listOwned(): Promise<ComputerState[]> {
         filters: { label: [`${OWNER_LABEL}=true`] },
       })
     ).filter((container) => ours(container.Labels));
-    return containers.map((container) => ({
-      botId: container.Labels?.[BOT_LABEL] ?? "unknown",
-      container: (container.Names?.[0] ?? "").replace(/^\//, ""),
-      status: container.State,
-      ...(container.Created
-        ? { startedAt: new Date(container.Created * 1000).toISOString() }
-        : {}),
-      ...(portOf(container.Ports) ? { port: portOf(container.Ports) } : {}),
-    }));
+    return Promise.all(
+      containers.map(async (container) => {
+        const botId = container.Labels?.[BOT_LABEL] ?? "unknown";
+        let snapshotAvailable = false;
+        const parsed = namesFor(botId);
+        if (parsed.ok) {
+          snapshotAvailable = await hasCompleteSnapshot(parsed.names).catch(
+            () => false,
+          );
+        }
+        return {
+          botId,
+          container: (container.Names?.[0] ?? "").replace(/^\//, ""),
+          status: container.State,
+          snapshotAvailable,
+          ...(container.Created
+            ? { startedAt: new Date(container.Created * 1000).toISOString() }
+            : {}),
+          ...(portOf(container.Ports) ? { port: portOf(container.Ports) } : {}),
+        };
+      }),
+    );
   } catch (error) {
     throw new DockerUnavailableError(String(error));
   }
@@ -400,6 +423,178 @@ async function removeOwnedVolume(
     }
   }
   return false;
+}
+
+
+function liveVolumes(names: ComputerNames): string[] {
+  return [names.profileVolume, names.workspaceVolume, names.quarantineVolume];
+}
+
+function snapshotVolumes(names: ComputerNames): string[] {
+  return [
+    names.snapshotProfileVolume,
+    names.snapshotWorkspaceVolume,
+    names.snapshotQuarantineVolume,
+  ];
+}
+
+async function ownedVolumeSetState(
+  names: ComputerNames,
+  volumes: string[],
+): Promise<"missing" | "complete" | "partial"> {
+  const states = await Promise.all(
+    volumes.map((volume) => volumeOwnership(names, volume)),
+  );
+  const foreign = states.findIndex((state) => state === "foreign");
+  if (foreign >= 0) throw new NameHeldError(volumes[foreign]!, "volume");
+  if (states.every((state) => state === "missing")) return "missing";
+  if (states.every((state) => state === "ours")) return "complete";
+  return "partial";
+}
+
+async function hasCompleteSnapshot(names: ComputerNames): Promise<boolean> {
+  return (await ownedVolumeSetState(names, snapshotVolumes(names))) === "complete";
+}
+
+async function copyOwnedVolume(
+  names: ComputerNames,
+  image: string,
+  source: string,
+  target: string,
+): Promise<void> {
+  if ((await volumeOwnership(names, source)) !== "ours") {
+    throw new ComputerSnapshotError(
+      "Snapshot source storage is missing or no longer belongs to this Bot.",
+    );
+  }
+  if ((await volumeOwnership(names, target)) !== "ours") {
+    throw new ComputerSnapshotError(
+      "Snapshot destination storage is missing or no longer belongs to this Bot.",
+    );
+  }
+
+  try {
+    await docker.getImage(image).inspect();
+  } catch (error) {
+    throw new DockerUnavailableError(
+      `Snapshot helper image ${image} is unavailable: ${String(error)}`,
+    );
+  }
+
+  const helper = await docker.createContainer({
+    Image: image,
+    Cmd: ["sh", "-c", "cp -a /source/. /target/"],
+    Labels: labelsFor(names),
+    HostConfig: {
+      Binds: [`${source}:/source:ro`, `${target}:/target`],
+      NetworkMode: "none",
+      ReadonlyRootfs: true,
+      CapDrop: ["ALL"],
+      SecurityOpt: ["no-new-privileges:true"],
+      PidsLimit: 64,
+      AutoRemove: true,
+    },
+  });
+  try {
+    await helper.start();
+    const result = (await helper.wait()) as { StatusCode?: number };
+    if (result.StatusCode !== 0) {
+      throw new ComputerSnapshotError(
+        "The isolated snapshot copy helper failed; no partial snapshot will be accepted.",
+      );
+    }
+  } catch (error) {
+    if (error instanceof ComputerSnapshotError) throw error;
+    throw new DockerUnavailableError(String(error));
+  }
+}
+
+export async function createCleanSnapshot(
+  names: ComputerNames,
+  image: string,
+): Promise<boolean> {
+  const existing = await inspectOwned(names);
+  if (existing && existing.status !== "exited") {
+    throw new ComputerSnapshotError(
+      "Stop the Computer before creating a clean snapshot.",
+    );
+  }
+
+  const liveState = await ownedVolumeSetState(names, liveVolumes(names));
+  if (liveState === "missing") {
+    throw new ComputerSnapshotError(
+      "This Computer has no persistent state to snapshot yet.",
+    );
+  }
+  if (liveState === "partial") {
+    throw new ComputerSnapshotError(
+      "The Computer persistent volumes are incomplete; refusing to snapshot partial state.",
+    );
+  }
+
+  for (const volume of snapshotVolumes(names)) {
+    await removeOwnedVolume(names, volume);
+    await ensureOwnedVolume(names, volume);
+  }
+
+  try {
+    const source = liveVolumes(names);
+    const target = snapshotVolumes(names);
+    for (let index = 0; index < source.length; index += 1) {
+      await copyOwnedVolume(names, image, source[index]!, target[index]!);
+    }
+  } catch (error) {
+    for (const volume of snapshotVolumes(names)) {
+      await removeOwnedVolume(names, volume).catch(() => false);
+    }
+    throw error;
+  }
+  return true;
+}
+
+export async function restoreCleanSnapshot(
+  names: ComputerNames,
+  image: string,
+): Promise<boolean> {
+  const existing = await inspectOwned(names);
+  if (existing && existing.status !== "exited") {
+    throw new ComputerSnapshotError(
+      "Stop the Computer before restoring its clean snapshot.",
+    );
+  }
+
+  const snapshotState = await ownedVolumeSetState(names, snapshotVolumes(names));
+  if (snapshotState !== "complete") {
+    throw new ComputerSnapshotError(
+      snapshotState === "missing"
+        ? "No clean snapshot exists for this Computer."
+        : "The clean snapshot is incomplete; refusing to restore partial state.",
+    );
+  }
+
+  if (existing) {
+    try {
+      await docker
+        .getContainer(names.container)
+        .remove({ force: true, v: false });
+    } catch (error) {
+      if (statusOf(error) !== 404) {
+        throw new DockerUnavailableError(String(error));
+      }
+    }
+  }
+
+  for (const volume of liveVolumes(names)) {
+    await removeOwnedVolume(names, volume);
+    await ensureOwnedVolume(names, volume);
+  }
+
+  const source = snapshotVolumes(names);
+  const target = liveVolumes(names);
+  for (let index = 0; index < source.length; index += 1) {
+    await copyOwnedVolume(names, image, source[index]!, target[index]!);
+  }
+  return true;
 }
 
 /**
