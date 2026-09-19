@@ -170,7 +170,11 @@ describe("unattended-run concurrency caps", () => {
       cron: DAILY,
     });
 
-    for (let index = 0; index < MAX_CONCURRENT_ROUTINE_RUNS_PER_AGENT; index += 1) {
+    for (
+      let index = 0;
+      index < MAX_CONCURRENT_ROUTINE_RUNS_PER_AGENT;
+      index += 1
+    ) {
       await store.insertRun(routine.id);
     }
 
@@ -183,9 +187,7 @@ describe("unattended-run concurrency caps", () => {
       .where(eq(routineRuns.id, admission.runId));
     expect(row?.status).toBe("skipped");
     expect(row?.finishedAt).toBeInstanceOf(Date);
-    expect(row?.error).toContain(
-      String(MAX_CONCURRENT_ROUTINE_RUNS_PER_AGENT),
-    );
+    expect(row?.error).toContain(String(MAX_CONCURRENT_ROUTINE_RUNS_PER_AGENT));
   });
 
   test("serializes the deployment cap so concurrent openings cannot both cross it", async () => {
