@@ -105,11 +105,7 @@ function identity(owner: AgentActor, agentId: string) {
   return { ownerUserId: owner.id, agentId };
 }
 
-function planInput(
-  owner: AgentActor,
-  agentId: string,
-  channelId: string,
-) {
+function planInput(owner: AgentActor, agentId: string, channelId: string) {
   return {
     ...identity(owner, agentId),
     channelId,
@@ -136,9 +132,7 @@ function planInput(
 describe("durable workflow creation", () => {
   test("stores a bounded DAG and only roots begin ready", async () => {
     const { owner, agentId, channel } = await setUp();
-    const plan = await store.create(
-      planInput(owner, agentId, channel.id),
-    );
+    const plan = await store.create(planInput(owner, agentId, channel.id));
 
     expect(plan.status).toBe("active");
     expect(plan.steps.map((step) => [step.key, step.status])).toEqual([
@@ -188,9 +182,7 @@ describe("durable workflow creation", () => {
     const otherChannel = await createChannel(owner, [otherAgent]);
 
     await expect(
-      store.create(
-        planInput(owner, agentId, otherChannel.id),
-      ),
+      store.create(planInput(owner, agentId, otherChannel.id)),
     ).rejects.toBeInstanceOf(WorkflowRefusedError);
   });
 });
@@ -198,18 +190,12 @@ describe("durable workflow creation", () => {
 describe("owner and Bot isolation", () => {
   test("another person and another Bot cannot read or mutate the workflow", async () => {
     const { owner, agentId, channel } = await setUp();
-    const plan = await store.create(
-      planInput(owner, agentId, channel.id),
-    );
+    const plan = await store.create(planInput(owner, agentId, channel.id));
     const stranger = await createUser();
     const siblingAgent = await createAgent(owner, "Sibling");
 
-    expect(
-      await store.get(identity(stranger, agentId), plan.id),
-    ).toBeNull();
-    expect(
-      await store.get(identity(owner, siblingAgent), plan.id),
-    ).toBeNull();
+    expect(await store.get(identity(stranger, agentId), plan.id)).toBeNull();
+    expect(await store.get(identity(owner, siblingAgent), plan.id)).toBeNull();
 
     await expect(
       store.pause(identity(stranger, agentId), plan.id),
@@ -224,9 +210,7 @@ describe("dependency and lifecycle transitions", () => {
   test("completion promotes dependencies and the last step completes the run", async () => {
     const { owner, agentId, channel } = await setUp();
     const who = identity(owner, agentId);
-    const plan = await store.create(
-      planInput(owner, agentId, channel.id),
-    );
+    const plan = await store.create(planInput(owner, agentId, channel.id));
 
     const first = await store.startStep(who, plan.id, "script");
     expect(first.status).toBe("running");
@@ -252,9 +236,7 @@ describe("dependency and lifecycle transitions", () => {
   test("pause blocks new work, resume restores it, and cancel closes pending steps", async () => {
     const { owner, agentId, channel } = await setUp();
     const who = identity(owner, agentId);
-    const plan = await store.create(
-      planInput(owner, agentId, channel.id),
-    );
+    const plan = await store.create(planInput(owner, agentId, channel.id));
 
     expect((await store.pause(who, plan.id)).status).toBe("paused");
     await expect(
@@ -266,17 +248,15 @@ describe("dependency and lifecycle transitions", () => {
 
     const cancelled = await store.cancel(who, plan.id);
     expect(cancelled.status).toBe("cancelled");
-    expect(
-      cancelled.steps.every((step) => step.status === "cancelled"),
-    ).toBe(true);
+    expect(cancelled.steps.every((step) => step.status === "cancelled")).toBe(
+      true,
+    );
   });
 
   test("a failed step can be retried without losing its attempt history", async () => {
     const { owner, agentId, channel } = await setUp();
     const who = identity(owner, agentId);
-    const plan = await store.create(
-      planInput(owner, agentId, channel.id),
-    );
+    const plan = await store.create(planInput(owner, agentId, channel.id));
 
     await store.startStep(who, plan.id, "script");
     const failed = await store.failStep(
@@ -299,9 +279,7 @@ describe("durable waits", () => {
   test("a waiting step is discoverable when due and stale wakes cannot resume it", async () => {
     const { owner, agentId, channel } = await setUp();
     const who = identity(owner, agentId);
-    const plan = await store.create(
-      planInput(owner, agentId, channel.id),
-    );
+    const plan = await store.create(planInput(owner, agentId, channel.id));
     await store.startStep(who, plan.id, "script");
 
     const original = new Date(Date.now() + 60_000);
@@ -346,9 +324,7 @@ describe("deleted Agents leave no stale workflow", () => {
   test("the Agent foreign key cascades its pending workflow and steps", async () => {
     const { owner, agentId, channel } = await setUp();
     const who = identity(owner, agentId);
-    const plan = await store.create(
-      planInput(owner, agentId, channel.id),
-    );
+    const plan = await store.create(planInput(owner, agentId, channel.id));
 
     await database
       .delete(agentProfiles)
