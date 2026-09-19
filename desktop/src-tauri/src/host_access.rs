@@ -1835,6 +1835,11 @@ mod tests {
                 loop {
                     match listener.accept() {
                         Ok((mut stream, _)) => {
+                            // The listener is intentionally nonblocking so the collector can enforce
+                            // a deadline. Accepted sockets may inherit that mode on macOS; switch the
+                            // connection back to blocking before parsing the request so BufRead does
+                            // not spuriously fail with WouldBlock between HTTP header bytes.
+                            stream.set_nonblocking(false).unwrap();
                             let mut reader = BufReader::new(stream.try_clone().unwrap());
                             let mut content_length = 0_usize;
                             loop {
