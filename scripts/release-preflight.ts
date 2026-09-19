@@ -1542,6 +1542,16 @@ function checkDurableWorkflowState(): void {
   if (store.includes("input.waitUntil.getTime() <= Date.now()")) {
     fail("workflows: wait validation depends on the server clock");
   }
+  for (const forbidden of [
+    "parsed.getTime() <= Date.now()",
+    "waitUntil.getTime() <= Date.now()",
+  ]) {
+    if (builtin.includes(forbidden)) {
+      fail(
+        `workflows: builtin wait parsing depends on the server clock through ${forbidden}`,
+      );
+    }
+  }
 
   for (const evidence of [
     "WORKFLOW_WAIT_RESUME_KIND",
