@@ -361,6 +361,41 @@ describe("destructive Reset", () => {
   }, 90_000);
 });
 
+describe("partial persistent state recovery", () => {
+  test("refuses to start instead of filling missing live volumes with fresh state", async () => {
+    await withDocker().docker.createVolume({
+      Name: names.profileVolume,
+      Labels: OURS,
+    });
+
+    await expect(
+      withDocker().supervisor.ensure(names, {
+        image: IMAGE,
+        environment: [],
+      }),
+    ).rejects.toBeInstanceOf(withDocker().supervisor.ComputerSnapshotError);
+
+    await expect(
+      withDocker().docker.getContainer(names.container).inspect(),
+    ).rejects.toMatchObject({
+      statusCode: 404,
+    });
+
+    const kept = await withDocker()
+      .docker.getVolume(names.profileVolume)
+      .inspect();
+    expect(kept.Labels?.["openbot.bot-id"]).toBe(BOT);
+
+    for (const volume of [names.workspaceVolume, names.quarantineVolume]) {
+      await expect(
+        withDocker().docker.getVolume(volume).inspect(),
+      ).rejects.toMatchObject({
+        statusCode: 404,
+      });
+    }
+  }, 90_000);
+});
+
 describe("a computer built from an older image", () => {
   /*
    * The upgrade that never reached the computers.
