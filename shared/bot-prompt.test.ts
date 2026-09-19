@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { COMPUTER_GUIDANCE, ROUTINE_GUIDANCE } from "./bot-prompt";
+import {
+  AUTONOMOUS_WORKFLOW_GUIDANCE,
+  COMPUTER_GUIDANCE,
+  ROUTINE_GUIDANCE,
+} from "./bot-prompt";
 
 describe("COMPUTER_GUIDANCE", () => {
   test("keeps paragraph breaks as blank lines instead of collapsing them into spaces", () => {
@@ -63,6 +67,77 @@ describe("ROUTINE_GUIDANCE", () => {
     );
     expect(ROUTINE_GUIDANCE).toContain(
       "Do not make the person read cron syntax unless they explicitly ask for it",
+    );
+  });
+});
+
+describe("AUTONOMOUS_WORKFLOW_GUIDANCE", () => {
+  test("keeps the Agent goal-driven instead of hard-coding every task into one pipeline", () => {
+    expect(AUTONOMOUS_WORKFLOW_GUIDANCE).toContain(
+      "operate from the person's goal",
+    );
+    expect(AUTONOMOUS_WORKFLOW_GUIDANCE).toContain(
+      "Do not turn this guidance into a fixed pipeline for unrelated tasks",
+    );
+    expect(AUTONOMOUS_WORKFLOW_GUIDANCE).toContain(
+      "Do not silently substitute a different service, account, custom chatbot, model, or order of operations",
+    );
+  });
+
+  test("keeps every scene's prompt references and output isolated by project and scene", () => {
+    expect(AUTONOMOUS_WORKFLOW_GUIDANCE).toContain("projectId + sceneId");
+    expect(AUTONOMOUS_WORKFLOW_GUIDANCE).toContain(
+      "Never mix, borrow, recycle or overwrite another scene's prompt, reference image or output",
+    );
+    expect(AUTONOMOUS_WORKFLOW_GUIDANCE).toContain(
+      "never put passwords, session cookies, API keys or other secrets into the checkpoint",
+    );
+  });
+
+  test("executes approved prompts exactly instead of spending turns grading them", () => {
+    expect(AUTONOMOUS_WORKFLOW_GUIDANCE).toContain(
+      "An approved prompt is an execution input, not something to grade",
+    );
+    expect(AUTONOMOUS_WORKFLOW_GUIDANCE).toContain(
+      "Submit the exact approved prompt and reference assets for that scene",
+    );
+    expect(AUTONOMOUS_WORKFLOW_GUIDANCE).toContain(
+      "Do not turn execution verification into another prompt-review loop",
+    );
+  });
+
+  test("pins the NOTE 21-2 service handoff without mixing scene assets", () => {
+    for (const evidence of [
+      "script-writing chatbot",
+      "prompt-writing chatbot",
+      "ChatGPT/custom GPT",
+      "send only that scene's reference image and exact scene prompt to Flow",
+    ]) {
+      expect(AUTONOMOUS_WORKFLOW_GUIDANCE).toContain(evidence);
+    }
+  });
+
+  test("does not fake background wakeups or busy-loop while generation is pending", () => {
+    expect(AUTONOMOUS_WORKFLOW_GUIDANCE).toContain(
+      "not a reason to resubmit the scene or burn model turns in a refresh-and-reason loop",
+    );
+    expect(AUTONOMOUS_WORKFLOW_GUIDANCE).toContain(
+      "Never claim you will automatically wake, monitor in the background or receive a completion event",
+    );
+  });
+
+  test("pins the NOTE 21-2 planning budget without pretending usage metering exists", () => {
+    for (const evidence of [
+      "1,000–5,000",
+      "15,000–40,000",
+      "50,000–100,000",
+      "1,000,000",
+      "when usage accounting is available",
+    ]) {
+      expect(AUTONOMOUS_WORKFLOW_GUIDANCE).toContain(evidence);
+    }
+    expect(AUTONOMOUS_WORKFLOW_GUIDANCE).toContain(
+      "stop and ask how they want to proceed rather than silently overspending",
     );
   });
 });

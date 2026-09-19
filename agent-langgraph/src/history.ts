@@ -14,6 +14,7 @@ import {
   ToolMessage,
 } from "@langchain/core/messages";
 import {
+  AUTONOMOUS_WORKFLOW_GUIDANCE,
   COMPUTER_GUIDANCE,
   NO_ANSWER_CAME,
   ROUTINE_GUIDANCE,
@@ -28,8 +29,18 @@ export { NO_ANSWER_CAME };
 
 /** Translate the conversation AG-UI carries into LangChain's message classes. */
 export function toLangChainMessages(input: RunAgentInput): BaseMessage[] {
+  const workflowAlreadySupplied = input.messages.some(
+    (message) =>
+      (message.role === "system" || message.role === "developer") &&
+      String(message.content ?? "").includes(AUTONOMOUS_WORKFLOW_GUIDANCE),
+  );
+  const systemGuidance = [
+    COMPUTER_GUIDANCE,
+    ROUTINE_GUIDANCE,
+    ...(workflowAlreadySupplied ? [] : [AUTONOMOUS_WORKFLOW_GUIDANCE]),
+  ].join("\n\n");
   const messages: BaseMessage[] = [
-    new SystemMessage(`${COMPUTER_GUIDANCE}\n\n${ROUTINE_GUIDANCE}`),
+    new SystemMessage(systemGuidance),
     // AG-UI carries application context separately from conversation history. CopilotKit puts
     // the A2UI catalog and tool instructions here; dropping it leaves the model guessing the
     // component schema and can strand the renderer on an invalid, never-painted surface.
