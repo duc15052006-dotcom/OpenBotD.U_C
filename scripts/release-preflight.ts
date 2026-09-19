@@ -1500,6 +1500,7 @@ function checkDurableWorkflowState(): void {
   const builtin = read("server/src/plugins/builtin-workflows.ts");
   const transport = read("server/src/plugins/transport.ts");
   const catalogue = read("server/src/plugins/catalogue.ts");
+  const botPrompt = read("shared/bot-prompt.ts");
 
   for (const evidence of [
     'workflowRunStatus = pgEnum("workflow_run_status"',
@@ -1609,6 +1610,17 @@ function checkDurableWorkflowState(): void {
       fail(
         `workflows: autonomous continuation invariant is missing ${evidence}`,
       );
+    }
+  }
+  for (const evidence of [
+    "create a durable workflow before starting the first stage",
+    "create_workflow",
+    "wait_workflow_step",
+    "complete_workflow_step",
+    "do not pretend a durable workflow exists or promise autonomous continuation",
+  ]) {
+    if (!botPrompt.includes(evidence)) {
+      fail(`workflows: Agent durable-workflow guidance is missing ${evidence}`);
     }
   }
   if (
