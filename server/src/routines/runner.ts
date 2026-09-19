@@ -26,13 +26,17 @@ import type { ChannelStore } from "../channels/routes";
 import type { RoutineStore } from "./store";
 
 /** Everything a headless turn needs, injectable so tests never dial a model. */
-export type TurnRunner = (input: {
-  ownerUserId: string; // the actor the run asserts — grants and connections resolve to them
-  routineId: string; // what the trail names as having started this turn, rather than the owner
-  agentId: string;
-  threadId: string; // the owner's thread for the routine's channel
-  instruction: string; // the user message of this turn
-}) => Promise<{ replyText: string }>;
+export type TurnRunner = (
+  input: {
+    ownerUserId: string; // the actor the run asserts — grants and connections resolve to them
+    agentId: string;
+    threadId: string; // the owner's thread for the channel
+    instruction: string; // the user message of this turn
+  } & (
+    | { routineId: string; workflowId?: never }
+    | { workflowId: string; routineId?: never }
+  ),
+) => Promise<{ replyText: string }>;
 
 export type RoutineRunner = { run(routineRunId: string): Promise<void> };
 
