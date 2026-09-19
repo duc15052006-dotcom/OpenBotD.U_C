@@ -846,6 +846,41 @@ function checkReleaseWiring(): void {
   }
 }
 
+function checkIntelligenceMemory(): void {
+  const runtime = read("server/src/copilot.ts");
+  for (const evidence of [
+    "memory: {",
+    'user: "read-write"',
+    'project: "none"',
+  ]) {
+    if (!runtime.includes(evidence)) {
+      fail(`memory: runtime user-scope boundary is missing ${evidence}`);
+    }
+  }
+
+  const settings = read("app/src/components/settings/memory-settings.tsx");
+  for (const evidence of [
+    "useMemories",
+    "Restore",
+    "Compare memories",
+    "does not infer revision",
+  ]) {
+    if (!settings.includes(evidence)) {
+      fail(`memory: Preferences history/restore UI is missing ${evidence}`);
+    }
+  }
+
+  const history = read("app/src/lib/memory/history.ts");
+  for (const evidence of [
+    "/api/copilotkit/memories?includeInvalidated=true",
+    'credentials: "include"',
+  ]) {
+    if (!history.includes(evidence)) {
+      fail(`memory: authenticated history loader is missing ${evidence}`);
+    }
+  }
+}
+
 function checkDesktopUpdatePath(): void {
   const native = read("desktop/src-tauri/src/main.rs");
   const updater = read("desktop/src-tauri/src/update.rs");
@@ -1136,6 +1171,7 @@ checkDesktopBoundary();
 checkComputerSandboxBoundary();
 checkInteractiveComputerControls();
 checkReleaseWiring();
+checkIntelligenceMemory();
 checkDesktopUpdatePath();
 checkDesktopCredentialBoundary();
 checkProviderConnectionTest();

@@ -2278,6 +2278,22 @@ export function mountCopilotRuntime(
     // returns, so omitting it puts every person in the deployment in the same thread space and one
     // person's conversations become another's.
     identifyUser,
+    /*
+     * User memory only.
+     *
+     * Memory is already scoped by identifyUser, so the browser and the Bot may read/write only the
+     * signed-in person's durable Intelligence memory. Project scope stays closed: turning it on
+     * here would make one person's remembered context visible to everyone in the deployment.
+     *
+     * Explicit configuration is required by CopilotKit; omitting memory hides the browser memory
+     * routes and removes the agent memory tools entirely.
+     */
+    memory: {
+      access: async () => ({
+        user: "read-write",
+        project: "none",
+      }),
+    },
     // The subclass, not the base: a thread nobody has run yet reads as empty rather than as a 500.
     // See IntelligenceKnowingANewThread.
     intelligence: intelligenceClient,
