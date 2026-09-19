@@ -10,7 +10,7 @@ const DEFAULT_RETRY_DELAY_MS = 5_000;
 
 type WorkflowWakeStore = Pick<
   WorkflowStore,
-  "dueWaitingSteps" | "resumeWaitingStep"
+  "dueWaitingSteps" | "resumeWaitingStep" | "failWaitingStep" | "failStep"
 >;
 
 export type WorkflowWakeOptions = {
@@ -74,14 +74,13 @@ export async function dispatchClaimedWorkflowWaits(
   options: WorkflowWakeOptions,
 ): Promise<WorkflowWakeReport> {
   const leaseMs = options.leaseMs ?? DEFAULT_LEASE_MS;
+  const maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
   const claimed = await options.queue.claim({
     kind: WORKFLOW_WAIT_RESUME_KIND,
     owner: options.owner,
     leaseMs,
     limit: options.limit ?? DEFAULT_LIMIT,
-    ...(options.maxAttempts === undefined
-      ? {}
-      : { maxAttempts: options.maxAttempts }),
+    maxAttempts,
   });
 
   const report: WorkflowWakeReport = {
@@ -148,6 +147,7 @@ export async function dispatchClaimedWorkflowWaits(
       continue;
     }
 
+    let resumed = false;
     try {
       await options.store.resumeWaitingStep(
         { ownerUserId, agentId },
@@ -156,6 +156,7 @@ export async function dispatchClaimedWorkflowWaits(
         stamp,
         expectedAttempt,
       );
+      resumed = true;
       if (options.dispatch) {
         /*
          * A headless continuation can legitimately run for minutes. Keep the queue lease alive
@@ -240,6 +241,48 @@ export async function dispatchClaimedWorkflowWaits(
           key: item.key,
           owner: options.owner,
         });
+        report.skipped.push({ workflowId, stepKey, reason });
+        continue;
+      }
+
+      /*
+       * Once resumeWaitingStep performed the exact waiting->running CAS, this queue item is the
+       * only durable owner of the continuation attempt. If its final dispatch attempt fails and we
+       * merely release it, claim() will refuse it forever because the work-item attempt cap has
+       * already been reached, leaving the workflow step permanently "running".
+       *
+       * Close that hole fail-closed: mark only the exact workflow attempt failed, then finish the
+       * exhausted queue item. Failures before the CAS stay retryable/stale-safe because the step is
+       * still waiting and can be offered again with its exact wait stamp.
+       */
+      if (item.attempts >= maxAttempts) {
+        try {
+          const failure = `Autonomous wait continuation exhausted its retry budget: ${reason}`;
+          if (resumed) {
+            await options.store.failStep(
+              { ownerUserId, agentId },
+              workflowId,
+              stepKey,
+              failure,
+              expectedAttempt,
+            );
+          } else {
+            await options.store.failWaitingStep(
+              { ownerUserId, agentId },
+              workflowId,
+              stepKey,
+              stamp,
+              expectedAttempt,
+              failure,
+            );
+          }
+        } finally {
+          await options.queue.finish({
+            kind: WORKFLOW_WAIT_RESUME_KIND,
+            key: item.key,
+            owner: options.owner,
+          });
+        }
         report.skipped.push({ workflowId, stepKey, reason });
         continue;
       }

@@ -313,6 +313,14 @@ export type WorkflowStore = {
     id: string,
     key: string,
   ): Promise<WorkflowPlan>;
+  failWaitingStep(
+    identity: WorkflowIdentity,
+    id: string,
+    key: string,
+    expectedWaitUntil: Date,
+    expectedAttempt: number,
+    reason: string,
+  ): Promise<WorkflowStep>;
   failStep(
     identity: WorkflowIdentity,
     id: string,
@@ -1073,6 +1081,64 @@ export function createWorkflowStore(database: Database): WorkflowStore {
         }
       });
       return (await planFor(identity, id)) as WorkflowPlan;
+    },
+
+    async failWaitingStep(
+      identity,
+      id,
+      key,
+      expectedWaitUntil,
+      expectedAttempt,
+      reason,
+    ) {
+      if (
+        !(expectedWaitUntil instanceof Date) ||
+        Number.isNaN(expectedWaitUntil.getTime()) ||
+        !Number.isInteger(expectedAttempt) ||
+        expectedAttempt <= 0
+      ) {
+        throw new WorkflowRefusedError(
+          "A waiting-step failure needs an exact wait timestamp and attempt.",
+        );
+      }
+      const failureReason = textWithin(
+        reason,
+        "A workflow failure reason",
+        MAX_WORKFLOW_FAILURE_CODE_POINTS,
+      );
+      return await database.transaction(async (transaction) => {
+        await lockWorkflow(transaction, id);
+        const run = await loadOwned(transaction, identity, id);
+        if (terminal(run.status)) {
+          throw new WorkflowRefusedError("That workflow has already finished.");
+        }
+        const [row] = await transaction
+          .update(workflowSteps)
+          .set({
+            status: "failed",
+            failureReason,
+            finishedAt: sql`now()`,
+            waitUntil: null,
+            resumedFromWaitUntil: null,
+            updatedAt: sql`now()`,
+          })
+          .where(
+            and(
+              eq(workflowSteps.workflowId, id),
+              eq(workflowSteps.key, stepKey(key)),
+              eq(workflowSteps.status, "waiting"),
+              eq(workflowSteps.attempts, expectedAttempt),
+              eq(workflowSteps.waitUntil, expectedWaitUntil),
+            ),
+          )
+          .returning();
+        if (!row) {
+          throw new WorkflowRefusedError(
+            "That waiting workflow step changed before it could be failed.",
+          );
+        }
+        return toStep(row);
+      });
     },
 
     async failStep(identity, id, key, reason, expectedAttempt) {

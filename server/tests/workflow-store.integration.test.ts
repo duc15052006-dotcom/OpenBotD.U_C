@@ -401,6 +401,57 @@ describe("durable waits", () => {
     expect(continued.status).toBe("running");
   });
 
+  test("an exhausted wake can fail only its exact waiting attempt", async () => {
+    const { owner, agentId, channel } = await setUp();
+    const who = identity(owner, agentId);
+    const plan = await store.create(planInput(owner, agentId, channel.id));
+    await store.startStep(who, plan.id, "script");
+
+    const firstWait = new Date(Date.now() + 60_000);
+    await store.waitStep(who, plan.id, "script", {
+      waitUntil: firstWait,
+      provider: "video-generator",
+    });
+
+    const failed = await store.failWaitingStep(
+      who,
+      plan.id,
+      "script",
+      firstWait,
+      1,
+      "autonomous wake retry budget exhausted",
+    );
+    expect(failed.status).toBe("failed");
+    expect(failed.attempts).toBe(1);
+    expect(failed.waitUntil).toBeNull();
+    expect(failed.failureReason).toContain("retry budget");
+
+    await store.retryStep(who, plan.id, "script");
+    await store.startStep(who, plan.id, "script");
+    const secondWait = new Date(Date.now() + 120_000);
+    await store.waitStep(who, plan.id, "script", {
+      waitUntil: secondWait,
+      provider: "video-generator",
+    });
+
+    await expect(
+      store.failWaitingStep(
+        who,
+        plan.id,
+        "script",
+        firstWait,
+        1,
+        "stale wake must not fail the newer attempt",
+      ),
+    ).rejects.toBeInstanceOf(WorkflowRefusedError);
+
+    const current = await store.get(who, plan.id);
+    const step = current?.steps.find((candidate) => candidate.key === "script");
+    expect(step?.status).toBe("waiting");
+    expect(step?.attempts).toBe(2);
+    expect(step?.waitUntil?.getTime()).toBe(secondWait.getTime());
+  });
+
   test("a waiting step is discoverable when due and stale wakes cannot resume it", async () => {
     const { owner, agentId, channel } = await setUp();
     const who = identity(owner, agentId);
