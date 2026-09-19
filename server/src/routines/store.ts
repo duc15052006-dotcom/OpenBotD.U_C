@@ -272,9 +272,11 @@ type RoutineRow = typeof routines.$inferSelect;
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
 
 async function databaseNow(transaction: Transaction): Promise<Date> {
-  const [row] = await transaction.select({
-    now: sql<Date>`date_trunc('milliseconds', now())`,
-  });
+  const [row] = await transaction
+    .select({
+      now: sql<Date>`date_trunc('milliseconds', now())`,
+    })
+    .execute();
   if (!row) throw new Error("database clock query returned no row");
   return row.now;
 }
@@ -284,9 +286,11 @@ async function requireDatabaseFuture(
   at: Date,
   message: string,
 ): Promise<void> {
-  const [row] = await transaction.select({
-    future: sql<boolean>`${at} > now()`,
-  });
+  const [row] = await transaction
+    .select({
+      future: sql<boolean>`${at} > now()`,
+    })
+    .execute();
   if (row?.future !== true) throw new RoutineRefusedError(message);
 }
 
@@ -522,7 +526,7 @@ export function createRoutineStore(database: Database): RoutineStore {
     const existing = await loadOwned(ownerUserId, id);
 
     const values: Partial<typeof routines.$inferInsert> = {
-      updatedAt: sql`now()`,
+      updatedAt: new Date(),
     };
     if (patch.instruction !== undefined) {
       values.instruction = validInstruction(patch.instruction);
