@@ -223,6 +223,21 @@ describe("a name held by somebody else", () => {
   }, 90_000);
 });
 
+describe("host restart ownership", () => {
+  test("leaves Computer restart authority with OpenBot instead of Docker", async () => {
+    await withDocker().supervisor.ensure(names, {
+      image: IMAGE,
+      environment: [],
+    });
+
+    const inspected = await withDocker()
+      .docker.getContainer(names.container)
+      .inspect();
+
+    expect(inspected.HostConfig?.RestartPolicy?.Name).toBe("no");
+  }, 90_000);
+});
+
 describe("fleet lifecycle timestamps", () => {
   test("reports the current run start after a stopped Computer wakes", async () => {
     await withDocker().supervisor.ensure(names, {
