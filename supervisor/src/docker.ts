@@ -1067,11 +1067,26 @@ export async function ensure(
       }
 
       if (!existing) {
-        for (const volume of [
-          names.profileVolume,
-          names.workspaceVolume,
-          names.quarantineVolume,
-        ]) {
+        /*
+         * Never manufacture a "complete" Computer by filling holes in persistent state.
+         *
+         * A failed Restore or an interrupted volume operation can leave one or two of the profile,
+         * workspace and quarantine volumes behind. Creating the missing names here would combine old
+         * state with fresh empty state and then boot it as if the set were coherent. Restore and Reset
+         * are the recovery operations that can make that decision explicitly; Start/Wake must fail
+         * closed and preserve the evidence instead.
+         */
+        const persistentState = await ownedVolumeSetState(
+          names,
+          liveVolumes(names),
+        );
+        if (persistentState === "partial") {
+          throw new ComputerSnapshotError(
+            "The Computer persistent volumes are incomplete; refusing to start mixed state. Restore a clean snapshot or Reset this Computer before starting it.",
+          );
+        }
+
+        for (const volume of liveVolumes(names)) {
           await ensureOwnedVolume(names, volume);
         }
 
