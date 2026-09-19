@@ -287,13 +287,22 @@ export function runForDuplicate(
   managed: Record<string, unknown> | undefined,
 ): AgentRun | null {
   const systemPrompt = systemPromptOf(source.configuration);
-  const resourceProfile = computerResourceProfileOf(source.configuration);
+  const configuredResourceProfile =
+    source.configuration && typeof source.configuration === "object"
+      ? computerResourceProfile(
+          (source.configuration as { computerResourceProfile?: unknown })
+            .computerResourceProfile,
+        )
+      : null;
+  const resourceProfileConfiguration = configuredResourceProfile
+    ? { computerResourceProfile: configuredResourceProfile }
+    : {};
   if (source.type === "built_in" && systemPrompt) {
     return {
       type: "built_in",
       configuration: {
         systemPrompt,
-        computerResourceProfile: resourceProfile,
+        ...resourceProfileConfiguration,
       },
     };
   }
@@ -318,14 +327,14 @@ export function runForDuplicate(
           ? {
               endpoint,
               remoteAgentId,
-              computerResourceProfile: resourceProfile,
+              ...resourceProfileConfiguration,
             }
-          : { endpoint, computerResourceProfile: resourceProfile },
+          : { endpoint, ...resourceProfileConfiguration },
       };
     }
     return {
       type: "remote_ag_ui",
-      configuration: { endpoint, computerResourceProfile: resourceProfile },
+      configuration: { endpoint, ...resourceProfileConfiguration },
     };
   }
 
@@ -334,7 +343,7 @@ export function runForDuplicate(
         type: "remote_ag_ui",
         configuration: {
           ...managed,
-          computerResourceProfile: resourceProfile,
+          ...resourceProfileConfiguration,
         },
       }
     : null;
