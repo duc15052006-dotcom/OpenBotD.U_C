@@ -146,3 +146,14 @@ is documented in [Development](development.md).
 The source path is not the end-user installation contract. Release acceptance for the desktop app is
 documented in [Releasing](releasing.md), and protected Windows signing is documented in
 [Windows desktop signing](windows-signing.md).
+
+### Window close behavior
+
+The desktop native **OpenBot → On window close** menu stores one local preference:
+
+- **Ask every time** (safe default);
+- **Keep running in tray**;
+- **Exit and stop all Agents**.
+
+The preference is native-only and contains no credentials. Missing, unreadable, or malformed preference data falls back to **Ask every time**. Choosing Exit still goes through the normal quit cleanup path, so host processes, folder authority, per-Agent Computers, and Compose services are stopped before the desktop process exits.
+
