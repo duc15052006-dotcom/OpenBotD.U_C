@@ -63,16 +63,36 @@ describe("workflow identity boundary", () => {
         received = input;
         return plan;
       },
-      async get() { return plan; },
-      async listFor() { return [plan]; },
-      async pause() { return plan; },
-      async resume() { return plan; },
-      async cancel() { return plan; },
-      async startStep() { return step; },
-      async waitStep() { return { ...step, status: "waiting" as const }; },
-      async completeStep() { return plan; },
-      async failStep() { return { ...step, status: "failed" as const }; },
-      async retryStep() { return step; },
+      async get() {
+        return plan;
+      },
+      async listFor() {
+        return [plan];
+      },
+      async pause() {
+        return plan;
+      },
+      async resume() {
+        return plan;
+      },
+      async cancel() {
+        return plan;
+      },
+      async startStep() {
+        return step;
+      },
+      async waitStep() {
+        return { ...step, status: "waiting" as const };
+      },
+      async completeStep() {
+        return plan;
+      },
+      async failStep() {
+        return { ...step, status: "failed" as const };
+      },
+      async retryStep() {
+        return step;
+      },
       async addAsset() {
         return {
           id: "asset_1",
@@ -86,8 +106,8 @@ describe("workflow identity boundary", () => {
         };
       },
       async listAssets() {
-      return [];
-    },
+        return [];
+      },
       async removeAsset() {},
     });
 
