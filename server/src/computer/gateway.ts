@@ -895,7 +895,7 @@ export function createComputerGateway(
               .latest([botId])
               .then((events) => events.get(botId))
               .catch(() => undefined);
-      const url = await locate(botId);
+      let url = await locate(botId);
       const started = before.state !== "ready";
       // Refs belong to the browser run that produced them. Waking a stopped computer may replace
       // that run, so never let an old accessibility ref survive into the new process.
@@ -914,7 +914,30 @@ export function createComputerGateway(
               : "the computer was already running",
         },
       );
-      return { started, url };
+
+      /*
+       * The idle culler rechecks activity before it stops, but that check and stop are not atomic
+       * with this request. If it passed the check just before this Start/Wake was recorded, it can
+       * stop the Computer after the first locate above. Re-read state after the audit row exists:
+       * the culler can now see the request and repair its side too, while this side refuses to
+       * return a successful Start for a Computer that has already gone back down.
+       */
+      const after = await provider.status(botId).catch(() => ({
+        botId,
+        state: "unreachable" as const,
+      }));
+      let recoveredFromSleepRace = false;
+      if (after.state !== "ready") {
+        url = await locate(botId);
+        recoveredFromSleepRace = true;
+        await snapshots.clear(botId);
+        await writeControlEvent(auditStore, "computer.woke", {
+          botId,
+          actor,
+          reason: "the computer was restored after idle sleep raced this Start/Wake request",
+        });
+      }
+      return { started: started || recoveredFromSleepRace, url };
     },
 
     /**
