@@ -331,6 +331,8 @@ function checkComputerSandboxBoundary(): void {
     'CapDrop: ["ALL"]',
     'SecurityOpt: ["no-new-privileges:true"]',
     "ReadonlyRootfs: true",
+    "AutoRemove: true",
+    "isPrimaryComputerContainerName",
     "docker.listVolumes",
     "newestCompleteSnapshot",
     "Preserve the currently valid recovery point until the replacement is complete",
