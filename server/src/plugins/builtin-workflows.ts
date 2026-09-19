@@ -49,7 +49,11 @@ const TOOLS: readonly McpTool[] = Object.freeze([
     inputSchema: {
       type: "object",
       properties: {
-        channelId: { type: "string" },
+        channelId: {
+          type: "string",
+          description:
+            "Optional destination channel. Omit when you and the person share only one channel; if there are several, the tool will tell you which choices exist.",
+        },
         title: { type: "string" },
         steps: {
           type: "array",
@@ -64,7 +68,7 @@ const TOOLS: readonly McpTool[] = Object.freeze([
           },
         },
       },
-      required: ["channelId", "title", "steps"],
+      required: ["title", "steps"],
     },
   },
   {
@@ -377,8 +381,7 @@ export async function callTool(
 
   try {
     if (toolName === "create_workflow") {
-      const channelId = requiredString(args, "channelId");
-      if (isFailure(channelId)) return channelId;
+      const channelId = stringArg(args, "channelId");
       const title = requiredString(args, "title");
       if (isFailure(title)) return title;
       const steps = stepsArg(args.steps);
@@ -387,7 +390,7 @@ export async function callTool(
         compactPlan(
           await tools.create({
             ...identity,
-            channelId,
+            ...(channelId ? { channelId } : {}),
             title,
             steps,
           }),
