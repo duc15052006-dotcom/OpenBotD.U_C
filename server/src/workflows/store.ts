@@ -1,6 +1,7 @@
 import {
   and,
   asc,
+  desc,
   eq,
   inArray,
   isNotNull,
@@ -63,7 +64,7 @@ export type WorkflowStepInput = {
 };
 
 export type WorkflowInput = WorkflowIdentity & {
-  channelId: string;
+  channelId?: string;
   title: string;
   steps: WorkflowStepInput[];
 };
@@ -383,9 +384,39 @@ export function createWorkflowStore(database: Database): WorkflowStore {
     );
   }
 
-  async function channelAllowed(input: WorkflowInput): Promise<void> {
-    const [row] = await database
-      .select({ id: channels.id })
+  async function resolveChannel(input: WorkflowInput): Promise<string> {
+    if (input.channelId !== undefined) {
+      const [row] = await database
+        .select({ id: channels.id })
+        .from(channels)
+        .innerJoin(
+          channelMemberships,
+          and(
+            eq(channelMemberships.channelId, channels.id),
+            eq(channelMemberships.userId, input.ownerUserId),
+          ),
+        )
+        .innerJoin(
+          channelAgents,
+          and(
+            eq(channelAgents.channelId, channels.id),
+            eq(channelAgents.agentId, input.agentId),
+          ),
+        )
+        .where(
+          and(eq(channels.id, input.channelId), isNull(channels.deletedAt)),
+        )
+        .limit(1);
+      if (!row) {
+        throw new WorkflowRefusedError(
+          "That channel is not shared by this person and this Bot.",
+        );
+      }
+      return row.id;
+    }
+
+    const candidates = await database
+      .select({ id: channels.id, name: channels.name })
       .from(channels)
       .innerJoin(
         channelMemberships,
@@ -401,13 +432,26 @@ export function createWorkflowStore(database: Database): WorkflowStore {
           eq(channelAgents.agentId, input.agentId),
         ),
       )
-      .where(and(eq(channels.id, input.channelId), isNull(channels.deletedAt)))
-      .limit(1);
-    if (!row) {
+      .where(isNull(channels.deletedAt))
+      .orderBy(desc(channels.createdAt), desc(channels.id))
+      .limit(6);
+
+    const only = candidates[0];
+    if (!only) {
       throw new WorkflowRefusedError(
-        "That channel is not shared by this person and this Bot.",
+        "We have no channel for this workflow. Start one and ask again.",
       );
     }
+    if (candidates.length > 1) {
+      const labels = candidates
+        .slice(0, 5)
+        .map((candidate) => `${candidate.name} (${candidate.id})`);
+      if (candidates.length > 5) labels.push("and others");
+      throw new WorkflowRefusedError(
+        `You are in more than one channel with me — ${labels.join(", ")}. Say which one.`,
+      );
+    }
+    return only.id;
   }
 
   function preparedSteps(input: WorkflowStepInput[]) {
@@ -616,7 +660,7 @@ export function createWorkflowStore(database: Database): WorkflowStore {
         MAX_WORKFLOW_TITLE_CODE_POINTS,
       );
       const steps = preparedSteps(input.steps);
-      await channelAllowed(input);
+      const channelId = await resolveChannel(input);
 
       const id = `workflow_${crypto.randomUUID()}`;
       await database.transaction(async (transaction) => {
@@ -624,7 +668,7 @@ export function createWorkflowStore(database: Database): WorkflowStore {
           id,
           ownerUserId: input.ownerUserId,
           agentId: input.agentId,
-          channelId: input.channelId,
+          channelId,
           title,
         });
         await transaction.insert(workflowSteps).values(
