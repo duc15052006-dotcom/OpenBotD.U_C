@@ -92,6 +92,15 @@ export interface ComputerProvider {
   status(botId: string): Promise<ComputerStatus>;
   /** Stop the computer for this Bot if it exists. */
   stop(botId: string): Promise<{ wasRunning: boolean }>;
+  /**
+   * Atomically stop and start this Bot when the provider owns a lifecycle supervisor.
+   *
+   * Optional because shared/remote providers may only expose separate stop and locate primitives.
+   */
+  restart?(
+    botId: string,
+    options?: { resourceProfile?: ComputerResourceProfile },
+  ): Promise<string>;
   /** Remove the computer state for this Bot if it exists. */
   reset(botId: string): Promise<{ cleared: boolean }>;
   /** Optional clean snapshot support for providers that own durable per-Bot storage. */
