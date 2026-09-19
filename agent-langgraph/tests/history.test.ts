@@ -28,7 +28,6 @@ test("includes NOTE 21-2 autonomous workflow boundaries in the LangGraph adapter
   );
 });
 
-
 /**
  * A tool call nobody answered does not end the conversation.
  *
