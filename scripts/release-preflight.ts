@@ -487,6 +487,18 @@ function checkComputerSandboxBoundary(): void {
   if (!supervisorClient.includes("/restart")) {
     fail("computer: server supervisor client does not use atomic restart");
   }
+  for (const evidence of [
+    "MAX_REMEMBERED_SESSIONS = 512",
+    "while (sessions.size > MAX_REMEMBERED_SESSIONS)",
+    "rememberedSession(botId)",
+    "sessions.delete(botId)",
+  ]) {
+    if (!supervisorClient.includes(evidence)) {
+      fail(
+        `computer: supervisor session cache is not bounded through ${evidence}`,
+      );
+    }
+  }
   if (!gateway.includes("provider.restart")) {
     fail("computer: gateway does not prefer atomic provider restart");
   }
