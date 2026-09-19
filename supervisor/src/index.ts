@@ -172,14 +172,15 @@ app.post("/computers/:botId/ensure", async (context) => {
   } catch (error) {
     // A held name is not an outage. 409 says the conflict is with something already there, so an
     // operator reads the message rather than going to look at a daemon that is working.
-    if (error instanceof NameHeldError) {
+    if (
+      error instanceof NameHeldError ||
+      error instanceof ComputerCapacityError ||
+      error instanceof ComputerSnapshotError
+    ) {
       return context.json({ error: error.message }, 409);
     }
     // Not ready is a 503 like an outage is, because the caller's next move is the same: wait and
     // ask again. The message is what differs, and it is the part an operator acts on.
-    if (error instanceof ComputerCapacityError) {
-      return context.json({ error: error.message }, 409);
-    }
     if (
       error instanceof DockerUnavailableError ||
       error instanceof ComputerNotAnsweringError
@@ -245,7 +246,8 @@ app.post("/computers/:botId/restart", async (context) => {
   } catch (error) {
     if (
       error instanceof NameHeldError ||
-      error instanceof ComputerCapacityError
+      error instanceof ComputerCapacityError ||
+      error instanceof ComputerSnapshotError
     ) {
       return context.json({ error: error.message }, 409);
     }
