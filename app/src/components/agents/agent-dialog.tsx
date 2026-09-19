@@ -336,6 +336,7 @@ function GeneralSection({
         title: profile.title,
         roleDescription: profile.roleDescription,
         visibility: profile.visibility,
+        computerResourceProfile: profile.computerResourceProfile,
         /*
          * Not a built-in coworker's endpoint. That is the managed Bot's own address, which nobody
          * typed, and the route checks any endpoint it is sent as one somebody did: on a deployment
@@ -379,6 +380,40 @@ function GeneralSection({
           onSave={(visibility) => save({ visibility })}
           value={profile.visibility}
         />
+        {profile.builtIn ? (
+          <Item variant="muted">
+            <ItemContent>
+              <ItemTitle>Computer resources</ItemTitle>
+              <ItemDescription>
+                Light: 1 CPU / 1.5 GB · Normal: 2 CPU / 2 GB · Heavy: 3 CPU / 4
+                GB. The supervisor applies this limit to this coworker only.
+              </ItemDescription>
+            </ItemContent>
+            <ItemActions>
+              <Select
+                disabled={!profile.canManage || updateAgent.isPending}
+                onValueChange={(value) =>
+                  void save({
+                    computerResourceProfile: value as
+                      | "light"
+                      | "normal"
+                      | "heavy",
+                  })
+                }
+                value={profile.computerResourceProfile}
+              >
+                <SelectTrigger className="w-28">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="light">Light</SelectItem>
+                  <SelectItem value="normal">Normal</SelectItem>
+                  <SelectItem value="heavy">Heavy</SelectItem>
+                </SelectContent>
+              </Select>
+            </ItemActions>
+          </Item>
+        ) : null}
         {profile.systemOwned ? (
           <Item variant="muted">
             <ItemContent>

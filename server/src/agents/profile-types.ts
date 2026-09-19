@@ -1,3 +1,5 @@
+import type { ComputerResourceProfile } from "../computer/resource-profile";
+
 export type AgentVisibility = "public" | "private";
 
 export type AgentActor = {
@@ -20,6 +22,8 @@ export type AgentProfile = {
   endpoint: string | null;
   /** Whether a key is set for it. Never the key. */
   hasAuth: boolean;
+  /** CPU/RAM preset for this Agent's isolated Computer. */
+  computerResourceProfile: ComputerResourceProfile;
   /**
    * Whether this agent holds a credential for calling tools back.
    *
@@ -40,6 +44,8 @@ export type CreateAgentInput = Pick<
    * built-in endpoint.
    */
   endpoint?: string;
+  /** CPU/RAM preset for this Agent's isolated Computer. */
+  computerResourceProfile?: ComputerResourceProfile;
   /**
    * A key this agent sits behind, if any.
    *
