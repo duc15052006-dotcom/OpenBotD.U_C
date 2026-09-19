@@ -62,6 +62,13 @@ export class RoutineRefusedError extends Error {
 
 /** A person may keep this many routines switched on. A constant with a reason, not a setting. */
 export const MAX_ENABLED_ROUTINES = 20;
+/**
+ * Unattended work gets a deployment-wide ceiling and a tighter per-Bot ceiling. These are hard
+ * refusal caps, not queue batch sizes: once reached, that occurrence is recorded as skipped rather
+ * than allowed to pile up behind an already-busy Bot.
+ */
+export const MAX_CONCURRENT_ROUTINE_RUNS = 20;
+export const MAX_CONCURRENT_ROUTINE_RUNS_PER_AGENT = 4;
 /** Same code-point cap discipline as channel activity. */
 export const MAX_INSTRUCTION_CODE_POINTS = 2000;
 /** Capped like audit payloads, because a failure is not a promise about length. */
@@ -88,6 +95,9 @@ const TOO_MANY_ENABLED = `You already have ${MAX_ENABLED_ROUTINES} routines swit
 const MAX_NAMED_CHANNELS = 5;
 
 export type RoutineRunOutcome = "succeeded" | "failed" | "skipped";
+export type RoutineRunAdmission =
+  | { runId: string; skippedReason: null }
+  | { runId: string; skippedReason: string };
 export type RoutineScheduleKind = "recurring" | "once";
 
 export type Routine = {
@@ -203,8 +213,13 @@ export type RoutineStore = {
    * clock caught up — so the sweep passes `now` here and one advance makes the clock current.
    */
   advanceNextRun(id: string, from: Date, computeFrom?: Date): Promise<boolean>;
-  /** Open a run row. Its status stays null until something finishes it. */
+  /** Open a run row without applying unattended-run capacity policy. Test/support use only. */
   insertRun(routineId: string): Promise<{ runId: string }>;
+  /**
+   * Open one unattended run under deployment + per-Bot concurrency caps. A refused occurrence is
+   * recorded immediately as skipped and returned with its reason instead of being dispatched.
+   */
+  insertRunWithCapacity(routineId: string): Promise<RoutineRunAdmission>;
   /**
    * The runner's read: an opened run row, joined to the routine it fires.
    *
@@ -883,6 +898,65 @@ export function createRoutineStore(database: Database): RoutineStore {
         .returning({ id: routineRuns.id });
       if (!row) throw new Error("inserting a routine run returned no row");
       return { runId: row.id };
+    },
+
+    async insertRunWithCapacity(routineId) {
+      return await database.transaction(async (transaction) => {
+        /*
+         * Counts and insert must be one serialized decision across every replica. Row locks cannot
+         * guard "how many open rows exist", so use one transaction-scoped advisory lock for this
+         * small critical section. A hash collision can only make two openings wait, never widen a
+         * cap.
+         */
+        await transaction.execute(
+          sql`select pg_advisory_xact_lock(hashtext('routine-run-capacity'))`,
+        );
+
+        const [routine] = await transaction
+          .select({ agentId: routines.agentId })
+          .from(routines)
+          .where(eq(routines.id, routineId))
+          .limit(1);
+        if (!routine) {
+          throw new RoutineNotFoundError();
+        }
+
+        const [counts] = await transaction
+          .select({
+            deployment: sql<number>`count(*)::int`,
+            agent: sql<number>`count(*) filter (where ${routines.agentId} = ${routine.agentId})::int`,
+          })
+          .from(routineRuns)
+          .innerJoin(routines, eq(routines.id, routineRuns.routineId))
+          .where(isNull(routineRuns.status));
+
+        const deploymentOpen = counts?.deployment ?? 0;
+        const agentOpen = counts?.agent ?? 0;
+        const skippedReason =
+          deploymentOpen >= MAX_CONCURRENT_ROUTINE_RUNS
+            ? `Skipped because this deployment already has ${MAX_CONCURRENT_ROUTINE_RUNS} routine runs in flight.`
+            : agentOpen >= MAX_CONCURRENT_ROUTINE_RUNS_PER_AGENT
+              ? `Skipped because this Bot already has ${MAX_CONCURRENT_ROUTINE_RUNS_PER_AGENT} routine runs in flight.`
+              : null;
+
+        const runId = `routine_run_${crypto.randomUUID()}`;
+        const [row] = await transaction
+          .insert(routineRuns)
+          .values(
+            skippedReason === null
+              ? { id: runId, routineId }
+              : {
+                  id: runId,
+                  routineId,
+                  status: "skipped",
+                  finishedAt: sql`now()`,
+                  error: skippedReason,
+                },
+          )
+          .returning({ id: routineRuns.id });
+        if (!row) throw new Error("inserting a routine run returned no row");
+        return { runId: row.id, skippedReason };
+      });
     },
 
     async runContext(runId) {
