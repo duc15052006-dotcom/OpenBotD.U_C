@@ -24,7 +24,6 @@ test("includes NOTE 21-2 autonomous workflow boundaries in the built-in adapter"
   );
 });
 
-
 /**
  * The Bot that ships in the box, and the conversation a declined handover used to end.
  *
