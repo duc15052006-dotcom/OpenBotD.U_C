@@ -323,6 +323,7 @@ export const CATALOGUE: readonly CatalogueEntry[] = Object.freeze([
       "remove_workflow_asset",
     ]),
     docsUrl: "https://github.com/CopilotKit/OpenBot/blob/main/docs/workflows.md",
+  },
 ]);
 
 const BY_KEY = new Map(CATALOGUE.map((entry) => [entry.key, entry]));
