@@ -1266,9 +1266,11 @@ describe("a person's standing instructions", () => {
       const prompt = promptWith(instructions as string | null);
 
       expect(prompt).not.toContain("standing instructions");
-      // Byte for byte what a deployment had before any of this existed, which is what most people
-      // on most days get.
-      expect(prompt).toBe(`Be helpful.\n\n${PROVENANCE_GUIDANCE}`);
+      // NOTE 21-2 is deployment-wide guidance, independent of whether this person has written
+      // standing instructions of their own.
+      expect(prompt).toBe(
+        `Be helpful.\n\n${PROVENANCE_GUIDANCE}\n\n${AUTONOMOUS_WORKFLOW_GUIDANCE}`,
+      );
     },
   );
 
