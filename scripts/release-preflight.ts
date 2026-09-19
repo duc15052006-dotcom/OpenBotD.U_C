@@ -1646,6 +1646,8 @@ function checkDurableWorkflowState(): void {
     "attachmentVisibleToWorkflow(",
     "eq(attachments.channelId, run.channelId)",
     "eq(channelAgents.agentId, identity.agentId)",
+    "resolveChannel(input)",
+    "more than one channel with me",
     "addAsset(",
     "listAssets(",
     "removeAsset(",
