@@ -363,8 +363,12 @@ function checkComputerSandboxBoundary(): void {
     }
   }
   const serverIndex = read("server/src/index.ts");
-  if (!serverIndex.includes("agentProfileStore.computerResourceProfile(botId)")) {
-    fail("computer: Agent resource profile is not wired into the Computer gateway");
+  if (
+    !serverIndex.includes("agentProfileStore.computerResourceProfile(botId)")
+  ) {
+    fail(
+      "computer: Agent resource profile is not wired into the Computer gateway",
+    );
   }
 
   const computersPage = read("app/src/routes/_authed/admin/computers.tsx");
