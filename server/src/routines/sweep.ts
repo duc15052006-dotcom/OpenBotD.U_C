@@ -178,12 +178,13 @@ export async function offerDueRoutines(
        * which stamps are worth firing, and where a stale clock should land, are this file's policy.
        */
       const lateBy = now.getTime() - routine.nextRunAt.getTime();
-      if (lateBy <= graceMs) {
+      if (routine.scheduleKind === "once" || lateBy <= graceMs) {
         /*
          * OFFERED BEFORE THE CLOCK MOVES. A crash between the two leaves the stamp where it was, so
          * the next pass reads the same stamp, renders the same key and collides: the firing happens
-         * once and nothing is lost. Advancing first and offering second loses that firing outright —
-         * the stamp is gone and nothing remembers what it was for.
+         * once and nothing is lost. One-time wakes deliberately keep that stamp until the consumer
+         * claims and consumes it: if the app was off for hours or days, waking late is still useful,
+         * while replaying every missed occurrence of a recurring routine is not.
          */
         await options.queue.offer({
           kind: ROUTINE_FIRE_KIND,
@@ -191,15 +192,18 @@ export async function offerDueRoutines(
           payload: {
             routineId: routine.id,
             scheduledFor: routine.nextRunAt.toISOString(),
+            scheduleKind: routine.scheduleKind,
           },
         });
         offered.push(routine.id);
-        // False means another sweep advanced it first, which is fine either way: the firing was
-        // offered under the same key by both, so it still happens once.
-        await options.routineStore.advanceNextRun(
-          routine.id,
-          routine.nextRunAt,
-        );
+        if (routine.scheduleKind === "recurring") {
+          // False means another sweep advanced it first, which is fine either way: the firing was
+          // offered under the same key by both, so it still happens once.
+          await options.routineStore.advanceNextRun(
+            routine.id,
+            routine.nextRunAt,
+          );
+        }
       } else {
         // The CAS still compares against the stale stamp it read — only the landing point moves.
         await options.routineStore.advanceNextRun(
