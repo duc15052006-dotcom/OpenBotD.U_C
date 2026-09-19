@@ -84,6 +84,18 @@ describe("AUTONOMOUS_WORKFLOW_GUIDANCE", () => {
     );
   });
 
+  test("uses durable workflow state for long dependent work when the tools exist", () => {
+    for (const evidence of [
+      "create a durable workflow before starting the first stage",
+      "create_workflow",
+      "wait_workflow_step",
+      "complete_workflow_step",
+      "do not pretend a durable workflow exists or promise autonomous continuation",
+    ]) {
+      expect(AUTONOMOUS_WORKFLOW_GUIDANCE).toContain(evidence);
+    }
+  });
+
   test("keeps every scene's prompt references and output isolated by project and scene", () => {
     expect(AUTONOMOUS_WORKFLOW_GUIDANCE).toContain("projectId + sceneId");
     expect(AUTONOMOUS_WORKFLOW_GUIDANCE).toContain(
