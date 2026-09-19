@@ -12,6 +12,8 @@ import { createAgentInstructionsRoutes } from "./agents/instructions-routes";
 import type { AgentInstructionsStore } from "./agents/instructions-store";
 import { createAgentKnowledgeRoutes } from "./agents/knowledge-routes";
 import type { AgentKnowledgeStore } from "./agents/knowledge-store";
+import { createAgentMemoryRoutes } from "./agents/memory-routes";
+import type { AgentMemoryStore } from "./agents/memory-store";
 import { createAgentModelConfigRoutes } from "./agents/model-config-routes";
 import type { AgentModelConfigStore } from "./agents/model-config-store";
 import type { AgentModelConnectionService } from "./agents/model-connection-service";
@@ -327,6 +329,8 @@ export function createApp(
   agentInstructions?: AgentInstructionsStore,
   /** Bounded uploaded reference material owned by one Agent. */
   agentKnowledge?: AgentKnowledgeStore,
+  /** Curated per-Agent memory with bounded revision history and optimistic concurrency. */
+  agentMemory?: AgentMemoryStore,
 ) {
   const app = new Hono<{ Variables: AppVariables }>();
 
@@ -1165,6 +1169,12 @@ export function createApp(
       app.route(
         "/api/agents",
         createAgentKnowledgeRoutes(agentKnowledge, requireUser),
+      );
+    }
+    if (agentMemory) {
+      app.route(
+        "/api/agents",
+        createAgentMemoryRoutes(agentMemory, requireUser),
       );
     }
     // Choosing a coworker for an untagged message needs the same permission-filtered roster the
