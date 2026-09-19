@@ -39,12 +39,11 @@ test("does not duplicate NOTE 21-2 when OpenBot already supplied it in the stand
       } as never,
     ]),
   );
-  const carried = JSON.stringify(
-    messages.map((message) => message.content ?? ""),
+  const occurrences = messages.filter((message) =>
+    String(message.content ?? "").includes(AUTONOMOUS_WORKFLOW_GUIDANCE),
   );
-  expect(carried.split(AUTONOMOUS_WORKFLOW_GUIDANCE)).toHaveLength(2);
+  expect(occurrences).toHaveLength(1);
 });
-
 
 /**
  * A tool call nobody answered does not end the conversation.
