@@ -453,8 +453,11 @@ export function createWorkflowStore(database: Database): WorkflowStore {
         id: candidate.id,
         label: Array.from(candidate.name)
           .slice(0, 80)
-          .join("")
-          .replace(/[\u0000-\u001f\u007f]/g, " "),
+          .map((character) => {
+            const codePoint = character.codePointAt(0) ?? 0;
+            return codePoint <= 0x1f || codePoint === 0x7f ? " " : character;
+          })
+          .join(""),
       }));
       const suffix = candidates.length > 5 ? " More choices exist." : "";
       throw new WorkflowRefusedError(
