@@ -303,6 +303,7 @@ export type SecretRequest = { label: string; ref: string; snapshotId: number };
 export type ComputerProfile = {
   botId: string;
   running: boolean;
+  lifecycle: ComputerLifecycleState;
   startedAt: string | null;
   /**
    * The host its traffic leaves through, or null for direct.
@@ -340,6 +341,17 @@ export type HumanInputResult = {
   deltaY?: number;
   url: string;
 };
+
+/** Fleet lifecycle shown to a person without changing the provider's lower-level health states. */
+export const COMPUTER_LIFECYCLE_STATES = [
+  "running",
+  "idle",
+  "sleeping",
+  "stopped",
+] as const;
+
+export type ComputerLifecycleState =
+  (typeof COMPUTER_LIFECYCLE_STATES)[number];
 
 /** Lifecycle states a Bot's computer can be in, as the UI must render them. */
 export const COMPUTER_STATES = [
