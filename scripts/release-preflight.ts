@@ -1281,6 +1281,7 @@ function checkProviderConnectionTest(): void {
     "model_probe_never_allowed_host",
     "protected_model_probe_client",
     "forbidden_resolved_probe_ip",
+    "return forbidden_resolved_probe_ip(std::net::IpAddr::V4(",
     ".resolve_to_addrs(host, &addresses)",
     "metadata.google.internal",
     "169, 254, 169, 254",
