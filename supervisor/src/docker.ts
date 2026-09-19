@@ -332,6 +332,8 @@ async function inspectOwned(names: ComputerNames): Promise<{
   image?: string;
   startedAt?: string;
   token?: string;
+  memoryBytes?: number;
+  nanoCpus?: number;
 } | null> {
   try {
     const info = await docker.getContainer(names.container).inspect();
@@ -348,6 +350,12 @@ async function inspectOwned(names: ComputerNames): Promise<{
       // The token this container was born holding, which is the one it will check callers against
       // for the rest of its life. See `holdsCurrentToken`.
       token: tokenIn(info.Config?.Env),
+      ...(typeof info.HostConfig?.Memory === "number"
+        ? { memoryBytes: info.HostConfig.Memory }
+        : {}),
+      ...(typeof info.HostConfig?.NanoCpus === "number"
+        ? { nanoCpus: info.HostConfig.NanoCpus }
+        : {}),
       /*
        * When this run of the container began, which is what tells two runs apart.
        *
@@ -979,6 +987,41 @@ export async function ensure(
           }
         }
         existing = null;
+      }
+
+      if (
+        existing &&
+        ((options.memoryBytes !== undefined &&
+          existing.memoryBytes !== options.memoryBytes) ||
+          (options.nanoCpus !== undefined &&
+            existing.nanoCpus !== options.nanoCpus))
+      ) {
+        try {
+          await docker.getContainer(names.container).update({
+            ...(options.memoryBytes !== undefined
+              ? { Memory: options.memoryBytes }
+              : {}),
+            ...(options.nanoCpus !== undefined
+              ? { NanoCPUs: options.nanoCpus }
+              : {}),
+          });
+          existing = await inspectOwned(names);
+          if (
+            !existing ||
+            (options.memoryBytes !== undefined &&
+              existing.memoryBytes !== options.memoryBytes) ||
+            (options.nanoCpus !== undefined &&
+              existing.nanoCpus !== options.nanoCpus)
+          ) {
+            throw new Error(
+              "Docker did not report the exact requested CPU/RAM limits after update.",
+            );
+          }
+        } catch (error) {
+          throw new DockerUnavailableError(
+            `The resource profile for ${names.botId} could not be applied: ${String(error)}`,
+          );
+        }
       }
 
       if (!existing) {

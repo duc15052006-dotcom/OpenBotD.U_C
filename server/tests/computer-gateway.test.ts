@@ -49,6 +49,7 @@ function fakeComputer(options?: {
 }) {
   const calls: string[] = [];
   const addressedAs: string[] = [];
+  const locateOptions: Parameters<ComputerProvider["locate"]>[1][] = [];
   const requests: Array<{ url: string; init?: RequestInit }> = [];
   const stopResult = options?.stopResult ?? { wasRunning: true };
   const resetResult = options?.resetResult ?? { cleared: true };
@@ -61,8 +62,9 @@ function fakeComputer(options?: {
   const provider: ComputerProvider = {
     name: "test",
     isolation: "per-bot",
-    locate: async (botId) => {
+    locate: async (botId, resourceOptions) => {
       addressedAs.push(botId);
+      locateOptions.push(resourceOptions);
       return "http://agent-computer:4100";
     },
     ...(options?.session ? { sessionOf: async () => options.session?.() } : {}),
@@ -182,7 +184,7 @@ function fakeComputer(options?: {
         );
     }
   }) as unknown as typeof fetch;
-  return { provider, fetchImpl, calls, addressedAs, requests };
+  return { provider, fetchImpl, calls, addressedAs, locateOptions, requests };
 }
 
 function fakeAudit() {
@@ -1489,5 +1491,25 @@ describe("acting on a ref the server cannot resolve", () => {
     await gateway.scroll("bot-1", ACTOR, { deltaY: 200 });
 
     expect(calls).toEqual(["scroll"]);
+  });
+});
+
+describe("per-Agent Computer resource profiles", () => {
+  test("resolves the saved preset before locating the Computer", async () => {
+    const { provider, fetchImpl, locateOptions } = fakeComputer();
+    const { store } = fakeAudit();
+    const gateway = createComputerGateway({
+      provider,
+      fetchImpl,
+      auditStore: store,
+      policy: () => PERMISSIVE,
+      resourceProfile: async (botId) => {
+        expect(botId).toBe("sales");
+        return "heavy";
+      },
+    });
+
+    await gateway.read("sales");
+    expect(locateOptions).toEqual([{ resourceProfile: "heavy" }]);
   });
 });

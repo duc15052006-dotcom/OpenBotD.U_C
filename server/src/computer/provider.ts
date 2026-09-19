@@ -5,6 +5,7 @@ import {
   readSandboxTemplate,
 } from "./sandbox";
 import type { ComputerStatus } from "./schema";
+import type { ComputerResourceProfile } from "./resource-profile";
 import {
   createDockerSupervisorProvider,
   type SupervisorOptions,
@@ -73,7 +74,10 @@ export interface ComputerProvider {
   /** How the provider separates computers between Bots. */
   readonly isolation: "per-bot" | "shared";
   /** Return the base address of the computer for this Bot. */
-  locate(botId: string): Promise<string>;
+  locate(
+    botId: string,
+    options?: { resourceProfile?: ComputerResourceProfile },
+  ): Promise<string>;
   /** Return the lifecycle state of the computer for this Bot. */
   status(botId: string): Promise<ComputerStatus>;
   /** Stop the computer for this Bot if it exists. */
@@ -296,7 +300,7 @@ function createLazySandboxProvider(
   return {
     name: "sandbox",
     isolation: "per-bot",
-    locate: async (botId) => (await provider()).locate(botId),
+    locate: async (botId, options) => (await provider()).locate(botId, options),
     status: async (botId) => (await provider()).status(botId),
     stop: async (botId) => (await provider()).stop(botId),
     reset: async (botId) => (await provider()).reset(botId),
