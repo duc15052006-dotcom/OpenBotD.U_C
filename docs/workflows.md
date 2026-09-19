@@ -67,6 +67,19 @@ The bridge uses a bounded periodic recovery sweep rather than busy-waiting on an
 Agents can sleep while external generation is pending, and a server/app restart simply leaves the
 persisted wait to be discovered and resumed later.
 
+## Step assets
+
+Each workflow step can keep a durable metadata ledger of its inputs and outputs. Entries record whether
+the asset is an input or output, its media kind, an optional label, and a bounded reference. This is
+useful for scene-by-scene content pipelines where prompts, reference images, renders, audio and final
+outputs must remain attached to the exact task that produced or consumed them.
+
+The ledger does not grant file access. It accepts only `attachment:<uuid>` references that are visible
+in the workflow's exact channel, or `workspace:<relative-path>` references with no absolute or dot
+segments. Reading/writing the underlying bytes still goes through the existing Attachment, Files,
+Computer and policy boundaries. Assets therefore cannot be used to smuggle another Bot's state or a
+host filesystem path into a workflow.
+
 ## Pause, resume and cancel
 
 Pause and resume change only the workflow gate; they do not erase steps, attempts, provider state or
