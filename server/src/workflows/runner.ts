@@ -23,7 +23,7 @@ function continuationInstruction(input: {
   instruction: string;
 }): string {
   return [
-    "Resume this durable workflow step now.",
+    "Run this durable workflow step now.",
     "",
     `Workflow: ${input.workflowId}`,
     `Step: ${input.stepKey}`,

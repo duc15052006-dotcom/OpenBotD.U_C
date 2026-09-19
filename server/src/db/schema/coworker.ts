@@ -257,7 +257,11 @@ export const workflowSteps = pgTable(
     provider: text("provider"),
     /** Exact durable wake target for a waiting step. */
     waitUntil: timestamp("wait_until", { withTimezone: true }),
-    /** Exact wait stamp whose wake most recently moved this attempt back to running. */
+    /**
+     * Exact durable dispatch stamp for the current autonomous attempt.
+     * A ready-step dispatch stores its ready timestamp; waitStep clears it; a later wait wake
+     * stores the exact wait timestamp. The column name is retained for migration compatibility.
+     */
     resumedFromWaitUntil: timestamp("resumed_from_wait_until", {
       withTimezone: true,
     }),

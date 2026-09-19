@@ -281,6 +281,79 @@ describe("dependency and lifecycle transitions", () => {
   });
 });
 
+describe("durable ready-step dispatch", () => {
+  test("starts only the exact queued ready version and retries that CAS idempotently", async () => {
+    const { owner, agentId, channel } = await setUp();
+    const who = identity(owner, agentId);
+    const plan = await store.create(planInput(owner, agentId, channel.id));
+    const queued = (await store.readySteps(500)).find(
+      (candidate) =>
+        candidate.workflowId === plan.id && candidate.stepKey === "script",
+    );
+    expect(queued).toBeDefined();
+    expect(queued?.attempts).toBe(0);
+
+    const started = await store.startReadyStep(
+      who,
+      plan.id,
+      "script",
+      queued?.readyAt as Date,
+      0,
+    );
+    expect(started.status).toBe("running");
+    expect(started.attempts).toBe(1);
+
+    const redelivered = await store.startReadyStep(
+      who,
+      plan.id,
+      "script",
+      queued?.readyAt as Date,
+      0,
+    );
+    expect(redelivered.status).toBe("running");
+    expect(redelivered.attempts).toBe(1);
+  });
+
+  test("a manual start makes an older queued ready item stale", async () => {
+    const { owner, agentId, channel } = await setUp();
+    const who = identity(owner, agentId);
+    const plan = await store.create(planInput(owner, agentId, channel.id));
+    const queued = (await store.readySteps(500)).find(
+      (candidate) =>
+        candidate.workflowId === plan.id && candidate.stepKey === "script",
+    );
+    expect(queued).toBeDefined();
+
+    await store.startStep(who, plan.id, "script");
+    await expect(
+      store.startReadyStep(who, plan.id, "script", queued?.readyAt as Date, 0),
+    ).rejects.toThrow(/another attempt/);
+  });
+
+  test("pause and resume gives still-ready work a fresh deterministic key", async () => {
+    const { owner, agentId, channel } = await setUp();
+    const who = identity(owner, agentId);
+    const plan = await store.create(planInput(owner, agentId, channel.id));
+    const before = (await store.readySteps(500)).find(
+      (candidate) =>
+        candidate.workflowId === plan.id && candidate.stepKey === "script",
+    );
+    expect(before).toBeDefined();
+
+    await store.pause(who, plan.id);
+    await store.resume(who, plan.id);
+
+    const after = (await store.readySteps(500)).find(
+      (candidate) =>
+        candidate.workflowId === plan.id && candidate.stepKey === "script",
+    );
+    expect(after).toBeDefined();
+    expect(
+      (after?.readyAt.getTime() ?? 0) > (before?.readyAt.getTime() ?? 0),
+    ).toBe(true);
+  });
+});
+
 describe("durable waits", () => {
   test("resume re-arms a due wait so a wake finished during pause cannot wedge it", async () => {
     const { owner, agentId, channel } = await setUp();
