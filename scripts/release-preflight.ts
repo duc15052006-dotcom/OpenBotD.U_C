@@ -1476,6 +1476,7 @@ function checkDurableWorkflowState(): void {
   const schema = read("server/src/db/schema/coworker.ts");
   const store = read("server/src/workflows/store.ts");
   const migration = read("server/drizzle/0043_workflow_state.sql");
+  const ready = read("server/src/workflows/ready.ts");
   const wake = read("server/src/workflows/wake.ts");
   const server = read("server/src/index.ts");
   const assetMigration = read("server/drizzle/0044_workflow_assets.sql");
@@ -1505,8 +1506,14 @@ function checkDurableWorkflowState(): void {
     "which must be an earlier step in the same workflow",
     "eq(workflowSteps.waitUntil, expectedWaitUntil)",
     "lte(workflowSteps.waitUntil, sql`now()`)",
+    "readySteps(limit)",
+    "startReadyStep(",
+    "expectedReadyAt",
+    "eq(workflowSteps.updatedAt, expectedReadyAt)",
+    "expectedAttempt + 1",
     "dueWaitingSteps(limit)",
     "eq(workflowSteps.attempts, expectedAttempt)",
+    "greatest(",
     "date_trunc('milliseconds', now())",
   ]) {
     if (!store.includes(evidence)) {
@@ -1528,6 +1535,22 @@ function checkDurableWorkflowState(): void {
       fail(`workflows: durable wake bridge is missing ${evidence}`);
     }
   }
+  for (const evidence of [
+    "WORKFLOW_READY_DISPATCH_KIND",
+    "readyAt.toISOString()",
+    "startReadyStep(",
+    "queue.renew({",
+    "queue.release({",
+    "item.attempts >= maxAttempts",
+    "Autonomous continuation exhausted its retry budget",
+  ]) {
+    if (!ready.includes(evidence)) {
+      fail(`workflows: durable ready-step bridge is missing ${evidence}`);
+    }
+  }
+  if (!server.includes("sweepReadyWorkflowSteps(workflowReady)")) {
+    fail("workflows: durable ready-step bridge is not running from the server");
+  }
   if (!server.includes("sweepWorkflowWaits(workflowWake)")) {
     fail("workflows: durable wake bridge is not running from the server");
   }
@@ -1542,7 +1565,7 @@ function checkDurableWorkflowState(): void {
     }
   }
   for (const evidence of [
-    "Resume this durable workflow step now.",
+    "Run this durable workflow step now.",
     "expectedAttempt",
     "checkpoint the step durably",
     "The autonomous continuation ended without checkpointing this workflow step.",
