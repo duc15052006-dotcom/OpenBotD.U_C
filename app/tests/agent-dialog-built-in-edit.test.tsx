@@ -77,6 +77,7 @@ function serve(endpoint: string) {
     deletedAt: null,
     endpoint,
     hasAuth: false,
+    computerResourceProfile: "normal",
     hasCallbackToken: false,
   };
   const store = {
