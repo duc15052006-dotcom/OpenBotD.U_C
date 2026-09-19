@@ -75,8 +75,7 @@ const TOOLS: readonly McpTool[] = Object.freeze([
   },
   {
     name: "get_workflow",
-    description:
-      "Read one durable workflow and all of its current step state.",
+    description: "Read one durable workflow and all of its current step state.",
     inputSchema: {
       type: "object",
       properties: { id: { type: "string" } },
@@ -288,7 +287,9 @@ function identityOf(connection: Connection): WorkflowIdentity | FailedResult {
   }
   const agentId = connection.botId?.trim();
   if (!agentId) {
-    return failure("A workflow belongs to a Bot, and this run does not name one.");
+    return failure(
+      "A workflow belongs to a Bot, and this run does not name one.",
+    );
   }
   return { ownerUserId, agentId };
 }
@@ -321,7 +322,9 @@ function stepsArg(value: unknown): WorkflowStepInput[] | FailedResult {
       (!Array.isArray(item.dependsOn) ||
         item.dependsOn.some((entry) => typeof entry !== "string"))
     ) {
-      return failure("A workflow step dependsOn must be an array of step keys.");
+      return failure(
+        "A workflow step dependsOn must be an array of step keys.",
+      );
     }
     steps.push({
       key,
@@ -476,9 +479,7 @@ export async function callTool(
         mediaKind !== "file" &&
         mediaKind !== "text"
       ) {
-        return failure(
-          "mediaKind must be image, video, audio, file or text.",
-        );
+        return failure("mediaKind must be image, video, audio, file or text.");
       }
       const label = stringArg(args, "label");
       const input: WorkflowAssetInput = {
