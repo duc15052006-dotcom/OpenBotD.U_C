@@ -271,6 +271,26 @@ type RoutineRow = typeof routines.$inferSelect;
 /** What drizzle hands the callback of `database.transaction`. */
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
 
+async function databaseNow(transaction: Transaction): Promise<Date> {
+  const rows = (await transaction.execute(
+    sql`select date_trunc('milliseconds', now()) as "now"`,
+  )) as unknown as Array<{ now: Date }>;
+  const row = rows[0];
+  if (!row) throw new Error("database clock query returned no row");
+  return row.now;
+}
+
+async function requireDatabaseFuture(
+  transaction: Transaction,
+  at: Date,
+  message: string,
+): Promise<void> {
+  const rows = (await transaction.execute(
+    sql`select ${at} > now() as "future"`,
+  )) as unknown as Array<{ future: boolean }>;
+  if (rows[0]?.future !== true) throw new RoutineRefusedError(message);
+}
+
 function toRoutine(row: RoutineRow): Routine {
   return {
     id: row.id,
@@ -320,9 +340,6 @@ function validOneShotAt(runAt: Date): Date {
     throw new RoutineRefusedError(
       "A one-time wake needs a valid date and time.",
     );
-  }
-  if (runAt.getTime() <= Date.now()) {
-    throw new RoutineRefusedError("A one-time wake has to be in the future.");
   }
   return runAt;
 }
@@ -539,19 +556,9 @@ export function createRoutineStore(database: Database): RoutineStore {
      * one-time wake keeps its exact persisted stamp; re-enabling it after that stamp has passed is
      * refused rather than silently turning completed work back into scheduled work.
      */
-    if (existing.scheduleKind === "recurring") {
-      if (
-        patch.cron !== undefined ||
-        patch.timezone !== undefined ||
-        enabling
-      ) {
-        values.nextRunAt = nextRunFor(cron, timezone, new Date());
-      }
-    } else if (enabling && existing.nextRunAt.getTime() <= Date.now()) {
-      throw new RoutineRefusedError(
-        "That one-time wake has already passed. Schedule a new wake instead.",
-      );
-    }
+    const recomputeRecurring =
+      existing.scheduleKind === "recurring" &&
+      (patch.cron !== undefined || patch.timezone !== undefined || enabling);
 
     /*
      * The cap is re-counted inside the lock, in the same transaction as the write. Counting outside
@@ -559,6 +566,19 @@ export function createRoutineStore(database: Database): RoutineStore {
      * before either committed.
      */
     const [row] = await withEnabledCapLock(ownerUserId, async (transaction) => {
+      if (recomputeRecurring) {
+        values.nextRunAt = nextRunFor(
+          cron,
+          timezone,
+          await databaseNow(transaction),
+        );
+      } else if (existing.scheduleKind === "once" && enabling) {
+        await requireDatabaseFuture(
+          transaction,
+          existing.nextRunAt,
+          "That one-time wake has already passed. Schedule a new wake instead.",
+        );
+      }
       if (
         enabling &&
         (await countEnabled(transaction, ownerUserId)) >= MAX_ENABLED_ROUTINES
@@ -586,13 +606,16 @@ export function createRoutineStore(database: Database): RoutineStore {
         input.agentId,
         input.channelId,
       );
-      const nextRunAt = nextRunFor(input.cron, timezone, new Date());
-
       // Counted and inserted under the owner's cap lock, so two creates racing at 19 cannot both
       // count 19 and hand the person 21: the second waits, counts 20, and gets the refusal.
       const [row] = await withEnabledCapLock(
         input.ownerUserId,
         async (transaction) => {
+          const nextRunAt = nextRunFor(
+            input.cron,
+            timezone,
+            await databaseNow(transaction),
+          );
           if (
             (await countEnabled(transaction, input.ownerUserId)) >=
             MAX_ENABLED_ROUTINES
@@ -632,6 +655,11 @@ export function createRoutineStore(database: Database): RoutineStore {
       const [row] = await withEnabledCapLock(
         input.ownerUserId,
         async (transaction) => {
+          await requireDatabaseFuture(
+            transaction,
+            nextRunAt,
+            "A one-time wake has to be in the future.",
+          );
           if (
             (await countEnabled(transaction, input.ownerUserId)) >=
             MAX_ENABLED_ROUTINES

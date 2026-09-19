@@ -99,8 +99,9 @@ stopping after each dependency boundary.
 A running step can enter `waiting` with an exact future timestamp and an optional provider label.
 The provider field is metadata only and must never contain a credential.
 
-Due-wait discovery uses PostgreSQL's clock. Resuming a wait compares the exact persisted timestamp as
-well as the step status. A stale wake therefore cannot resume a step whose wait was cancelled or
+Both future-wait validation and due-wait discovery use PostgreSQL's clock. A skewed app/server clock
+therefore cannot reject a database-future wake or accept one the database already considers due.
+Resuming a wait compares the exact persisted timestamp as well as the step status. A stale wake therefore cannot resume a step whose wait was cancelled or
 rescheduled after that wake was created.
 
 Due workflow waits are bridged into the existing `work_items` queue. The queue remains the single

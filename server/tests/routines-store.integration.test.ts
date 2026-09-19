@@ -253,6 +253,31 @@ describe("one-time wake lifecycle", () => {
     expect(summary?.schedule).toBe(`Once at ${runAt.toISOString()}`);
   });
 
+  test("uses the database clock when the server clock is skewed forward", async () => {
+    const { owner, agentId, channel } = await setUp();
+    const realNow = Date.now;
+    const runAt = new Date(realNow() + 60_000);
+
+    Date.now = () => realNow() + 24 * 60 * 60_000;
+    try {
+      const wake = await store.createOneShot({
+        ownerUserId: owner.id,
+        agentId,
+        channelId: channel.id,
+        instruction: "Wake from the durable database clock.",
+        runAt,
+      });
+      expect(wake.nextRunAt.getTime()).toBe(runAt.getTime());
+
+      await store.setEnabled(owner.id, wake.id, false);
+      const enabled = await store.update(owner.id, wake.id, { enabled: true });
+      expect(enabled.enabled).toBe(true);
+      expect(enabled.nextRunAt.getTime()).toBe(runAt.getTime());
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
   test("refuses a past wake and cron edits on a one-time wake", async () => {
     const { owner, agentId, channel } = await setUp();
     await expect(

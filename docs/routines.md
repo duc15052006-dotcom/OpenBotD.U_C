@@ -64,6 +64,10 @@ one night's attempt will fix that — only switching it off, and saying so, does
 
 ## Recurring missed windows are skipped, not replayed
 
+Schedule creation, re-enabling and one-time future validation all use PostgreSQL's clock. A laptop,
+VM or server whose local wall clock is ahead or behind therefore cannot move a recurring next-run
+stamp or reject/accept a one-time wake differently from the database that later decides when it is due.
+
 A recurring routine's next run is a stamp, not a queue. If nothing was watching the clock — a worker that was
 never started, or one that was down for a month — a routine's stamp falls behind, and the deployment
 does not owe it every occurrence it missed: catching up is a silent drain, not a burst. A deployment
