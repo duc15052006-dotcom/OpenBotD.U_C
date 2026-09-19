@@ -557,9 +557,7 @@ export function createRoutineStore(database: Database): RoutineStore {
      */
     const recomputeRecurring =
       existing.scheduleKind === "recurring" &&
-      (patch.cron !== undefined ||
-        patch.timezone !== undefined ||
-        enabling);
+      (patch.cron !== undefined || patch.timezone !== undefined || enabling);
 
     /*
      * The cap is re-counted inside the lock, in the same transaction as the write. Counting outside
