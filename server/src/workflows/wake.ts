@@ -10,7 +10,7 @@ const DEFAULT_RETRY_DELAY_MS = 5_000;
 
 type WorkflowWakeStore = Pick<
   WorkflowStore,
-  "dueWaitingSteps" | "resumeWaitingStep" | "failStep"
+  "dueWaitingSteps" | "resumeWaitingStep" | "failWaitingStep" | "failStep"
 >;
 
 export type WorkflowWakeOptions = {
@@ -255,15 +255,28 @@ export async function dispatchClaimedWorkflowWaits(
        * exhausted queue item. Failures before the CAS stay retryable/stale-safe because the step is
        * still waiting and can be offered again with its exact wait stamp.
        */
-      if (resumed && item.attempts >= maxAttempts) {
+      if (item.attempts >= maxAttempts) {
         try {
-          await options.store.failStep(
-            { ownerUserId, agentId },
-            workflowId,
-            stepKey,
-            `Autonomous wait continuation exhausted its retry budget: ${reason}`,
-            expectedAttempt,
-          );
+          const failure =
+            `Autonomous wait continuation exhausted its retry budget: ${reason}`;
+          if (resumed) {
+            await options.store.failStep(
+              { ownerUserId, agentId },
+              workflowId,
+              stepKey,
+              failure,
+              expectedAttempt,
+            );
+          } else {
+            await options.store.failWaitingStep(
+              { ownerUserId, agentId },
+              workflowId,
+              stepKey,
+              stamp,
+              expectedAttempt,
+              failure,
+            );
+          }
         } finally {
           await options.queue.finish({
             kind: WORKFLOW_WAIT_RESUME_KIND,
