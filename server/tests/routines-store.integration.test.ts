@@ -231,6 +231,72 @@ describe("what the schedule has to be", () => {
   });
 });
 
+describe("one-time wake lifecycle", () => {
+  test("stores the exact future stamp and lists it as a one-time schedule", async () => {
+    const { owner, agentId, channel } = await setUp();
+    const runAt = new Date(Date.now() + 60 * 60_000);
+    runAt.setMilliseconds(0);
+
+    const wake = await store.createOneShot({
+      ownerUserId: owner.id,
+      agentId,
+      channelId: channel.id,
+      instruction: "Check the external render and continue.",
+      runAt,
+    });
+
+    expect(wake.scheduleKind).toBe("once");
+    expect(wake.timezone).toBe("UTC");
+    expect(wake.nextRunAt.toISOString()).toBe(runAt.toISOString());
+    const [summary] = await store.listFor(owner.id);
+    expect(summary?.scheduleKind).toBe("once");
+    expect(summary?.schedule).toBe(`Once at ${runAt.toISOString()}`);
+  });
+
+  test("refuses a past wake and cron edits on a one-time wake", async () => {
+    const { owner, agentId, channel } = await setUp();
+    await expect(
+      store.createOneShot({
+        ownerUserId: owner.id,
+        agentId,
+        channelId: channel.id,
+        instruction: "Continue.",
+        runAt: new Date(Date.now() - 60_000),
+      }),
+    ).rejects.toThrow(/future/);
+
+    const wake = await store.createOneShot({
+      ownerUserId: owner.id,
+      agentId,
+      channelId: channel.id,
+      instruction: "Continue.",
+      runAt: new Date(Date.now() + 60 * 60_000),
+    });
+    await expect(store.update(owner.id, wake.id, { cron: DAILY })).rejects.toThrow(
+      /exact time/,
+    );
+  });
+
+  test("consume is compare-and-set and records the exact committed wake", async () => {
+    const { owner, agentId, channel } = await setUp();
+    const runAt = new Date(Date.now() + 60 * 60_000);
+    runAt.setMilliseconds(0);
+    const wake = await store.createOneShot({
+      ownerUserId: owner.id,
+      agentId,
+      channelId: channel.id,
+      instruction: "Continue.",
+      runAt,
+    });
+
+    expect(await store.consumeOneShot(wake.id, runAt)).toBe(true);
+    expect(await store.consumeOneShot(wake.id, runAt)).toBe(false);
+    const row = await store.routineForFiring(wake.id);
+    expect(row?.enabled).toBe(false);
+    expect(row?.scheduleKind).toBe("once");
+    expect(row?.lastRunAt?.toISOString()).toBe(runAt.toISOString());
+  });
+});
 /**
  * The cap is a constant with a reason: every enabled routine is a headless turn somebody's Bot will
  * take without being watched, and a model that can be talked into creating them one at a time can be
