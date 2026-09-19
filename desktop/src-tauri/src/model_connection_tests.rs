@@ -148,7 +148,6 @@ fn provider_probe_client_never_follows_redirects() {
     assert!(model_probe_client().is_ok());
 }
 
-
 #[test]
 fn protected_probe_blocks_resolved_special_use_ranges() {
     for ip in [
@@ -175,13 +174,7 @@ fn protected_probe_blocks_resolved_special_use_ranges() {
 
 #[test]
 fn protected_probe_keeps_loopback_and_private_model_hosts_available() {
-    for ip in [
-        "127.0.0.1",
-        "10.0.0.8",
-        "172.16.0.5",
-        "192.168.1.20",
-        "::1",
-    ] {
+    for ip in ["127.0.0.1", "10.0.0.8", "172.16.0.5", "192.168.1.20", "::1"] {
         let parsed = ip.parse::<std::net::IpAddr>().expect("test IP");
         assert!(
             !forbidden_resolved_probe_ip(parsed),
