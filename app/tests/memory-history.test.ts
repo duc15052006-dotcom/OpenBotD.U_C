@@ -17,7 +17,8 @@ describe("memory history parsing", () => {
           id: "project-memory",
           kind: "topical",
           scope: "project",
-          content:\n            "Shared project fact that must not enter the user history UI.",
+          content:
+            "Shared project fact that must not enter the user history UI.",
           sourceThreadIds: ["thread-2"],
           invalidatedAt: null,
         },
