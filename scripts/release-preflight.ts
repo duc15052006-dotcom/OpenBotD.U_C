@@ -456,10 +456,28 @@ function checkInteractiveComputerControls(): void {
     '"Keep running in tray"',
     '"Exit and stop all Agents"',
     '"STOP ALL AGENTS"',
+    '"close-ask"',
+    '"close-tray"',
+    '"close-exit"',
+    "close_behavior_for(app)",
     "app.exit(0)",
   ]) {
     if (!desktop.includes(evidence)) {
       fail(`desktop: close/stop runtime choice is missing ${evidence}`);
+    }
+  }
+
+  const closeBehavior = read("desktop/src-tauri/src/close_behavior.rs");
+  for (const evidence of [
+    "pub enum CloseBehavior",
+    "Ask",
+    "KeepRunning",
+    "Exit",
+    "unwrap_or_default()",
+    "write_private_file",
+  ]) {
+    if (!closeBehavior.includes(evidence)) {
+      fail(`desktop: persisted close behavior is missing ${evidence}`);
     }
   }
 
