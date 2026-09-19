@@ -80,6 +80,27 @@ export function createDockerSupervisorProvider(
    * `sessionOf` falls back to asking rather than letting an empty map quietly stop checking.
    */
   const sessions = new Map<string, string>();
+  const MAX_REMEMBERED_SESSIONS = 512;
+
+  function rememberSession(botId: string, session: string): void {
+    // Touch on write so the Map's insertion order is also its LRU order.
+    sessions.delete(botId);
+    sessions.set(botId, session);
+    while (sessions.size > MAX_REMEMBERED_SESSIONS) {
+      const oldest = sessions.keys().next().value;
+      if (oldest === undefined) break;
+      sessions.delete(oldest);
+    }
+  }
+
+  function rememberedSession(botId: string): string | undefined {
+    const session = sessions.get(botId);
+    if (!session) return undefined;
+    // Touch on read. Frequently active Bots stay hot; abandoned/deleted Bot ids fall out naturally.
+    sessions.delete(botId);
+    sessions.set(botId, session);
+    return session;
+  }
 
   async function call(
     path: string,
@@ -154,7 +175,7 @@ export function createDockerSupervisorProvider(
   ): string {
     // Restart and ensure both return the exact run they created. Remember that identity before
     // handing the address back so stale accessibility refs cannot cross a lifecycle boundary.
-    if (state?.startedAt) sessions.set(botId, state.startedAt);
+    if (state?.startedAt) rememberSession(botId, state.startedAt);
     if (state?.url) return state.url;
     if (state?.port) return hostForPort(state.port);
     throw new SupervisorError(
@@ -212,7 +233,7 @@ export function createDockerSupervisorProvider(
        * that needs this, so the value is as fresh as the address it was fetched with. Asking twice
        * would double the supervisor's work on the hot path to learn something it just told us.
        */
-      const known = sessions.get(botId);
+      const known = rememberedSession(botId);
       if (known) return known;
 
       /*
@@ -229,7 +250,7 @@ export function createDockerSupervisorProvider(
         const startedAt = computers.find(
           (computer) => computer.botId === botId,
         )?.startedAt;
-        if (startedAt) sessions.set(botId, startedAt);
+        if (startedAt) rememberSession(botId, startedAt);
         return startedAt;
       } catch {
         // Unknown, not mismatched. A supervisor that cannot be reached must not turn every ref into
@@ -289,6 +310,7 @@ export function createDockerSupervisorProvider(
       const result = (await call(
         `/computers/${encodeURIComponent(botId)}/stop`,
       )) as { stopped?: boolean } | null;
+      sessions.delete(botId);
       return { wasRunning: result?.stopped === true };
     },
 
@@ -296,6 +318,7 @@ export function createDockerSupervisorProvider(
       const result = (await call(
         `/computers/${encodeURIComponent(botId)}/reset`,
       )) as { reset?: boolean } | null;
+      sessions.delete(botId);
       return { cleared: result?.reset === true };
     },
 
@@ -310,6 +333,7 @@ export function createDockerSupervisorProvider(
       const result = (await call(
         `/computers/${encodeURIComponent(botId)}/restore`,
       )) as { restored?: boolean } | null;
+      sessions.delete(botId);
       return { restored: result?.restored === true };
     },
 
