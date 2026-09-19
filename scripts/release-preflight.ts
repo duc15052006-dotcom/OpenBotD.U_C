@@ -345,6 +345,33 @@ function checkComputerSandboxBoundary(): void {
       fail(`computer: clean snapshot boundary is missing ${evidence}`);
     }
   }
+  const createSupervisor =
+    snapshotSupervisor
+      .split("export async function createCleanSnapshot(", 2)[1]
+      ?.split("export async function restoreCleanSnapshot(", 1)[0] ?? "";
+  const createTarget = createSupervisor.indexOf(
+    "const target = slots[current?.index === 0 ? 1 : 0];",
+  );
+  const createTry = createSupervisor.indexOf("try {", createTarget);
+  const createPrepare = createSupervisor.indexOf(
+    "for (const volume of target.volumes)",
+    createTry,
+  );
+  const createCatch = createSupervisor.indexOf(
+    "} catch (error)",
+    createPrepare,
+  );
+  if (
+    createTarget < 0 ||
+    createTry < createTarget ||
+    createPrepare < createTry ||
+    createCatch < createPrepare
+  ) {
+    fail(
+      "computer: snapshot destination preparation is outside the fail-closed cleanup boundary",
+    );
+  }
+
   const restoreSupervisor =
     snapshotSupervisor
       .split("export async function restoreCleanSnapshot(", 2)[1]
