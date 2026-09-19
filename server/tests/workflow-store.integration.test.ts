@@ -309,10 +309,11 @@ describe("durable waits", () => {
       workflowId: plan.id,
       stepKey: "script",
       waitUntil: dueAt,
+      attempts: 1,
     });
 
     await expect(
-      store.resumeWaitingStep(who, plan.id, "script", original),
+      store.resumeWaitingStep(who, plan.id, "script", original, 1),
     ).rejects.toBeInstanceOf(WorkflowRefusedError);
 
     const resumed = await store.resumeWaitingStep(
@@ -320,9 +321,27 @@ describe("durable waits", () => {
       plan.id,
       "script",
       dueAt,
+      1,
     );
     expect(resumed.status).toBe("running");
     expect(resumed.waitUntil).toBeNull();
+
+    const redelivered = await store.resumeWaitingStep(
+      who,
+      plan.id,
+      "script",
+      dueAt,
+      1,
+    );
+    expect(redelivered.status).toBe("running");
+    expect(redelivered.attempts).toBe(1);
+
+    await store.failStep(who, plan.id, "script", "retry it", 1);
+    await store.retryStep(who, plan.id, "script");
+    await store.startStep(who, plan.id, "script");
+    await expect(
+      store.resumeWaitingStep(who, plan.id, "script", dueAt, 1),
+    ).rejects.toThrow(/another attempt/);
   });
 });
 
