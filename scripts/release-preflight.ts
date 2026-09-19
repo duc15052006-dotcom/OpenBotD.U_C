@@ -316,6 +316,8 @@ function checkComputerSandboxBoundary(): void {
     'SecurityOpt: ["no-new-privileges:true"]',
     "ReadonlyRootfs: true",
     "docker.listVolumes",
+    "newestCompleteSnapshot",
+    "Preserve the currently valid recovery point until the replacement is complete",
     "Snapshot-only state after Reset",
     "Stop the Computer before creating a clean snapshot.",
     "Stop the Computer before restoring its clean snapshot.",
