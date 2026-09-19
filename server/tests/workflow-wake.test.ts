@@ -43,6 +43,9 @@ describe("workflow wake bridge", () => {
             attempts: 1,
           },
         ],
+        failStep: async () => {
+          throw new Error("not used");
+        },
         resumeWaitingStep: async () => {
           throw new Error("not used");
         },
@@ -84,6 +87,9 @@ describe("workflow wake bridge", () => {
       queue: queueStub({ claim: async () => [item] }),
       store: {
         dueWaitingSteps: async () => [],
+        failStep: async () => {
+          throw new Error("not used");
+        },
         resumeWaitingStep: async (...args) => {
           calls.push(args);
           return {} as never;
@@ -132,6 +138,9 @@ describe("workflow wake bridge", () => {
       }),
       store: {
         dueWaitingSteps: async () => [],
+        failStep: async () => {
+          throw new Error("not used");
+        },
         resumeWaitingStep: async () => {
           order.push("resume");
           return {} as never;
@@ -181,6 +190,9 @@ describe("workflow wake bridge", () => {
       }),
       store: {
         dueWaitingSteps: async () => [],
+        failStep: async () => {
+          throw new Error("not used");
+        },
         resumeWaitingStep: async () => ({}) as never,
       },
       dispatch: async () => {
@@ -219,6 +231,9 @@ describe("workflow wake bridge", () => {
       }),
       store: {
         dueWaitingSteps: async () => [],
+        failStep: async () => {
+          throw new Error("not used");
+        },
         resumeWaitingStep: async () => ({}) as never,
       },
       dispatch: async () => {
@@ -226,6 +241,103 @@ describe("workflow wake bridge", () => {
       },
     });
     expect(released).toBe(1);
+  });
+
+  test("fails the exact running attempt when a resumed wake exhausts dispatch retries", async () => {
+    const failures: unknown[][] = [];
+    let released = 0;
+    let finished = 0;
+
+    await dispatchClaimedWorkflowWaits({
+      owner: "worker-1",
+      maxAttempts: 2,
+      queue: queueStub({
+        claim: async () => [
+          {
+            kind: WORKFLOW_WAIT_RESUME_KIND,
+            key: "wake-1",
+            attempts: 2,
+            payload: {
+              ownerUserId: "user-1",
+              agentId: "bot-1",
+              workflowId: "workflow-1",
+              stepKey: "render",
+              waitUntil: "2026-09-20T07:30:00.000Z",
+              attempts: 3,
+            },
+          },
+        ],
+        release: async () => {
+          released += 1;
+          return true;
+        },
+        finish: async () => {
+          finished += 1;
+          return true;
+        },
+      }),
+      store: {
+        dueWaitingSteps: async () => [],
+        resumeWaitingStep: async () => ({}) as never,
+        failStep: async (...args) => {
+          failures.push(args);
+          return {} as never;
+        },
+      },
+      dispatch: async () => {
+        throw new Error("provider unavailable");
+      },
+    });
+
+    expect(released).toBe(0);
+    expect(finished).toBe(1);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.at(-1)).toBe(3);
+    expect(String(failures[0]?.at(-2))).toContain("retry budget");
+  });
+
+  test("keeps a pre-CAS transient failure retryable even on the last queue attempt", async () => {
+    let released = 0;
+    let failed = 0;
+
+    await dispatchClaimedWorkflowWaits({
+      owner: "worker-1",
+      maxAttempts: 2,
+      queue: queueStub({
+        claim: async () => [
+          {
+            kind: WORKFLOW_WAIT_RESUME_KIND,
+            key: "wake-1",
+            attempts: 2,
+            payload: {
+              ownerUserId: "user-1",
+              agentId: "bot-1",
+              workflowId: "workflow-1",
+              stepKey: "render",
+              waitUntil: "2026-09-20T07:30:00.000Z",
+              attempts: 3,
+            },
+          },
+        ],
+        release: async () => {
+          released += 1;
+          return true;
+        },
+      }),
+      store: {
+        dueWaitingSteps: async () => [],
+        resumeWaitingStep: async () => {
+          throw new Error("database temporarily unavailable");
+        },
+        failStep: async () => {
+          failed += 1;
+          return {} as never;
+        },
+      },
+    });
+
+    expect(released).toBe(1);
+    expect(failed).toBe(0);
   });
 
   test("finishes a stale exact wake instead of retrying it", async () => {
@@ -260,6 +372,9 @@ describe("workflow wake bridge", () => {
       }),
       store: {
         dueWaitingSteps: async () => [],
+        failStep: async () => {
+          throw new Error("not used");
+        },
         resumeWaitingStep: async () => {
           throw new Error(
             "That wait is not due, or it was changed after this wake was scheduled.",
@@ -302,6 +417,9 @@ describe("workflow wake bridge", () => {
       }),
       store: {
         dueWaitingSteps: async () => [],
+        failStep: async () => {
+          throw new Error("not used");
+        },
         resumeWaitingStep: async () => {
           throw new Error("database temporarily unavailable");
         },
