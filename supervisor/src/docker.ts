@@ -1,4 +1,5 @@
 import Docker from "dockerode";
+import { isPrimaryComputerContainerName } from "./computer-container-name";
 import { wasRunningBeforeStop } from "./stop-state";
 import {
   BOT_LABEL,
@@ -252,9 +253,23 @@ export async function listOwned(): Promise<ComputerState[]> {
     const byBot = new Map<string, ComputerState>();
     for (const container of containers) {
       const botId = container.Labels?.[BOT_LABEL] ?? "unknown";
+      const parsed = namesFor(botId);
+      if (!parsed.ok) continue;
+
+      // Snapshot/restore copy helpers deliberately carry the same ownership + Bot labels so they
+      // stay inside the same security boundary. They are not the Bot's Computer, though, and a
+      // helper can still be running (or be left behind after a daemon/process crash) while fleet
+      // state is listed. Only the predictable primary Computer name is allowed to become the Bot's
+      // fleet row; otherwise a helper can overwrite that row and count against active capacity.
+      if (
+        !isPrimaryComputerContainerName(parsed.names.container, container.Names)
+      ) {
+        continue;
+      }
+
       byBot.set(botId, {
         botId,
-        container: (container.Names?.[0] ?? "").replace(/^\//, ""),
+        container: parsed.names.container,
         status: container.State,
         ...(portOf(container.Ports) ? { port: portOf(container.Ports) } : {}),
       });
@@ -614,6 +629,10 @@ async function copyOwnedVolume(
     Labels: labelsFor(names),
     HostConfig: {
       Binds: [`${source}:/source:ro`, `${target}:/target`],
+      // If the supervisor process dies after starting this helper, Docker still removes it when
+      // the bounded copy exits. Otherwise an orphan helper can keep snapshot/live volumes "in use"
+      // and make a later Reset or Restore fail even though no Agent Computer is running.
+      AutoRemove: true,
       NetworkMode: "none",
       ReadonlyRootfs: true,
       CapDrop: ["ALL"],
