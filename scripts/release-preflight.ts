@@ -1479,6 +1479,8 @@ function checkDurableWorkflowState(): void {
   const wake = read("server/src/workflows/wake.ts");
   const server = read("server/src/index.ts");
   const assetMigration = read("server/drizzle/0044_workflow_assets.sql");
+  const resumeMigration = read("server/drizzle/0045_workflow_resume_stamp.sql");
+  const runner = read("server/src/workflows/runner.ts");
   const builtin = read("server/src/plugins/builtin-workflows.ts");
   const transport = read("server/src/plugins/transport.ts");
   const catalogue = read("server/src/plugins/catalogue.ts");
@@ -1489,6 +1491,7 @@ function checkDurableWorkflowState(): void {
     "export const workflowRuns = pgTable(",
     "export const workflowSteps = pgTable(",
     'dependsOn: text("depends_on").array().notNull().default([])',
+    'resumedFromWaitUntil: timestamp("resumed_from_wait_until"',
   ]) {
     if (!schema.includes(evidence)) {
       fail(`workflows: durable state schema is missing ${evidence}`);
@@ -1503,6 +1506,8 @@ function checkDurableWorkflowState(): void {
     "eq(workflowSteps.waitUntil, expectedWaitUntil)",
     "lte(workflowSteps.waitUntil, sql`now()`)",
     "dueWaitingSteps(limit)",
+    "eq(workflowSteps.attempts, expectedAttempt)",
+    "date_trunc('milliseconds', now())",
   ]) {
     if (!store.includes(evidence)) {
       fail(`workflows: durable recovery boundary is missing ${evidence}`);
@@ -1515,6 +1520,9 @@ function checkDurableWorkflowState(): void {
     "waitUntil.toISOString()",
     "queue.renew({",
     "queue.release({",
+    "options.dispatch",
+    "DEFAULT_RENEW_EVERY_MS",
+    "setInterval(() =>",
   ]) {
     if (!wake.includes(evidence)) {
       fail(`workflows: durable wake bridge is missing ${evidence}`);
@@ -1522,6 +1530,35 @@ function checkDurableWorkflowState(): void {
   }
   if (!server.includes("sweepWorkflowWaits(workflowWake)")) {
     fail("workflows: durable wake bridge is not running from the server");
+  }
+  for (const evidence of [
+    "createWorkflowRunner({",
+    "runTurn: headlessTurnRunner",
+    "dispatch:",
+    "workflowRunner.run(input)",
+  ]) {
+    if (!server.includes(evidence)) {
+      fail(`workflows: autonomous continuation wiring is missing ${evidence}`);
+    }
+  }
+  for (const evidence of [
+    "Resume this durable workflow step now.",
+    "expectedAttempt",
+    "checkpoint the step durably",
+    "The autonomous continuation ended without checkpointing this workflow step.",
+  ]) {
+    if (!runner.includes(evidence)) {
+      fail(
+        `workflows: autonomous continuation invariant is missing ${evidence}`,
+      );
+    }
+  }
+  if (
+    !resumeMigration.includes(
+      'ADD COLUMN "resumed_from_wait_until" timestamp with time zone',
+    )
+  ) {
+    fail("workflows: resume-stamp migration is missing");
   }
 
   for (const evidence of [

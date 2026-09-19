@@ -107,6 +107,7 @@ function harness(options: {
   abortGraceMs?: number;
   heartbeatMs?: number;
   lockTtlSeconds?: number;
+  workflow?: boolean;
 }) {
   const order: string[] = [];
   const calls = {
@@ -221,13 +222,23 @@ function harness(options: {
   });
 
   const run = () =>
-    runTurn({
-      ownerUserId: OWNER,
-      routineId: ROUTINE_ID,
-      agentId: AGENT_ID,
-      threadId: THREAD_ID,
-      instruction: INSTRUCTION,
-    });
+    runTurn(
+      options.workflow
+        ? {
+            ownerUserId: OWNER,
+            workflowId: "workflow_video",
+            agentId: AGENT_ID,
+            threadId: THREAD_ID,
+            instruction: INSTRUCTION,
+          }
+        : {
+            ownerUserId: OWNER,
+            routineId: ROUTINE_ID,
+            agentId: AGENT_ID,
+            threadId: THREAD_ID,
+            instruction: INSTRUCTION,
+          },
+    );
 
   return { run, agent, calls, order, builtFor };
 }
@@ -888,6 +899,20 @@ describe("a RUN_ERROR through next", () => {
 });
 
 describe("what the trail is told started the turn", () => {
+  test("a workflow continuation keeps workflow provenance and does not use the routine frame", async () => {
+    const { run, builtFor, calls } = harness({ workflow: true });
+
+    await run();
+
+    expect(builtFor[0]?.initiator).toEqual({
+      kind: "workflow",
+      id: "workflow_video",
+    });
+    const message = calls.runs[0]?.persistedInputMessages?.[0];
+    expect(message?.content).toBe(INSTRUCTION);
+    expect(String(message?.content)).not.toContain(FRAME_MARK);
+  });
+
   test("the Bot is built for the routine, not for the owner acting by hand", async () => {
     const { run, builtFor } = harness({});
 

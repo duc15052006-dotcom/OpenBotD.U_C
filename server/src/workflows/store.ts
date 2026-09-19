@@ -79,6 +79,7 @@ export type WorkflowStep = {
   attempts: number;
   provider: string | null;
   waitUntil: Date | null;
+  resumedFromWaitUntil: Date | null;
   failureReason: string | null;
   startedAt: Date | null;
   finishedAt: Date | null;
@@ -130,6 +131,7 @@ export type DueWorkflowWait = WorkflowIdentity & {
   workflowId: string;
   stepKey: string;
   waitUntil: Date;
+  attempts: number;
 };
 
 export class WorkflowNotFoundError extends Error {
@@ -204,6 +206,7 @@ function toStep(row: WorkflowStepRow): WorkflowStep {
     attempts: row.attempts,
     provider: row.provider,
     waitUntil: row.waitUntil,
+    resumedFromWaitUntil: row.resumedFromWaitUntil,
     failureReason: row.failureReason,
     startedAt: row.startedAt,
     finishedAt: row.finishedAt,
@@ -289,6 +292,7 @@ export type WorkflowStore = {
     id: string,
     key: string,
     expectedWaitUntil: Date,
+    expectedAttempt: number,
   ): Promise<WorkflowStep>;
   completeStep(
     identity: WorkflowIdentity,
@@ -300,6 +304,7 @@ export type WorkflowStore = {
     id: string,
     key: string,
     reason: string,
+    expectedAttempt?: number,
   ): Promise<WorkflowStep>;
   retryStep(
     identity: WorkflowIdentity,
@@ -630,8 +635,55 @@ export function createWorkflowStore(database: Database): WorkflowStore {
       return transitionRun(identity, id, "active", "paused");
     },
 
-    resume(identity, id) {
-      return transitionRun(identity, id, "paused", "active");
+    async resume(identity, id) {
+      await database.transaction(async (transaction) => {
+        await lockWorkflow(transaction, id);
+        const run = await loadOwned(transaction, identity, id);
+        if (run.status !== "paused") {
+          throw new WorkflowRefusedError(
+            "That workflow is not paused, so it cannot become active.",
+          );
+        }
+
+        await transaction
+          .update(workflowRuns)
+          .set({ status: "active", updatedAt: sql`now()` })
+          .where(
+            and(
+              eq(workflowRuns.id, id),
+              eq(workflowRuns.ownerUserId, identity.ownerUserId),
+              eq(workflowRuns.agentId, identity.agentId),
+              eq(workflowRuns.status, "paused"),
+            ),
+          );
+
+        /*
+         * A wake can race with Pause after it was offered but before it resumes the step. That
+         * exact queue item is then correctly finished as stale while the workflow is paused.
+         * Reusing its old wait timestamp on Resume would reuse the same deterministic queue key,
+         * which still points at the finished row and can never be claimed again.
+         *
+         * Re-arm only waits that became due while paused, with a fresh timestamp from Postgres'
+         * own clock. Millisecond truncation is deliberate: these stamps round-trip through JS Date
+         * and are later compared exactly by resumeWaitingStep.
+         */
+        await transaction
+          .update(workflowSteps)
+          .set({
+            waitUntil: sql<Date>`date_trunc('milliseconds', now())`,
+            resumedFromWaitUntil: null,
+            updatedAt: sql`now()`,
+          })
+          .where(
+            and(
+              eq(workflowSteps.workflowId, id),
+              eq(workflowSteps.status, "waiting"),
+              isNotNull(workflowSteps.waitUntil),
+              lte(workflowSteps.waitUntil, sql`now()`),
+            ),
+          );
+      });
+      return (await planFor(identity, id)) as WorkflowPlan;
     },
 
     cancel(identity, id) {
@@ -660,6 +712,7 @@ export function createWorkflowStore(database: Database): WorkflowStore {
             finishedAt: null,
             failureReason: null,
             waitUntil: null,
+            resumedFromWaitUntil: null,
             updatedAt: sql`now()`,
           })
           .where(
@@ -710,6 +763,7 @@ export function createWorkflowStore(database: Database): WorkflowStore {
             status: "waiting",
             provider,
             waitUntil: input.waitUntil,
+            resumedFromWaitUntil: null,
             updatedAt: sql`now()`,
           })
           .where(
@@ -729,7 +783,13 @@ export function createWorkflowStore(database: Database): WorkflowStore {
       });
     },
 
-    async resumeWaitingStep(identity, id, key, expectedWaitUntil) {
+    async resumeWaitingStep(
+      identity,
+      id,
+      key,
+      expectedWaitUntil,
+      expectedAttempt,
+    ) {
       return await database.transaction(async (transaction) => {
         await lockWorkflow(transaction, id);
         const run = await loadOwned(transaction, identity, id);
@@ -738,18 +798,49 @@ export function createWorkflowStore(database: Database): WorkflowStore {
             "Only an active workflow can resume a waiting step.",
           );
         }
+        const wantedKey = stepKey(key);
+        const [current] = await transaction
+          .select()
+          .from(workflowSteps)
+          .where(
+            and(
+              eq(workflowSteps.workflowId, id),
+              eq(workflowSteps.key, wantedKey),
+            ),
+          )
+          .limit(1);
+        if (!current) {
+          throw new WorkflowRefusedError(
+            "That workflow step does not exist for this workflow.",
+          );
+        }
+        if (current.attempts !== expectedAttempt) {
+          throw new WorkflowRefusedError(
+            "That workflow step moved to another attempt after this wake was scheduled.",
+          );
+        }
+        if (
+          current.status === "running" &&
+          current.waitUntil === null &&
+          current.resumedFromWaitUntil?.getTime() ===
+            expectedWaitUntil.getTime()
+        ) {
+          return toStep(current);
+        }
         const [row] = await transaction
           .update(workflowSteps)
           .set({
             status: "running",
             waitUntil: null,
+            resumedFromWaitUntil: expectedWaitUntil,
             updatedAt: sql`now()`,
           })
           .where(
             and(
               eq(workflowSteps.workflowId, id),
-              eq(workflowSteps.key, stepKey(key)),
+              eq(workflowSteps.key, wantedKey),
               eq(workflowSteps.status, "waiting"),
+              eq(workflowSteps.attempts, expectedAttempt),
               eq(workflowSteps.waitUntil, expectedWaitUntil),
               lte(workflowSteps.waitUntil, sql`now()`),
             ),
@@ -779,6 +870,7 @@ export function createWorkflowStore(database: Database): WorkflowStore {
             finishedAt: sql`now()`,
             waitUntil: null,
             failureReason: null,
+            resumedFromWaitUntil: null,
             updatedAt: sql`now()`,
           })
           .where(
@@ -851,7 +943,7 @@ export function createWorkflowStore(database: Database): WorkflowStore {
       return (await planFor(identity, id)) as WorkflowPlan;
     },
 
-    async failStep(identity, id, key, reason) {
+    async failStep(identity, id, key, reason, expectedAttempt) {
       const failureReason = textWithin(
         reason,
         "A workflow failure reason",
@@ -877,12 +969,17 @@ export function createWorkflowStore(database: Database): WorkflowStore {
               eq(workflowSteps.workflowId, id),
               eq(workflowSteps.key, stepKey(key)),
               eq(workflowSteps.status, "running"),
+              ...(expectedAttempt === undefined
+                ? []
+                : [eq(workflowSteps.attempts, expectedAttempt)]),
             ),
           )
           .returning();
         if (!row) {
           throw new WorkflowRefusedError(
-            "Only a running workflow step can fail.",
+            expectedAttempt === undefined
+              ? "Only a running workflow step can fail."
+              : "That workflow step is no longer running on the expected attempt.",
           );
         }
         return toStep(row);
@@ -1066,6 +1163,7 @@ export function createWorkflowStore(database: Database): WorkflowStore {
           workflowId: workflowRuns.id,
           stepKey: workflowSteps.key,
           waitUntil: workflowSteps.waitUntil,
+          attempts: workflowSteps.attempts,
         })
         .from(workflowSteps)
         .innerJoin(workflowRuns, eq(workflowRuns.id, workflowSteps.workflowId))
@@ -1088,6 +1186,7 @@ export function createWorkflowStore(database: Database): WorkflowStore {
                 workflowId: row.workflowId,
                 stepKey: row.stepKey,
                 waitUntil: row.waitUntil,
+                attempts: row.attempts,
               },
             ]
           : [],

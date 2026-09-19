@@ -4,7 +4,8 @@ import { DEFAULT_MAX_ATTEMPTS, type WorkQueue } from "../work/queue";
 export const WORKFLOW_WAIT_RESUME_KIND = "workflow_wait_resume";
 
 const DEFAULT_LIMIT = 50;
-const DEFAULT_LEASE_MS = 30_000;
+const DEFAULT_LEASE_MS = 6 * 60_000;
+const DEFAULT_RENEW_EVERY_MS = 15_000;
 const DEFAULT_RETRY_DELAY_MS = 5_000;
 
 type WorkflowWakeStore = Pick<
@@ -16,9 +17,17 @@ export type WorkflowWakeOptions = {
   store: WorkflowWakeStore;
   queue: WorkQueue;
   owner: string;
+  dispatch?: (input: {
+    ownerUserId: string;
+    agentId: string;
+    workflowId: string;
+    stepKey: string;
+    expectedAttempt: number;
+  }) => Promise<void>;
   limit?: number;
   leaseMs?: number;
   retryDelayMs?: number;
+  renewEveryMs?: number;
   maxAttempts?: number;
 };
 
@@ -51,6 +60,7 @@ export async function offerDueWorkflowWaits(
         workflowId: wait.workflowId,
         stepKey: wait.stepKey,
         waitUntil: wait.waitUntil.toISOString(),
+        attempts: wait.attempts,
       },
     });
     if (outcome === "queued") queued += 1;
@@ -97,12 +107,19 @@ export async function dispatchClaimedWorkflowWaits(
       typeof item.payload.waitUntil === "string"
         ? new Date(item.payload.waitUntil)
         : null;
+    const expectedAttempt =
+      typeof item.payload.attempts === "number" &&
+      Number.isInteger(item.payload.attempts) &&
+      item.payload.attempts > 0
+        ? item.payload.attempts
+        : 0;
 
     if (
       !workflowId ||
       !stepKey ||
       !ownerUserId ||
       !agentId ||
+      expectedAttempt === 0 ||
       !stamp ||
       Number.isNaN(stamp.getTime())
     ) {
@@ -137,7 +154,68 @@ export async function dispatchClaimedWorkflowWaits(
         workflowId,
         stepKey,
         stamp,
+        expectedAttempt,
       );
+      if (options.dispatch) {
+        /*
+         * A headless continuation can legitimately run for minutes. Keep the queue lease alive
+         * for the whole model/browser turn instead of renewing only once before it starts: a
+         * 30-second lease under a five-minute turn lets another replica claim the same exact wake
+         * and repeat external side effects while the first Agent is still working.
+         *
+         * The lease is also six minutes by default (longer than the default headless-turn timeout)
+         * so a briefly stalled event loop does not immediately hand the same workflow attempt away.
+         * The heartbeat is still required for slow shutdowns and future longer turn budgets.
+         */
+        const renewEveryMs =
+          options.renewEveryMs ??
+          Math.min(
+            DEFAULT_RENEW_EVERY_MS,
+            Math.max(1_000, Math.floor(leaseMs / 3)),
+          );
+        let heartbeat: ReturnType<typeof setInterval> | undefined;
+        try {
+          heartbeat = setInterval(() => {
+            void options.queue
+              .renew({
+                kind: WORKFLOW_WAIT_RESUME_KIND,
+                key: item.key,
+                owner: options.owner,
+                leaseMs,
+              })
+              .catch(() => {});
+          }, renewEveryMs);
+          heartbeat.unref?.();
+
+          // Ask the database immediately before the expensive turn too. If the lease was lost
+          // between the first renewal and here, do not spend a model/browser run on work we no
+          // longer own.
+          const stillOurs = await options.queue.renew({
+            kind: WORKFLOW_WAIT_RESUME_KIND,
+            key: item.key,
+            owner: options.owner,
+            leaseMs,
+          });
+          if (!stillOurs) {
+            report.skipped.push({
+              workflowId,
+              stepKey,
+              reason: "the lease went to another replica before continuation",
+            });
+            continue;
+          }
+
+          await options.dispatch({
+            ownerUserId,
+            agentId,
+            workflowId,
+            stepKey,
+            expectedAttempt,
+          });
+        } finally {
+          if (heartbeat !== undefined) clearInterval(heartbeat);
+        }
+      }
       await options.queue.finish({
         kind: WORKFLOW_WAIT_RESUME_KIND,
         key: item.key,
@@ -153,7 +231,7 @@ export async function dispatchClaimedWorkflowWaits(
       // A changed/cancelled/stale wait is final for this exact timestamp. The
       // store's compare-and-set refusal is what makes an old queue item harmless.
       if (
-        /not due|changed after this wake|does not exist|active workflow/i.test(
+        /not due|changed after this wake|another attempt|does not exist|active workflow/i.test(
           reason,
         )
       ) {

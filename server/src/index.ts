@@ -110,6 +110,7 @@ import { grantedSkills, grantedTools, REFUSAL_MARKER } from "./plugins/tools";
 import { createTurnRunner } from "./routines/run-turn";
 import { createRoutineRunner } from "./routines/runner";
 import { createRoutineStore } from "./routines/store";
+import { createWorkflowRunner } from "./workflows/runner";
 import { createWorkflowStore } from "./workflows/store";
 import { sweepWorkflowWaits } from "./workflows/wake";
 import { createIntentRouter } from "./routing/classify";
@@ -996,14 +997,22 @@ const routineAgentRunner = new IntelligenceAgentRunner({
   authToken: routineIntelligence.ɵgetRunnerAuthToken(),
 });
 
+const headlessTurnRunner = createTurnRunner({
+  intelligence: routineIntelligence,
+  runner: routineAgentRunner,
+  buildAgentFor,
+});
+
 const routineRunner = createRoutineRunner({
   routineStore,
   channelStore,
-  runTurn: createTurnRunner({
-    intelligence: routineIntelligence,
-    runner: routineAgentRunner,
-    buildAgentFor,
-  }),
+  runTurn: headlessTurnRunner,
+});
+
+const workflowRunner = createWorkflowRunner({
+  workflowStore,
+  channelStore,
+  runTurn: headlessTurnRunner,
 });
 
 /**
@@ -1299,6 +1308,8 @@ const workflowWake = {
   store: workflowStore,
   queue: createWorkQueue(database),
   owner: workOwner("workflow-wake"),
+  dispatch: (input: Parameters<typeof workflowRunner.run>[0]) =>
+    workflowRunner.run(input),
 };
 
 repeatAfterEach(async () => {
