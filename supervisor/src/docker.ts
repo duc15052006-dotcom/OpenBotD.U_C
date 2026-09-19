@@ -448,7 +448,6 @@ async function removeOwnedVolume(
   return false;
 }
 
-
 function liveVolumes(names: ComputerNames): string[] {
   return [names.profileVolume, names.workspaceVolume, names.quarantineVolume];
 }
@@ -476,7 +475,9 @@ async function ownedVolumeSetState(
 }
 
 async function hasCompleteSnapshot(names: ComputerNames): Promise<boolean> {
-  return (await ownedVolumeSetState(names, snapshotVolumes(names))) === "complete";
+  return (
+    (await ownedVolumeSetState(names, snapshotVolumes(names))) === "complete"
+  );
 }
 
 async function copyOwnedVolume(
@@ -587,7 +588,10 @@ export async function restoreCleanSnapshot(
     );
   }
 
-  const snapshotState = await ownedVolumeSetState(names, snapshotVolumes(names));
+  const snapshotState = await ownedVolumeSetState(
+    names,
+    snapshotVolumes(names),
+  );
   if (snapshotState !== "complete") {
     throw new ComputerSnapshotError(
       snapshotState === "missing"
