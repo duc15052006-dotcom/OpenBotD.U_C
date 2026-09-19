@@ -199,6 +199,69 @@ export function createHostAccessBroker(
       });
     },
 
+    /**
+     * Queue a native Save As operation for bytes that the Computer gateway has already verified as
+     * clean and explicitly approved. No Windows path crosses this broker in either direction.
+     */
+    requestQuarantineExport(input: {
+      botId: string;
+      actorId: string;
+      quarantineId: string;
+      suggestedName: string;
+      sha256: string;
+      sizeBytes: number;
+      dangerous: boolean;
+    }): Promise<{ exported: boolean }> {
+      expireDesktopLeaseIfNeeded();
+      return enqueue<{ exported: boolean }>({
+        operationId: randomUUID(),
+        kind: "export_quarantine",
+        botId: input.botId,
+        actorId: input.actorId,
+        quarantineId: input.quarantineId,
+        suggestedName: input.suggestedName,
+        sha256: input.sha256,
+        sizeBytes: input.sizeBytes,
+        dangerous: input.dangerous,
+      });
+    },
+
+    /**
+     * Resolve one desktop-only byte request back to the queued export.
+     *
+     * The operation id is unguessable and the HTTP route calling this is separately protected by
+     * the fresh native bearer token. A settled/expired/other-kind operation exposes no source.
+     */
+    quarantineExportSource(operationId: string): {
+      botId: string;
+      quarantineId: string;
+      sha256: string;
+    } | null {
+      expireDesktopLeaseIfNeeded();
+      const state = operations.get(operationId);
+      if (
+        !state ||
+        state.settled ||
+        state.operation.kind !== "export_quarantine" ||
+        typeof state.operation.quarantineId !== "string" ||
+        typeof state.operation.sha256 !== "string"
+      ) {
+        return null;
+      }
+      if (state.expiresAt !== null && state.expiresAt <= now()) {
+        failOperation(
+          state,
+          "The native quarantine export expired before the bytes were requested.",
+        );
+        return null;
+      }
+      return {
+        botId: state.botId,
+        quarantineId: state.operation.quarantineId,
+        sha256: state.operation.sha256,
+      };
+    },
+
     rememberGrant(grant: HostAccessGrant) {
       expireDesktopLeaseIfNeeded();
       grants.set(grant.id, publicGrant(grant));

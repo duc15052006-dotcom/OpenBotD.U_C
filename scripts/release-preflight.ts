@@ -270,7 +270,7 @@ function checkComputerSandboxBoundary(): void {
     'status: "pending"',
     "download.saveAs(file)",
     "quarantineDirectoryFor(root, botId)",
-    "Only a clean scanned download can be approved for export",
+    "Only unchanged bytes from a clean scan can be approved for export",
   ]) {
     if (!downloads.includes(evidence)) {
       fail(`computer: download quarantine is missing ${evidence}`);
@@ -398,7 +398,7 @@ function checkInteractiveComputerControls(): void {
     '| "scan_failed"',
     '| "approved"',
     '| "released"',
-    "Only a clean scanned download can be approved for export",
+    "Only unchanged bytes from a clean scan can be approved for export",
   ]) {
     if (!quarantine.includes(evidence)) {
       fail(`computer: download quarantine metadata is missing ${evidence}`);
@@ -414,6 +414,50 @@ function checkInteractiveComputerControls(): void {
   ]) {
     if (!computerRoutes.includes(evidence)) {
       fail(`computer: explicit quarantine approval is missing ${evidence}`);
+    }
+  }
+
+  const hostAccessRoutes = read("server/src/host-access/routes.ts");
+  for (const evidence of [
+    'routes.post("/quarantine/export"',
+    'body?.confirm !== "EXPORT_QUARANTINED_FILE"',
+    'record?.status !== "approved"',
+    "record.scannedSha256 !== record.sha256",
+    "broker.requestQuarantineExport",
+    "gateway.markQuarantineReleased",
+  ]) {
+    if (!hostAccessRoutes.includes(evidence)) {
+      fail(`computer: native quarantine export gate is missing ${evidence}`);
+    }
+  }
+
+  const nativeHostAccess = read("desktop/src-tauri/src/host_access.rs");
+  for (const evidence of [
+    "choose_quarantine_export",
+    "Sha256::new()",
+    ".create_new(true)",
+    "written != expected_size",
+    "eq_ignore_ascii_case(expected_sha)",
+    "fs::rename(&temporary, &destination)",
+    '"autoOpened": false',
+  ]) {
+    if (!nativeHostAccess.includes(evidence)) {
+      fail(`desktop: verified quarantine Save As is missing ${evidence}`);
+    }
+  }
+
+  const quarantineDialog = read(
+    "app/src/components/computers/computer-quarantine-dialog.tsx",
+  );
+  for (const evidence of [
+    "scanQuarantinedDownloadMutationOptions",
+    "approveQuarantinedDownloadMutationOptions",
+    "exportQuarantinedDownloadMutationOptions",
+    "Export to Windows…",
+    "auto-opens or runs the file.",
+  ]) {
+    if (!quarantineDialog.includes(evidence)) {
+      fail(`computer: quarantine manager is missing ${evidence}`);
     }
   }
 }

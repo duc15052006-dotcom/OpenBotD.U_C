@@ -55,6 +55,77 @@ export function stopAllComputersMutationOptions(queryClient: QueryClient) {
   });
 }
 
+export function scanQuarantinedDownloadMutationOptions(
+  queryClient: QueryClient,
+) {
+  return mutationOptions({
+    mutationFn: async (variables: { botId: string; id: string }) => {
+      const response = await client(
+        `/api/computers/${encodeURIComponent(variables.botId)}/quarantine/scan`,
+        {
+          method: "POST",
+          body: { id: variables.id },
+          fallback: "The quarantined file could not be scanned.",
+        },
+      );
+      return response.json();
+    },
+    onSuccess: (_result, variables) =>
+      queryClient.invalidateQueries({
+        queryKey: computerKeys.quarantine(variables.botId),
+      }),
+  });
+}
+
+export function approveQuarantinedDownloadMutationOptions(
+  queryClient: QueryClient,
+) {
+  return mutationOptions({
+    mutationFn: async (variables: { botId: string; id: string }) => {
+      const response = await client(
+        `/api/computers/${encodeURIComponent(variables.botId)}/quarantine/approve`,
+        {
+          method: "POST",
+          body: {
+            id: variables.id,
+            botId: variables.botId,
+            confirm: "APPROVE",
+          },
+          fallback: "The quarantined file could not be approved.",
+        },
+      );
+      return response.json();
+    },
+    onSuccess: (_result, variables) =>
+      queryClient.invalidateQueries({
+        queryKey: computerKeys.quarantine(variables.botId),
+      }),
+  });
+}
+
+export function exportQuarantinedDownloadMutationOptions(
+  queryClient: QueryClient,
+) {
+  return mutationOptions({
+    mutationFn: async (variables: { botId: string; id: string }) => {
+      const response = await client("/api/host-access/quarantine/export", {
+        method: "POST",
+        body: {
+          botId: variables.botId,
+          id: variables.id,
+          confirm: "EXPORT_QUARANTINED_FILE",
+        },
+        fallback: "The quarantined file could not be exported.",
+      });
+      return response.json();
+    },
+    onSuccess: (_result, variables) =>
+      queryClient.invalidateQueries({
+        queryKey: computerKeys.quarantine(variables.botId),
+      }),
+  });
+}
+
 /**
  * Replace the whole policy.
  *

@@ -262,6 +262,8 @@ export const auditEventTypes = [
   // record the security decision without copying file contents or scanner output into the trail.
   "computer.quarantine_scanned",
   "computer.quarantine_approved",
+  "computer.quarantine_released",
+  "computer.quarantine_deleted",
   /**
    * The boundary this deployment booted with.
    *
