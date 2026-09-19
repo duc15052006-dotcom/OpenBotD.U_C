@@ -6,7 +6,10 @@ import { HttpAgent } from "@ag-ui/client";
 import { LLMock } from "@copilotkit/aimock";
 import { BuiltInAgent } from "@copilotkit/runtime/v2";
 import { EMPTY } from "rxjs";
-import { PROVENANCE_GUIDANCE } from "../../shared/bot-prompt";
+import {
+  AUTONOMOUS_WORKFLOW_GUIDANCE,
+  PROVENANCE_GUIDANCE,
+} from "../../shared/bot-prompt";
 import { MAX_INLINED_BYTES_PER_RUN } from "../src/channels/attachment-parts";
 import { loadConfig } from "../src/config";
 import type { LoadAttachment } from "../src/copilot";
@@ -244,7 +247,7 @@ describe("registered Copilot agents", () => {
       model: "openai/gpt-5.6-terra",
       // The provenance rule is unconditional, so even a Bot with no tools and no computer carries
       // it. That Bot needs it most: nothing it says was read anywhere.
-      prompt: `Be helpful.\n\n${PROVENANCE_GUIDANCE}`,
+      prompt: `Be helpful.\n\n${PROVENANCE_GUIDANCE}\n\n${AUTONOMOUS_WORKFLOW_GUIDANCE}`,
       apiKey: "openai-secret",
     });
   });
@@ -631,6 +634,7 @@ describe("standing agent roles", () => {
         // travel in it or the Bot never hears it. Referenced rather than restated, so the assertion
         // stays exact without pinning the wording twice.
         PROVENANCE_GUIDANCE,
+        AUTONOMOUS_WORKFLOW_GUIDANCE,
       ].join("\n\n"),
     });
   });
@@ -832,6 +836,7 @@ describe("standing agent roles", () => {
         "Reconcile corporate card statements.",
         "This standing role applies in every channel. Treat channel messages as task-specific instructions within it.",
         PROVENANCE_GUIDANCE,
+        AUTONOMOUS_WORKFLOW_GUIDANCE,
       ].join("\n\n"),
     );
   });
@@ -1092,6 +1097,41 @@ describe("what a Bot is told it holds", () => {
  * So both paths are asserted, because they are built by different functions and a fix to one is not
  * a fix to the other.
  */
+describe("NOTE 21-2 autonomous workflow guidance reaches every coworker path", () => {
+  test("a built-in coworker receives the scene isolation and exact-prompt contract", () => {
+    const prompt = builtInAgentConfiguration(
+      {
+        id: "creator",
+        name: "Creator",
+        type: "built_in",
+        systemPrompt: "Produce campaign assets.",
+      },
+      { provider: "openai", defaultModel: "gpt-5.6-terra" },
+      "openai-secret",
+    ).prompt as string;
+
+    expect(prompt).toContain(AUTONOMOUS_WORKFLOW_GUIDANCE);
+    expect(prompt).toContain("projectId + sceneId");
+    expect(prompt).toContain(
+      "An approved prompt is an execution input, not something to grade",
+    );
+  });
+
+  test("a remote coworker receives the same contract in its standing role", () => {
+    const content = standingRoleMessage({
+      id: "creator",
+      name: "Creator",
+      title: "Creative Production",
+      roleDescription: "Produce campaign assets using the selected services.",
+    }).content;
+
+    expect(content).toContain(AUTONOMOUS_WORKFLOW_GUIDANCE);
+    expect(content).toContain(
+      "Never claim you will automatically wake, monitor in the background or receive a completion event",
+    );
+  });
+});
+
 describe("where a Bot says its answer came from", () => {
   test("a built-in Bot carries the rule even holding nothing at all", () => {
     // The Bot that needs it most. No tools and no computer means nothing it says was read anywhere.
