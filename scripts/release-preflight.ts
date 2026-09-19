@@ -494,7 +494,9 @@ function checkComputerSandboxBoundary(): void {
     "sessions.delete(botId)",
   ]) {
     if (!supervisorClient.includes(evidence)) {
-      fail(`computer: supervisor session cache is not bounded through ${evidence}`);
+      fail(
+        `computer: supervisor session cache is not bounded through ${evidence}`,
+      );
     }
   }
   if (!gateway.includes("provider.restart")) {
