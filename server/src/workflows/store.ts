@@ -740,7 +740,7 @@ export function createWorkflowStore(database: Database): WorkflowStore {
           .from(workflowSteps)
           .where(eq(workflowSteps.workflowId, id));
         const step = rows.find((candidate) => candidate.key === wantedKey);
-        if (!step || step.status !== "failed") {
+        if (step?.status !== "failed") {
           throw new WorkflowRefusedError(
             "Only a failed workflow step can be retried.",
           );
