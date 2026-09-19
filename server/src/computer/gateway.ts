@@ -46,7 +46,11 @@ import {
   policyInitiator,
   type PolicyDecision,
 } from "./policy";
-import type { ComputerLocation, ComputerProvider } from "./provider";
+import type {
+  ComputerHostCapacity,
+  ComputerLocation,
+  ComputerProvider,
+} from "./provider";
 import type { ComputerResourceProfile } from "./resource-profile";
 import type {
   ActionResult,
@@ -237,6 +241,7 @@ export interface ComputerGateway {
   humanInput(botId: string, input: HumanInput): Promise<HumanInputResult>;
   computers(): Promise<{
     isolation: "per-bot" | "shared";
+    capacity?: ComputerHostCapacity;
     computers: {
       botId: string;
       running: boolean;
@@ -859,7 +864,10 @@ export function createComputerGateway(
         }
       };
 
-      const metrics = await Promise.all(computers.map(metricsFor));
+      const [metrics, capacity] = await Promise.all([
+        Promise.all(computers.map(metricsFor)),
+        provider.capacity?.().catch(() => undefined),
+      ]);
       let lifecycleEvents = new Map();
       if (options.lifecycleReader) {
         try {
@@ -875,6 +883,7 @@ export function createComputerGateway(
       }
       return {
         isolation: provider.isolation,
+        ...(capacity ? { capacity } : {}),
         computers: computers.map((computer, index) => {
           const running = computer.status === "running";
           return {
