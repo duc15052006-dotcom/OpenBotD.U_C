@@ -30,8 +30,13 @@ export type AgentProfile = {
   builtIn: boolean;
   /** Whether a key is set for it. Never the key itself. */
   hasAuth: boolean;
-  /** CPU/RAM preset applied to this Agent's isolated Computer. */
-  computerResourceProfile: ComputerResourceProfile;
+  /**
+   * CPU/RAM preset applied to this Agent's isolated Computer.
+   *
+   * Optional at the browser boundary for rolling upgrades; missing means the compatibility
+   * default, Normal. Current servers always return an explicit value.
+   */
+  computerResourceProfile?: ComputerResourceProfile;
   /**
    * Whether this coworker holds a credential for calling tools back.
    *
