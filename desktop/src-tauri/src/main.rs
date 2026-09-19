@@ -930,9 +930,9 @@ fn forbidden_resolved_probe_ip(ip: std::net::IpAddr) -> bool {
             let nat64 = bytes[..4] == [0x00, 0x64, 0xff, 0x9b]
                 && bytes[4..12].iter().all(|byte| *byte == 0);
             if mapped || compatible || nat64 {
-                return forbidden_resolved_probe_ip(std::net::IpAddr::V4(
-                    std::net::Ipv4Addr::new(bytes[12], bytes[13], bytes[14], bytes[15]),
-                ));
+                return forbidden_resolved_probe_ip(std::net::IpAddr::V4(std::net::Ipv4Addr::new(
+                    bytes[12], bytes[13], bytes[14], bytes[15],
+                )));
             }
 
             let first = ip.segments()[0];
