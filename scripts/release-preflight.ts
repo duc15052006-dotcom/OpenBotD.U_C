@@ -467,6 +467,31 @@ function checkComputerSandboxBoundary(): void {
     fail("computer: start-time host resource warning is missing");
   }
 
+  const restartRoute =
+    capacitySupervisorIndex
+      .split('app.post("/computers/:botId/restart"', 2)[1]
+      ?.split('app.post("/computers/:botId/stop"', 1)[0] ?? "";
+  for (const evidence of [
+    "lifecycleLock.run(parsed.names.botId",
+    "await stop(parsed.names)",
+    "return ensure(parsed.names",
+  ]) {
+    if (!restartRoute.includes(evidence)) {
+      fail(`computer: atomic supervisor Restart is missing ${evidence}`);
+    }
+  }
+  if (!provider.includes("restart?(")) {
+    fail("computer: provider atomic restart contract is missing");
+  }
+  const supervisorClient = read("server/src/computer/supervisor.ts");
+  if (!supervisorClient.includes("/restart")) {
+    fail("computer: server supervisor client does not use atomic restart");
+  }
+  const gateway = read("server/src/computer/gateway.ts");
+  if (!gateway.includes("provider.restart")) {
+    fail("computer: gateway does not prefer atomic provider restart");
+  }
+
   const workspace = read("agent-computer/src/workspace.ts");
   for (const evidence of [
     "totalBytes: 4 * 1024 * 1024 * 1024",
