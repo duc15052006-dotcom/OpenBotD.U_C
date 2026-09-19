@@ -1,4 +1,5 @@
 import Docker from "dockerode";
+import { wasRunningBeforeStop } from "./stop-state";
 import {
   BOT_LABEL,
   type ComputerNames,
@@ -75,11 +76,6 @@ const ATTEMPTS = 2;
 
 function statusOf(error: unknown): number | undefined {
   return (error as { statusCode?: number }).statusCode;
-}
-
-/** The gateway's `wasRunning` flag describes active state before Stop, not container existence. */
-export function wasRunningBeforeStop(status: string): boolean {
-  return status.toLowerCase() === "running";
 }
 
 /** One poll interval, used both by the health wait and by the retry that follows a lost race. */
