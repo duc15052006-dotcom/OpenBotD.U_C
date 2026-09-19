@@ -39,6 +39,7 @@ const ROUTINE: Routine = {
   agentId: "bot_helper",
   channelId: "channel_1",
   instruction: "Post the standup summary.",
+  scheduleKind: "recurring",
   cron: "0 9 * * 1-5",
   timezone: "Europe/Madrid",
   enabled: true,
@@ -52,6 +53,7 @@ const SUMMARY: RoutineSummary = {
   agentId: "bot_helper",
   instruction: "Post the standup summary.",
   schedule: "Weekdays at 09:00",
+  scheduleKind: "recurring",
   timezone: "Europe/Madrid",
   enabled: true,
   nextRunAt: new Date("2026-01-05T08:00:00.000Z"),
@@ -66,6 +68,10 @@ const SUMMARY: RoutineSummary = {
 
 type Recorded =
   | { method: "create"; input: Parameters<RoutineTools["create"]>[0] }
+  | {
+      method: "createOneShot";
+      input: Parameters<RoutineTools["createOneShot"]>[0];
+    }
   | { method: "listFor"; ownerUserId: string }
   | {
       method: "update";
@@ -82,6 +88,15 @@ function recordingTools(overrides: Partial<RoutineTools> = {}): Recorded[] {
     async create(input) {
       calls.push({ method: "create", input });
       return ROUTINE;
+    },
+    async createOneShot(input) {
+      calls.push({ method: "createOneShot", input });
+      return {
+        ...ROUTINE,
+        scheduleKind: "once",
+        timezone: "UTC",
+        nextRunAt: input.runAt,
+      };
     },
     async listFor(ownerUserId) {
       calls.push({ method: "listFor", ownerUserId });
@@ -133,10 +148,11 @@ describe("a list too long for one result", () => {
 });
 
 describe("the tool list", () => {
-  test("is the four routine tools, named exactly", async () => {
+  test("is the five routine tools, named exactly", async () => {
     const tools = await listTools();
     expect(tools.map((tool) => tool.name)).toEqual([
       "create_routine",
+      "schedule_wake",
       "list_routines",
       "update_routine",
       "delete_routine",
@@ -178,7 +194,7 @@ describe("the tool list", () => {
     // that refused without one would store zero tools and Routines would advertise nothing.
     useRoutineTools(null);
     const tools = await listTools();
-    expect(tools).toHaveLength(4);
+    expect(tools).toHaveLength(5);
   });
 });
 
@@ -206,6 +222,52 @@ describe("dispatch", () => {
         timezone: "Europe/Madrid",
       },
     });
+  });
+
+  test("schedule_wake reaches createOneShot with connection-derived identity", async () => {
+    const calls = recordingTools({
+      async listFor() {
+        return [{
+          ...SUMMARY,
+          scheduleKind: "once",
+          schedule: "Once at 2026-09-20T07:30:00.000Z",
+          timezone: "UTC",
+          nextRunAt: new Date("2026-09-20T07:30:00.000Z"),
+        }];
+      },
+    });
+    const result = await callTool(CONNECTION, "schedule_wake", {
+      instruction: "Check whether the video finished and continue the workflow.",
+      runAt: "2026-09-20T14:30:00+07:00",
+      channelId: "channel_1",
+      ownerUserId: "user_attacker",
+      agentId: "bot_attacker",
+    });
+
+    expect(result.isError).toBe(false);
+    const created = calls.find((call) => call.method === "createOneShot");
+    expect(created).toMatchObject({
+      method: "createOneShot",
+      input: {
+        ownerUserId: "user_asker",
+        agentId: "bot_helper",
+        channelId: "channel_1",
+        instruction: "Check whether the video finished and continue the workflow.",
+      },
+    });
+    if (created?.method === "createOneShot") {
+      expect(created.input.runAt.toISOString()).toBe("2026-09-20T07:30:00.000Z");
+    }
+  });
+
+  test("schedule_wake refuses an ambiguous local timestamp", async () => {
+    recordingTools();
+    const result = await callTool(CONNECTION, "schedule_wake", {
+      instruction: "Continue later.",
+      runAt: "2026-09-20T14:30:00",
+    });
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("RFC3339");
   });
 
   test("create_routine answers in words, not in cron", async () => {
