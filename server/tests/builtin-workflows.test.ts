@@ -128,6 +128,29 @@ describe("workflow identity boundary", () => {
     });
   });
 
+  test("lets create omit the opaque channel id so the store can resolve it", async () => {
+    let received: Parameters<WorkflowTools["create"]>[0] | undefined;
+    useWorkflowTools({
+      async create(input) {
+        received = input;
+        return plan;
+      },
+    } as WorkflowTools);
+
+    const result = await callTool(CONNECTION, "create_workflow", {
+      title: "Video pipeline",
+      steps: [{ key: "render", instruction: "Render scene one." }],
+    });
+
+    expect(result.isError).toBe(false);
+    expect(received).toMatchObject({
+      ownerUserId: "user_owner",
+      agentId: "bot_worker",
+      title: "Video pipeline",
+    });
+    expect(received).not.toHaveProperty("channelId");
+  });
+
   test("refuses calls without connection identity", async () => {
     useWorkflowTools({} as WorkflowTools);
     const result = await callTool(
