@@ -1,4 +1,5 @@
 import Docker from "dockerode";
+import { isPrimaryComputerContainerName } from "./computer-container-name";
 import { wasRunningBeforeStop } from "./stop-state";
 import {
   BOT_LABEL,
@@ -260,10 +261,11 @@ export async function listOwned(): Promise<ComputerState[]> {
       // helper can still be running (or be left behind after a daemon/process crash) while fleet
       // state is listed. Only the predictable primary Computer name is allowed to become the Bot's
       // fleet row; otherwise a helper can overwrite that row and count against active capacity.
-      const listedNames = (container.Names ?? []).map((name) =>
-        name.replace(/^\//, ""),
-      );
-      if (!listedNames.includes(parsed.names.container)) continue;
+      if (
+        !isPrimaryComputerContainerName(parsed.names.container, container.Names)
+      ) {
+        continue;
+      }
 
       byBot.set(botId, {
         botId,
