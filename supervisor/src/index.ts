@@ -1,5 +1,6 @@
 import { serve } from "bun";
 import { Hono } from "hono";
+import { createComputerLifecycleLock } from "./computer-lifecycle-lock";
 import { environmentFor } from "./environment";
 import {
   ComputerCapacityError,
@@ -87,6 +88,7 @@ const maxActiveComputers = resolvedMaxActive.maxActive;
 const spireSocketVolume =
   process.env.SPIRE_AGENT_SOCKET_VOLUME?.trim() || undefined;
 
+const lifecycleLock = createComputerLifecycleLock();
 const app = new Hono();
 
 app.use("*", async (context, next) => {
@@ -116,16 +118,18 @@ app.post("/computers/:botId/ensure", async (context) => {
     // request.
     const identity = await registerEntry(parsed.names);
 
-    const state = await ensure(parsed.names, {
-      image,
-      environment: environmentFor(parsed.names.botId),
-      ...(network ? { network } : {}),
-      ...(runtime ? { runtime } : {}),
-      ...(memoryBytes ? { memoryBytes } : {}),
-      ...(nanoCpus ? { nanoCpus } : {}),
-      ...(maxActiveComputers ? { maxActiveComputers } : {}),
-      ...(spireSocketVolume ? { spireSocketVolume } : {}),
-    });
+    const state = await lifecycleLock.run(parsed.names.botId, () =>
+      ensure(parsed.names, {
+        image,
+        environment: environmentFor(parsed.names.botId),
+        ...(network ? { network } : {}),
+        ...(runtime ? { runtime } : {}),
+        ...(memoryBytes ? { memoryBytes } : {}),
+        ...(nanoCpus ? { nanoCpus } : {}),
+        ...(maxActiveComputers ? { maxActiveComputers } : {}),
+        ...(spireSocketVolume ? { spireSocketVolume } : {}),
+      }),
+    );
     return context.json({
       ...state,
       ...(identity.registered
@@ -157,7 +161,9 @@ app.post("/computers/:botId/stop", async (context) => {
   const parsed = resolve(context.req.param("botId"));
   if (!parsed.ok) return context.json({ error: parsed.reason }, 400);
   try {
-    const stopped = await stop(parsed.names);
+    const stopped = await lifecycleLock.run(parsed.names.botId, () =>
+      stop(parsed.names),
+    );
     return context.json({ stopped });
   } catch (error) {
     if (error instanceof DockerUnavailableError) {
@@ -171,7 +177,9 @@ app.post("/computers/:botId/reset", async (context) => {
   const parsed = resolve(context.req.param("botId"));
   if (!parsed.ok) return context.json({ error: parsed.reason }, 400);
   try {
-    const wasThere = await reset(parsed.names);
+    const wasThere = await lifecycleLock.run(parsed.names.botId, () =>
+      reset(parsed.names),
+    );
     return context.json({ reset: wasThere });
   } catch (error) {
     if (error instanceof NameHeldError) {
