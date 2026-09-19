@@ -1548,7 +1548,9 @@ function checkDurableWorkflowState(): void {
     "The autonomous continuation ended without checkpointing this workflow step.",
   ]) {
     if (!runner.includes(evidence)) {
-      fail(`workflows: autonomous continuation invariant is missing ${evidence}`);
+      fail(
+        `workflows: autonomous continuation invariant is missing ${evidence}`,
+      );
     }
   }
   if (
