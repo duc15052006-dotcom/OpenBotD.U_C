@@ -85,7 +85,9 @@ describe("workflow identity boundary", () => {
           createdAt: now,
         };
       },
-      async listAssets() { return []; },
+      async listAssets() {
+      return [];
+    },
       async removeAsset() {},
     });
 
