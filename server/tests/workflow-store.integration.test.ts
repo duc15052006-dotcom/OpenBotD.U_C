@@ -282,6 +282,52 @@ describe("dependency and lifecycle transitions", () => {
 });
 
 describe("durable waits", () => {
+  test("resume re-arms a due wait so a wake finished during pause cannot wedge it", async () => {
+    const { owner, agentId, channel } = await setUp();
+    const who = identity(owner, agentId);
+    const plan = await store.create(planInput(owner, agentId, channel.id));
+    await store.startStep(who, plan.id, "script");
+
+    const future = new Date(Date.now() + 60_000);
+    const waiting = await store.waitStep(who, plan.id, "script", {
+      waitUntil: future,
+      provider: "video-generator",
+    });
+    const staleStamp = new Date(Date.now() - 60_000);
+    await database
+      .update(workflowSteps)
+      .set({ waitUntil: staleStamp })
+      .where(eq(workflowSteps.id, waiting.id));
+
+    await store.pause(who, plan.id);
+    const resumedPlan = await store.resume(who, plan.id);
+    const rearmed = resumedPlan.steps.find((step) => step.key === "script");
+
+    expect(rearmed?.status).toBe("waiting");
+    expect(rearmed?.waitUntil).toBeInstanceOf(Date);
+    expect(rearmed?.waitUntil?.getTime()).not.toBe(staleStamp.getTime());
+
+    await expect(
+      store.resumeWaitingStep(who, plan.id, "script", staleStamp, 1),
+    ).rejects.toBeInstanceOf(WorkflowRefusedError);
+
+    const due = await store.dueWaitingSteps(20);
+    const fresh = due.find(
+      (candidate) =>
+        candidate.workflowId === plan.id && candidate.stepKey === "script",
+    );
+    expect(fresh?.waitUntil.getTime()).toBe(rearmed?.waitUntil?.getTime());
+
+    const continued = await store.resumeWaitingStep(
+      who,
+      plan.id,
+      "script",
+      fresh?.waitUntil as Date,
+      1,
+    );
+    expect(continued.status).toBe("running");
+  });
+
   test("a waiting step is discoverable when due and stale wakes cannot resume it", async () => {
     const { owner, agentId, channel } = await setUp();
     const who = identity(owner, agentId);
