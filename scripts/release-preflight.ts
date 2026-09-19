@@ -861,13 +861,22 @@ function checkIntelligenceMemory(): void {
   const settings = read("app/src/components/settings/memory-settings.tsx");
   for (const evidence of [
     "useMemories",
-    "includeInvalidated=true",
     "Restore",
     "Compare memories",
     "does not infer revision",
   ]) {
     if (!settings.includes(evidence)) {
       fail(`memory: Preferences history/restore UI is missing ${evidence}`);
+    }
+  }
+
+  const history = read("app/src/lib/memory/history.ts");
+  for (const evidence of [
+    "/api/copilotkit/memories?includeInvalidated=true",
+    'credentials: "include"',
+  ]) {
+    if (!history.includes(evidence)) {
+      fail(`memory: authenticated history loader is missing ${evidence}`);
     }
   }
 }
