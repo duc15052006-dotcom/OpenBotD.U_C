@@ -55,10 +55,13 @@ Per-coworker Model/API settings, Instructions, Skills and Knowledge can then be 
 without editing source files.
 
 For API-key providers, **Test connection** makes a bounded native request to the provider without
-saving the credential. Compatible endpoints are probed at their OpenAI-style `/models` route and
-never forward a credential through an HTTP redirect. Plan sign-ins validate that their current or
-saved session is still resolvable. The final setup question to the Bot remains the end-to-end check
-that the local stack and selected model can actually answer together.
+saving the credential. Compatible endpoints are probed at their OpenAI-style `/models` route,
+never forward a credential through an HTTP redirect, and resolve once before the request so every
+address can be checked and pinned against DNS rebinding. Machine-metadata, link-local, multicast,
+unspecified and other special-use destinations are refused while ordinary loopback/private model
+servers remain available. Plan sign-ins validate that their current or saved session is still
+resolvable. The final setup question to the Bot remains the end-to-end check that the local stack
+and selected model can actually answer together.
 
 A failed migration or partially started local stack stops startup instead of presenting a
 half-migrated deployment as ready.
