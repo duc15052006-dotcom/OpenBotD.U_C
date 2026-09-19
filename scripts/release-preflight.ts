@@ -314,7 +314,7 @@ function checkComputerSandboxBoundary(): void {
     'NetworkMode: "none"',
     'CapDrop: ["ALL"]',
     'SecurityOpt: ["no-new-privileges:true"]',
-    'ReadonlyRootfs: true',
+    "ReadonlyRootfs: true",
     "docker.listVolumes",
     "Snapshot-only state after Reset",
     "Stop the Computer before creating a clean snapshot.",
