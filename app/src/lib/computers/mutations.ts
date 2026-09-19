@@ -43,6 +43,35 @@ export function setComputerStateMutationOptions(queryClient: QueryClient) {
   });
 }
 
+export function computerSnapshotMutationOptions(queryClient: QueryClient) {
+  return mutationOptions({
+    mutationFn: async (variables: {
+      botId: string;
+      action: "snapshot" | "restore";
+    }) => {
+      const response = await client(
+        `/api/computers/${encodeURIComponent(variables.botId)}/computers/${variables.action}`,
+        {
+          method: "POST",
+          body: {
+            confirm: variables.action === "snapshot" ? "SNAPSHOT" : "RESTORE",
+            botId: variables.botId,
+          },
+          fallback:
+            variables.action === "snapshot"
+              ? "The clean snapshot could not be created."
+              : "The clean snapshot could not be restored.",
+        },
+      );
+      return response.json();
+    },
+    onSuccess: (_result, variables) => {
+      if (variables.action === "restore") clearActivity(variables.botId);
+      return invalidateComputers(queryClient);
+    },
+  });
+}
+
 export function stopAllComputersMutationOptions(queryClient: QueryClient) {
   return mutationOptions({
     mutationFn: async () => {
