@@ -58,9 +58,14 @@ Due-wait discovery uses PostgreSQL's clock. Resuming a wait compares the exact p
 well as the step status. A stale wake therefore cannot resume a step whose wait was cancelled or
 rescheduled after that wake was created.
 
-The execution slice that turns due workflow waits into existing one-shot wake/queue items is separate
-from this state foundation. Keeping the state transition separate from delivery lets the existing
-`work_items` lease/idempotency mechanism remain the single durable execution queue.
+Due workflow waits are bridged into the existing `work_items` queue. The queue remains the single
+durable execution mechanism: it owns claims, leases, retries and idempotency, while the workflow store
+owns state transitions. Each queued wake names the exact persisted wait timestamp; if a wait is
+cancelled or rescheduled before delivery, the old item cannot resume the step and is finished as stale.
+
+The bridge uses a bounded periodic recovery sweep rather than busy-waiting on an external website.
+Agents can sleep while external generation is pending, and a server/app restart simply leaves the
+persisted wait to be discovered and resumed later.
 
 ## Pause, resume and cancel
 

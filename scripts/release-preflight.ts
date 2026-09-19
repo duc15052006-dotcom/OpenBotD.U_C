@@ -1476,6 +1476,8 @@ function checkDurableWorkflowState(): void {
   const schema = read("server/src/db/schema/coworker.ts");
   const store = read("server/src/workflows/store.ts");
   const migration = read("server/drizzle/0043_workflow_state.sql");
+  const wake = read("server/src/workflows/wake.ts");
+  const server = read("server/src/index.ts");
 
   for (const evidence of [
     'workflowRunStatus = pgEnum("workflow_run_status"',
@@ -1501,6 +1503,21 @@ function checkDurableWorkflowState(): void {
     if (!store.includes(evidence)) {
       fail(`workflows: durable recovery boundary is missing ${evidence}`);
     }
+  }
+
+  for (const evidence of [
+    "WORKFLOW_WAIT_RESUME_KIND",
+    "resumeWaitingStep(",
+    "waitUntil.toISOString()",
+    "queue.renew({",
+    "queue.release({",
+  ]) {
+    if (!wake.includes(evidence)) {
+      fail(`workflows: durable wake bridge is missing ${evidence}`);
+    }
+  }
+  if (!server.includes("sweepWorkflowWaits(workflowWake)")) {
+    fail("workflows: durable wake bridge is not running from the server");
   }
 
   for (const evidence of [
