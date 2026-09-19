@@ -869,8 +869,7 @@ export function createWorkflowStore(database: Database): WorkflowStore {
     async waitStep(identity, id, key, input) {
       if (
         !(input.waitUntil instanceof Date) ||
-        Number.isNaN(input.waitUntil.getTime()) ||
-        input.waitUntil.getTime() <= Date.now()
+        Number.isNaN(input.waitUntil.getTime())
       ) {
         throw new WorkflowRefusedError(
           "A waiting workflow step needs a future wake time.",
@@ -889,6 +888,14 @@ export function createWorkflowStore(database: Database): WorkflowStore {
         if (run.status !== "active") {
           throw new WorkflowRefusedError(
             "Only an active workflow can enter a wait.",
+          );
+        }
+        const [clock] = await transaction.select({
+          future: sql<boolean>`${input.waitUntil} > now()`,
+        });
+        if (clock?.future !== true) {
+          throw new WorkflowRefusedError(
+            "A waiting workflow step needs a future wake time.",
           );
         }
         const [row] = await transaction
