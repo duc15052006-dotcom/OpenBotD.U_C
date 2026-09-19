@@ -321,7 +321,8 @@ export function createWorkflowStore(database: Database): WorkflowStore {
           MAX_WORKFLOW_INSTRUCTION_CODE_POINTS,
         ),
         dependsOn: dependencies,
-        status: dependencies.length === 0 ? ("ready" as const) : ("blocked" as const),
+        status:
+          dependencies.length === 0 ? ("ready" as const) : ("blocked" as const),
       };
     });
   }
