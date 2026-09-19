@@ -179,7 +179,7 @@ describe("workflow wake bridge", () => {
       }),
       store: {
         dueWaitingSteps: async () => [],
-        resumeWaitingStep: async () => ({} as never),
+        resumeWaitingStep: async () => ({}) as never,
       },
       dispatch: async () => {
         throw new Error("gateway unavailable");
