@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { wasRunningBeforeStop } from "./docker";
+import { wasRunningBeforeStop } from "./stop-state";
 
 describe("Computer Stop state classification", () => {
   test("reports only a running container as wasRunning", () => {
