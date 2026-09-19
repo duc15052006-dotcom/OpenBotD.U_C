@@ -6,13 +6,16 @@ import {
   isNotNull,
   isNull,
   lte,
+  or,
   sql,
 } from "drizzle-orm";
 import type { Database } from "../db/client";
 import {
+  attachments,
   channelAgents,
   channelMemberships,
   channels,
+  workflowAssets,
   workflowRuns,
   workflowSteps,
 } from "../db/schema";
@@ -22,6 +25,8 @@ export const MAX_WORKFLOW_TITLE_CODE_POINTS = 160;
 export const MAX_WORKFLOW_INSTRUCTION_CODE_POINTS = 4000;
 export const MAX_WORKFLOW_FAILURE_CODE_POINTS = 500;
 export const MAX_WORKFLOW_PROVIDER_CODE_POINTS = 120;
+export const MAX_WORKFLOW_ASSET_REF_CODE_POINTS = 512;
+export const MAX_WORKFLOW_ASSET_LABEL_CODE_POINTS = 200;
 
 const ACTIVE_STEP_STATUSES = [
   "blocked",
@@ -95,6 +100,32 @@ export type WorkflowRun = {
 
 export type WorkflowPlan = WorkflowRun & { steps: WorkflowStep[] };
 
+export type WorkflowAssetDirection = "input" | "output";
+export type WorkflowAssetMediaKind =
+  | "image"
+  | "video"
+  | "audio"
+  | "file"
+  | "text";
+
+export type WorkflowAsset = {
+  id: string;
+  workflowId: string;
+  stepKey: string;
+  direction: WorkflowAssetDirection;
+  mediaKind: WorkflowAssetMediaKind;
+  ref: string;
+  label: string | null;
+  createdAt: Date;
+};
+
+export type WorkflowAssetInput = {
+  direction: WorkflowAssetDirection;
+  mediaKind: WorkflowAssetMediaKind;
+  ref: string;
+  label?: string;
+};
+
 export type DueWorkflowWait = WorkflowIdentity & {
   workflowId: string;
   stepKey: string;
@@ -120,6 +151,7 @@ type Handle = Database | Transaction;
 
 type WorkflowRunRow = typeof workflowRuns.$inferSelect;
 type WorkflowStepRow = typeof workflowSteps.$inferSelect;
+type WorkflowAssetRow = typeof workflowAssets.$inferSelect;
 
 function textWithin(
   value: string,
@@ -180,6 +212,53 @@ function toStep(row: WorkflowStepRow): WorkflowStep {
   };
 }
 
+function toAsset(row: WorkflowAssetRow): WorkflowAsset {
+  return {
+    id: row.id,
+    workflowId: row.workflowId,
+    stepKey: row.stepKey,
+    direction: row.direction,
+    mediaKind: row.mediaKind,
+    ref: row.ref,
+    label: row.label,
+    createdAt: row.createdAt,
+  };
+}
+
+const ATTACHMENT_REF =
+  /^attachment:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+
+function safeAssetRef(value: string):
+  | { kind: "attachment"; value: string; attachmentId: string }
+  | { kind: "workspace"; value: string } {
+  const ref = textWithin(
+    value,
+    "A workflow asset reference",
+    MAX_WORKFLOW_ASSET_REF_CODE_POINTS,
+  );
+  const attachment = ref.match(ATTACHMENT_REF);
+  if (attachment?.[1]) {
+    return { kind: "attachment", value: ref, attachmentId: attachment[1] };
+  }
+  if (!ref.startsWith("workspace:")) {
+    throw new WorkflowRefusedError(
+      "A workflow asset reference must be attachment:<uuid> or workspace:<relative-path>.",
+    );
+  }
+  const path = ref.slice("workspace:".length);
+  if (
+    !path ||
+    path.startsWith("/") ||
+    path.includes("\\") ||
+    path.split("/").some((part) => part === "" || part === "." || part === "..")
+  ) {
+    throw new WorkflowRefusedError(
+      "A workspace asset reference must be a safe relative path with no dot segments.",
+    );
+  }
+  return { kind: "workspace", value: ref };
+}
+
 function terminal(status: WorkflowStatus): boolean {
   return ["succeeded", "failed", "cancelled"].includes(status);
 }
@@ -226,6 +305,22 @@ export type WorkflowStore = {
     key: string,
   ): Promise<WorkflowStep>;
   dueWaitingSteps(limit: number): Promise<DueWorkflowWait[]>;
+  addAsset(
+    identity: WorkflowIdentity,
+    id: string,
+    key: string,
+    input: WorkflowAssetInput,
+  ): Promise<WorkflowAsset>;
+  listAssets(
+    identity: WorkflowIdentity,
+    id: string,
+    key?: string,
+  ): Promise<WorkflowAsset[]>;
+  removeAsset(
+    identity: WorkflowIdentity,
+    id: string,
+    assetId: string,
+  ): Promise<void>;
 };
 
 export function createWorkflowStore(database: Database): WorkflowStore {
@@ -416,6 +511,74 @@ export function createWorkflowStore(database: Database): WorkflowStore {
         );
     });
     return (await planFor(identity, id)) as WorkflowPlan;
+  }
+
+  async function ensureAssetStep(
+    transaction: Transaction,
+    workflowId: string,
+    key: string,
+  ): Promise<string> {
+    const wantedKey = stepKey(key);
+    const [row] = await transaction
+      .select({ key: workflowSteps.key })
+      .from(workflowSteps)
+      .where(
+        and(
+          eq(workflowSteps.workflowId, workflowId),
+          eq(workflowSteps.key, wantedKey),
+        ),
+      )
+      .limit(1);
+    if (!row) {
+      throw new WorkflowRefusedError(
+        "That workflow step does not exist for this workflow.",
+      );
+    }
+    return wantedKey;
+  }
+
+  async function attachmentVisibleToWorkflow(
+    transaction: Transaction,
+    run: WorkflowRunRow,
+    identity: WorkflowIdentity,
+    attachmentId: string,
+  ): Promise<boolean> {
+    const [row] = await transaction
+      .select({ id: attachments.id })
+      .from(attachments)
+      .innerJoin(
+        channels,
+        and(
+          eq(channels.id, attachments.channelId),
+          isNull(channels.deletedAt),
+        ),
+      )
+      .innerJoin(
+        channelMemberships,
+        and(
+          eq(channelMemberships.channelId, attachments.channelId),
+          eq(channelMemberships.userId, identity.ownerUserId),
+        ),
+      )
+      .innerJoin(
+        channelAgents,
+        and(
+          eq(channelAgents.channelId, attachments.channelId),
+          eq(channelAgents.agentId, identity.agentId),
+        ),
+      )
+      .where(
+        and(
+          eq(attachments.id, attachmentId),
+          eq(attachments.channelId, run.channelId),
+          or(
+            isNotNull(attachments.attachedAt),
+            eq(attachments.uploadedBy, identity.ownerUserId),
+          ),
+        ),
+      )
+      .limit(1);
+    return Boolean(row);
   }
 
   return {
@@ -776,6 +939,118 @@ export function createWorkflowStore(database: Database): WorkflowStore {
           );
         }
         return toStep(row);
+      });
+    },
+
+    async addAsset(identity, id, key, input) {
+      const ref = safeAssetRef(input.ref);
+      if (!["input", "output"].includes(input.direction)) {
+        throw new WorkflowRefusedError(
+          "A workflow asset direction must be input or output.",
+        );
+      }
+      if (
+        !["image", "video", "audio", "file", "text"].includes(input.mediaKind)
+      ) {
+        throw new WorkflowRefusedError(
+          "A workflow asset media kind is not supported.",
+        );
+      }
+      const label = input.label
+        ? textWithin(
+            input.label,
+            "A workflow asset label",
+            MAX_WORKFLOW_ASSET_LABEL_CODE_POINTS,
+          )
+        : null;
+
+      return await database.transaction(async (transaction) => {
+        await lockWorkflow(transaction, id);
+        const run = await loadOwned(transaction, identity, id);
+        const wantedKey = await ensureAssetStep(transaction, id, key);
+        if (
+          ref.kind === "attachment" &&
+          !(await attachmentVisibleToWorkflow(
+            transaction,
+            run,
+            identity,
+            ref.attachmentId,
+          ))
+        ) {
+          throw new WorkflowRefusedError(
+            "That attachment is not available in this workflow's channel.",
+          );
+        }
+        const [row] = await transaction
+          .insert(workflowAssets)
+          .values({
+            id: `workflow_asset_${crypto.randomUUID()}`,
+            workflowId: id,
+            stepKey: wantedKey,
+            direction: input.direction,
+            mediaKind: input.mediaKind,
+            ref: ref.value,
+            label,
+          })
+          .onConflictDoNothing()
+          .returning();
+        if (row) return toAsset(row);
+
+        const [existing] = await transaction
+          .select()
+          .from(workflowAssets)
+          .where(
+            and(
+              eq(workflowAssets.workflowId, id),
+              eq(workflowAssets.stepKey, wantedKey),
+              eq(workflowAssets.direction, input.direction),
+              eq(workflowAssets.ref, ref.value),
+            ),
+          )
+          .limit(1);
+        if (!existing) {
+          throw new Error("workflow asset insert conflicted without a row");
+        }
+        return toAsset(existing);
+      });
+    },
+
+    async listAssets(identity, id, key) {
+      await loadOwned(database, identity, id);
+      const wantedKey = key === undefined ? undefined : stepKey(key);
+      const rows = await database
+        .select()
+        .from(workflowAssets)
+        .where(
+          wantedKey === undefined
+            ? eq(workflowAssets.workflowId, id)
+            : and(
+                eq(workflowAssets.workflowId, id),
+                eq(workflowAssets.stepKey, wantedKey),
+              ),
+        )
+        .orderBy(asc(workflowAssets.createdAt), asc(workflowAssets.id));
+      return rows.map(toAsset);
+    },
+
+    async removeAsset(identity, id, assetId) {
+      await database.transaction(async (transaction) => {
+        await lockWorkflow(transaction, id);
+        await loadOwned(transaction, identity, id);
+        const deleted = await transaction
+          .delete(workflowAssets)
+          .where(
+            and(
+              eq(workflowAssets.id, assetId),
+              eq(workflowAssets.workflowId, id),
+            ),
+          )
+          .returning({ id: workflowAssets.id });
+        if (deleted.length === 0) {
+          throw new WorkflowRefusedError(
+            "That workflow asset does not exist for this workflow.",
+          );
+        }
       });
     },
 
