@@ -12,7 +12,7 @@
  * Idleness is read from the audit trail, which is a record of what a Bot did rather than a question
  * put to the thing that did it.
  */
-import { and, inArray, like, sql } from "drizzle-orm";
+import { and, inArray, like, ne, sql } from "drizzle-orm";
 import { recordAuditEvent, type AuditStore } from "../audit";
 import type { ComputerProvider } from "../computer/provider";
 import type { Database } from "../db/client";
@@ -64,7 +64,13 @@ async function lastActedAt(
   const rows = await database
     .select({ bot, last: sql<string>`max(${auditEvents.createdAt})` })
     .from(auditEvents)
-    .where(and(like(auditEvents.eventType, "computer.%"), inArray(bot, botIds)))
+    .where(
+      and(
+        like(auditEvents.eventType, "computer.%"),
+        ne(auditEvents.eventType, "computer.slept"),
+        inArray(bot, botIds),
+      ),
+    )
     .groupBy(bot);
 
   return new Map(
