@@ -16,6 +16,13 @@ export type WorkflowWakeOptions = {
   store: WorkflowWakeStore;
   queue: WorkQueue;
   owner: string;
+  dispatch?: (input: {
+    ownerUserId: string;
+    agentId: string;
+    workflowId: string;
+    stepKey: string;
+    expectedAttempt: number;
+  }) => Promise<void>;
   limit?: number;
   leaseMs?: number;
   retryDelayMs?: number;
@@ -51,6 +58,7 @@ export async function offerDueWorkflowWaits(
         workflowId: wait.workflowId,
         stepKey: wait.stepKey,
         waitUntil: wait.waitUntil.toISOString(),
+        attempts: wait.attempts,
       },
     });
     if (outcome === "queued") queued += 1;
@@ -97,12 +105,19 @@ export async function dispatchClaimedWorkflowWaits(
       typeof item.payload.waitUntil === "string"
         ? new Date(item.payload.waitUntil)
         : null;
+    const expectedAttempt =
+      typeof item.payload.attempts === "number" &&
+      Number.isInteger(item.payload.attempts) &&
+      item.payload.attempts > 0
+        ? item.payload.attempts
+        : 0;
 
     if (
       !workflowId ||
       !stepKey ||
       !ownerUserId ||
       !agentId ||
+      expectedAttempt === 0 ||
       !stamp ||
       Number.isNaN(stamp.getTime())
     ) {
@@ -137,7 +152,17 @@ export async function dispatchClaimedWorkflowWaits(
         workflowId,
         stepKey,
         stamp,
+        expectedAttempt,
       );
+      if (options.dispatch) {
+        await options.dispatch({
+          ownerUserId,
+          agentId,
+          workflowId,
+          stepKey,
+          expectedAttempt,
+        });
+      }
       await options.queue.finish({
         kind: WORKFLOW_WAIT_RESUME_KIND,
         key: item.key,
@@ -153,7 +178,7 @@ export async function dispatchClaimedWorkflowWaits(
       // A changed/cancelled/stale wait is final for this exact timestamp. The
       // store's compare-and-set refusal is what makes an old queue item harmless.
       if (
-        /not due|changed after this wake|does not exist|active workflow/i.test(
+        /not due|changed after this wake|another attempt|does not exist|active workflow/i.test(
           reason,
         )
       ) {
