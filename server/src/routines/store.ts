@@ -874,11 +874,37 @@ export function createRoutineStore(database: Database): RoutineStore {
       // A single select, not owner-scoped — the sweep's read, like `dueRoutines`. A routine id here
       // comes from a work item's own payload, not from a person, so there is no owner to check.
       const [row] = await database
-        .select({ id: routines.id, enabled: routines.enabled })
+        .select({
+          id: routines.id,
+          enabled: routines.enabled,
+          scheduleKind: routines.scheduleKind,
+          nextRunAt: routines.nextRunAt,
+          lastRunAt: routines.lastRunAt,
+        })
         .from(routines)
         .where(eq(routines.id, id))
         .limit(1);
       return row ?? null;
+    },
+
+    async consumeOneShot(id, scheduledFor) {
+      const consumed = await database
+        .update(routines)
+        .set({
+          enabled: false,
+          lastRunAt: scheduledFor,
+          updatedAt: sql`now()`,
+        })
+        .where(
+          and(
+            eq(routines.id, id),
+            eq(routines.scheduleKind, "once"),
+            eq(routines.enabled, true),
+            eq(routines.nextRunAt, scheduledFor),
+          ),
+        )
+        .returning({ id: routines.id });
+      return consumed.length > 0;
     },
 
     async finishRun(runId, status, error) {
