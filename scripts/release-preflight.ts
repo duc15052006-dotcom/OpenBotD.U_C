@@ -188,7 +188,6 @@ function checkComputerSandboxBoundary(): void {
     );
   }
 
-
   for (const evidence of [
     "computerMemoryBytes(process.env.COMPUTER_MEMORY_BYTES)",
     "computerNanoCpus(process.env.COMPUTER_NANO_CPUS)",
