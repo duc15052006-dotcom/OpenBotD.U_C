@@ -149,6 +149,29 @@ describe("durable workflow creation", () => {
     expect(plan.steps[1]?.dependsOn).toEqual(["script"]);
   });
 
+  test("resolves the only shared channel when create omits channelId", async () => {
+    const { owner, agentId, channel } = await setUp();
+    const input = planInput(owner, agentId, channel.id);
+    const { channelId: _channelId, ...withoutChannel } = input;
+
+    const plan = await store.create(withoutChannel);
+
+    expect(plan.channelId).toBe(channel.id);
+  });
+
+  test("refuses an omitted channelId when more than one shared channel exists", async () => {
+    const { owner, agentId, channel } = await setUp();
+    const second = await createChannel(owner, [agentId]);
+    const input = planInput(owner, agentId, channel.id);
+    const { channelId: _channelId, ...withoutChannel } = input;
+
+    await expect(store.create(withoutChannel)).rejects.toThrow(
+      /more than one channel/,
+    );
+
+    expect(second.id).not.toBe(channel.id);
+  });
+
   test("refuses forward, missing and duplicate dependencies", async () => {
     const { owner, agentId, channel } = await setUp();
 
