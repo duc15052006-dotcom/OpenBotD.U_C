@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { RunAgentInput } from "@ag-ui/core";
+import { AUTONOMOUS_WORKFLOW_GUIDANCE } from "../../shared/bot-prompt";
 import {
   AIMessage,
   SystemMessage,
@@ -27,6 +28,23 @@ test("includes NOTE 21-2 autonomous workflow boundaries in the LangGraph adapter
     "Never claim you will automatically wake",
   );
 });
+
+test("does not duplicate NOTE 21-2 when OpenBot already supplied it in the standing role", () => {
+  const messages = toLangChainMessages(
+    input([
+      {
+        id: "standing-workflow",
+        role: "system",
+        content: `Creative role.\n\n${AUTONOMOUS_WORKFLOW_GUIDANCE}`,
+      } as never,
+    ]),
+  );
+  const carried = JSON.stringify(
+    messages.map((message) => message.content ?? ""),
+  );
+  expect(carried.split(AUTONOMOUS_WORKFLOW_GUIDANCE)).toHaveLength(2);
+});
+
 
 /**
  * A tool call nobody answered does not end the conversation.
