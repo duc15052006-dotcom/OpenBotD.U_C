@@ -43,6 +43,9 @@ describe("workflow wake bridge", () => {
             attempts: 1,
           },
         ],
+        failWaitingStep: async () => {
+          throw new Error("not used");
+        },
         failStep: async () => {
           throw new Error("not used");
         },
@@ -87,6 +90,9 @@ describe("workflow wake bridge", () => {
       queue: queueStub({ claim: async () => [item] }),
       store: {
         dueWaitingSteps: async () => [],
+        failWaitingStep: async () => {
+          throw new Error("not used");
+        },
         failStep: async () => {
           throw new Error("not used");
         },
@@ -138,6 +144,9 @@ describe("workflow wake bridge", () => {
       }),
       store: {
         dueWaitingSteps: async () => [],
+        failWaitingStep: async () => {
+          throw new Error("not used");
+        },
         failStep: async () => {
           throw new Error("not used");
         },
@@ -190,6 +199,9 @@ describe("workflow wake bridge", () => {
       }),
       store: {
         dueWaitingSteps: async () => [],
+        failWaitingStep: async () => {
+          throw new Error("not used");
+        },
         failStep: async () => {
           throw new Error("not used");
         },
@@ -231,6 +243,9 @@ describe("workflow wake bridge", () => {
       }),
       store: {
         dueWaitingSteps: async () => [],
+        failWaitingStep: async () => {
+          throw new Error("not used");
+        },
         failStep: async () => {
           throw new Error("not used");
         },
@@ -279,6 +294,9 @@ describe("workflow wake bridge", () => {
       store: {
         dueWaitingSteps: async () => [],
         resumeWaitingStep: async () => ({}) as never,
+        failWaitingStep: async () => {
+          throw new Error("not used");
+        },
         failStep: async (...args) => {
           failures.push(args);
           return {} as never;
@@ -296,9 +314,11 @@ describe("workflow wake bridge", () => {
     expect(String(failures[0]?.at(-2))).toContain("retry budget");
   });
 
-  test("keeps a pre-CAS transient failure retryable even on the last queue attempt", async () => {
+  test("fails the exact waiting attempt when the final retry dies before resume CAS", async () => {
     let released = 0;
-    let failed = 0;
+    let runningFailed = 0;
+    const waitingFailures: unknown[][] = [];
+    let finished = 0;
 
     await dispatchClaimedWorkflowWaits({
       owner: "worker-1",
@@ -323,21 +343,36 @@ describe("workflow wake bridge", () => {
           released += 1;
           return true;
         },
+        finish: async () => {
+          finished += 1;
+          return true;
+        },
       }),
       store: {
         dueWaitingSteps: async () => [],
         resumeWaitingStep: async () => {
           throw new Error("database temporarily unavailable");
         },
+        failWaitingStep: async (...args) => {
+          waitingFailures.push(args);
+          return {} as never;
+        },
         failStep: async () => {
-          failed += 1;
+          runningFailed += 1;
           return {} as never;
         },
       },
     });
 
-    expect(released).toBe(1);
-    expect(failed).toBe(0);
+    expect(released).toBe(0);
+    expect(finished).toBe(1);
+    expect(runningFailed).toBe(0);
+    expect(waitingFailures).toHaveLength(1);
+    expect((waitingFailures[0]?.[3] as Date).toISOString()).toBe(
+      "2026-09-20T07:30:00.000Z",
+    );
+    expect(waitingFailures[0]?.[4]).toBe(3);
+    expect(String(waitingFailures[0]?.[5])).toContain("retry budget");
   });
 
   test("finishes a stale exact wake instead of retrying it", async () => {
@@ -372,6 +407,9 @@ describe("workflow wake bridge", () => {
       }),
       store: {
         dueWaitingSteps: async () => [],
+        failWaitingStep: async () => {
+          throw new Error("not used");
+        },
         failStep: async () => {
           throw new Error("not used");
         },
@@ -417,6 +455,9 @@ describe("workflow wake bridge", () => {
       }),
       store: {
         dueWaitingSteps: async () => [],
+        failWaitingStep: async () => {
+          throw new Error("not used");
+        },
         failStep: async () => {
           throw new Error("not used");
         },
