@@ -4,7 +4,8 @@ import { DEFAULT_MAX_ATTEMPTS, type WorkQueue } from "../work/queue";
 export const WORKFLOW_WAIT_RESUME_KIND = "workflow_wait_resume";
 
 const DEFAULT_LIMIT = 50;
-const DEFAULT_LEASE_MS = 30_000;
+const DEFAULT_LEASE_MS = 6 * 60_000;
+const DEFAULT_RENEW_EVERY_MS = 15_000;
 const DEFAULT_RETRY_DELAY_MS = 5_000;
 
 type WorkflowWakeStore = Pick<
@@ -26,6 +27,7 @@ export type WorkflowWakeOptions = {
   limit?: number;
   leaseMs?: number;
   retryDelayMs?: number;
+  renewEveryMs?: number;
   maxAttempts?: number;
 };
 
@@ -155,13 +157,61 @@ export async function dispatchClaimedWorkflowWaits(
         expectedAttempt,
       );
       if (options.dispatch) {
-        await options.dispatch({
-          ownerUserId,
-          agentId,
-          workflowId,
-          stepKey,
-          expectedAttempt,
-        });
+        /*
+         * A headless continuation can legitimately run for minutes. Keep the queue lease alive
+         * for the whole model/browser turn instead of renewing only once before it starts: a
+         * 30-second lease under a five-minute turn lets another replica claim the same exact wake
+         * and repeat external side effects while the first Agent is still working.
+         *
+         * The lease is also six minutes by default (longer than the default headless-turn timeout)
+         * so a briefly stalled event loop does not immediately hand the same workflow attempt away.
+         * The heartbeat is still required for slow shutdowns and future longer turn budgets.
+         */
+        const renewEveryMs =
+          options.renewEveryMs ??
+          Math.min(DEFAULT_RENEW_EVERY_MS, Math.max(1_000, Math.floor(leaseMs / 3)));
+        let heartbeat: ReturnType<typeof setInterval> | undefined;
+        try {
+          heartbeat = setInterval(() => {
+            void options.queue
+              .renew({
+                kind: WORKFLOW_WAIT_RESUME_KIND,
+                key: item.key,
+                owner: options.owner,
+                leaseMs,
+              })
+              .catch(() => {});
+          }, renewEveryMs);
+          heartbeat.unref?.();
+
+          // Ask the database immediately before the expensive turn too. If the lease was lost
+          // between the first renewal and here, do not spend a model/browser run on work we no
+          // longer own.
+          const stillOurs = await options.queue.renew({
+            kind: WORKFLOW_WAIT_RESUME_KIND,
+            key: item.key,
+            owner: options.owner,
+            leaseMs,
+          });
+          if (!stillOurs) {
+            report.skipped.push({
+              workflowId,
+              stepKey,
+              reason: "the lease went to another replica before continuation",
+            });
+            continue;
+          }
+
+          await options.dispatch({
+            ownerUserId,
+            agentId,
+            workflowId,
+            stepKey,
+            expectedAttempt,
+          });
+        } finally {
+          if (heartbeat !== undefined) clearInterval(heartbeat);
+        }
       }
       await options.queue.finish({
         kind: WORKFLOW_WAIT_RESUME_KIND,
