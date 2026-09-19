@@ -1512,7 +1512,9 @@ function checkDurableWorkflowState(): void {
     "eq(workflowSteps.updatedAt, expectedReadyAt)",
     "expectedAttempt + 1",
     "dueWaitingSteps(limit)",
+    "failWaitingStep(",
     "eq(workflowSteps.attempts, expectedAttempt)",
+    "eq(workflowSteps.waitUntil, expectedWaitUntil)",
     "greatest(",
     "date_trunc('milliseconds', now())",
   ]) {
@@ -1530,6 +1532,9 @@ function checkDurableWorkflowState(): void {
     "options.dispatch",
     "DEFAULT_RENEW_EVERY_MS",
     "setInterval(() =>",
+    "item.attempts >= maxAttempts",
+    "Autonomous wait continuation exhausted its retry budget",
+    "failWaitingStep(",
   ]) {
     if (!wake.includes(evidence)) {
       fail(`workflows: durable wake bridge is missing ${evidence}`);
