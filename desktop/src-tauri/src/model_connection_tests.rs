@@ -163,6 +163,10 @@ fn protected_probe_blocks_resolved_special_use_ranges() {
         "fe80::1",
         "fd00:ec2::254",
         "ff02::1",
+        "::ffff:169.254.1.1",
+        "::ffff:100.64.0.1",
+        "::169.254.1.1",
+        "64:ff9b::6440:1",
     ] {
         let parsed = ip.parse::<std::net::IpAddr>().expect("test IP");
         assert!(
@@ -174,7 +178,16 @@ fn protected_probe_blocks_resolved_special_use_ranges() {
 
 #[test]
 fn protected_probe_keeps_loopback_and_private_model_hosts_available() {
-    for ip in ["127.0.0.1", "10.0.0.8", "172.16.0.5", "192.168.1.20", "::1"] {
+    for ip in [
+        "127.0.0.1",
+        "10.0.0.8",
+        "172.16.0.5",
+        "192.168.1.20",
+        "::1",
+        "::ffff:127.0.0.1",
+        "::ffff:10.0.0.8",
+        "64:ff9b::808:808",
+    ] {
         let parsed = ip.parse::<std::net::IpAddr>().expect("test IP");
         assert!(
             !forbidden_resolved_probe_ip(parsed),
