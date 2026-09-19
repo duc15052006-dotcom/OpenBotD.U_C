@@ -901,6 +901,100 @@ fn model_probe_never_allowed_host(host: &str) -> bool {
     }
 }
 
+fn forbidden_resolved_probe_ip(ip: std::net::IpAddr) -> bool {
+    // Keep loopback and ordinary RFC1918 IPv4 available for local/self-hosted model servers, but
+    // refuse address classes that a credential-bearing setup probe has no legitimate reason to
+    // contact. The textual metadata floor above remains in force too.
+    if model_probe_never_allowed_host(&ip.to_string()) {
+        return true;
+    }
+
+    match ip {
+        std::net::IpAddr::V4(ip) => {
+            let octets = ip.octets();
+            ip.is_unspecified()
+                || ip.is_link_local()
+                || ip.is_multicast()
+                || ip.is_broadcast()
+                // Carrier-grade NAT space contains metadata endpoints on some clouds.
+                || (octets[0] == 100 && (64..=127).contains(&octets[1]))
+        }
+        std::net::IpAddr::V6(ip) => {
+            let first = ip.segments()[0];
+            ip.is_unspecified()
+                // fe80::/10. Written explicitly because Ipv6Addr::is_unicast_link_local is newer
+                // than this desktop crate's Rust 1.77 MSRV.
+                || (first & 0xffc0) == 0xfe80
+                || ip.is_multicast()
+                // Unique-local IPv6 can expose machine-local infrastructure. Local model servers
+                // remain available over loopback and ordinary private IPv4.
+                || (first & 0xfe00) == 0xfc00
+        }
+    }
+}
+
+fn protected_model_probe_client(url: &reqwest::Url) -> Result<reqwest::Client, Problem> {
+    use std::net::ToSocketAddrs;
+
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("Do not put credentials in the model endpoint URL.".into());
+    }
+
+    let host = url
+        .host_str()
+        .ok_or_else(|| Problem::plain("The model endpoint has no host."))?;
+    if model_probe_never_allowed_host(host) {
+        return Err(
+            "That model endpoint is reserved for machine metadata and cannot be tested.".into(),
+        );
+    }
+    let port = url
+        .port_or_known_default()
+        .ok_or_else(|| Problem::plain("The model endpoint has no usable port."))?;
+
+    let addresses: Vec<std::net::SocketAddr> = if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        vec![std::net::SocketAddr::new(ip, port)]
+    } else {
+        (host, port)
+            .to_socket_addrs()
+            .map_err(|error| {
+                Problem::with(
+                    "OpenBot could not resolve the model endpoint.",
+                    error.to_string(),
+                )
+            })?
+            .collect()
+    };
+
+    if addresses.is_empty() {
+        return Err("The model endpoint did not resolve to an address.".into());
+    }
+    if addresses
+        .iter()
+        .any(|address| forbidden_resolved_probe_ip(address.ip()))
+    {
+        return Err(
+            "That model endpoint resolves to a machine-metadata or special-use address that OpenBot will not probe."
+                .into(),
+        );
+    }
+
+    // Resolve once, validate every result, then pin this client to those exact addresses. This
+    // closes the DNS-rebinding window between validation and the credential-bearing request while
+    // retaining the original hostname for TLS SNI/certificate verification.
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(10))
+        .resolve_to_addrs(host, &addresses)
+        .build()
+        .map_err(|error| {
+            Problem::with(
+                "OpenBot could not prepare the protected endpoint test.",
+                error.to_string(),
+            )
+        })
+}
+
 fn models_probe_url(base_url: &str) -> Result<reqwest::Url, Problem> {
     let mut url = model_endpoint_url(base_url, "model endpoint")?;
     if url.host_str().is_some_and(model_probe_never_allowed_host) {
@@ -995,8 +1089,8 @@ async fn test_model_connection(
             model,
             ..
         } => {
-            let client = model_probe_client()?;
             let url = models_probe_url(&base_url)?;
+            let client = protected_model_probe_client(&url)?;
             let mut request = client.get(url);
             if !api_key.trim().is_empty() {
                 request = request.bearer_auth(api_key);
