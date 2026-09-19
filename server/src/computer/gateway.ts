@@ -320,17 +320,22 @@ export function createComputerGateway(
    * Not the navigation check. That one refuses private hosts, which is the right answer for where a
    * Bot may browse and the wrong one here, where loopback is the normal case.
    */
-  async function locate(botId: string): Promise<string> {
-    const resourceProfile = await options.resourceProfile?.(botId);
-    const address = await provider.locate(
-      botId,
-      resourceProfile ? { resourceProfile } : undefined,
-    );
+  function checkedComputerAddress(address: string): string {
     const verdict = checkComputerAddress(address);
     if (!verdict.allowed) {
       throw new ComputerUnavailableError(verdict.reason);
     }
     return verdict.url;
+  }
+
+  async function locate(botId: string): Promise<string> {
+    const resourceProfile = await options.resourceProfile?.(botId);
+    return checkedComputerAddress(
+      await provider.locate(
+        botId,
+        resourceProfile ? { resourceProfile } : undefined,
+      ),
+    );
   }
 
   async function get<T>(
@@ -978,8 +983,22 @@ export function createComputerGateway(
      * not call reset: restart must never sign the Bot out or erase its workspace/browser profile.
      */
     async restartComputer(botId: string, actor: ActionActor) {
-      await provider.stop(botId);
-      const url = await locate(botId);
+      const resourceProfile = await options.resourceProfile?.(botId);
+      let url: string;
+      if (provider.restart) {
+        // The Docker supervisor keeps Stop -> Ensure under one per-Bot lock. Without this primitive,
+        // Reset/Stop/Start from another request can interleave after Stop and before Ensure.
+        url = checkedComputerAddress(
+          await provider.restart(
+            botId,
+            resourceProfile ? { resourceProfile } : undefined,
+          ),
+        );
+      } else {
+        // Compatibility for shared/remote providers that have not adopted the atomic lifecycle verb.
+        await provider.stop(botId);
+        url = await locate(botId);
+      }
       // A restarted browser has a new accessibility tree even when its profile is preserved.
       await snapshots.clear(botId);
       await writeControlEvent(auditStore, "computer.restarted", {
