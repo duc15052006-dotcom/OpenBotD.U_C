@@ -1724,7 +1724,7 @@ function checkDurableWorkflowState(): void {
     "workflowStore.cancel(",
   ]) {
     if (!dashboardRoutes.includes(evidence)) {
-      fail(\`workflows: dashboard owner boundary is missing \${evidence}\`);
+      fail(`workflows: dashboard owner boundary is missing ${evidence}`);
     }
   }
   if (!appServer.includes('"/api/workflows"')) {
@@ -1737,7 +1737,7 @@ function checkDurableWorkflowState(): void {
     "Cancel workflow",
   ]) {
     if (!dashboardUi.includes(evidence)) {
-      fail(\`workflows: dashboard UI is missing \${evidence}\`);
+      fail(`workflows: dashboard UI is missing ${evidence}`);
     }
   }
   for (const evidence of [
@@ -1745,7 +1745,7 @@ function checkDurableWorkflowState(): void {
     'title="Workflows"',
   ]) {
     if (!dashboardRoute.includes(evidence)) {
-      fail(\`workflows: dashboard route is missing \${evidence}\`);
+      fail(`workflows: dashboard route is missing ${evidence}`);
     }
   }
   for (const evidence of [
@@ -1754,7 +1754,7 @@ function checkDurableWorkflowState(): void {
     'workflowKeys.detail',
   ]) {
     if (!dashboardQueries.includes(evidence)) {
-      fail(\`workflows: dashboard query contract is missing \${evidence}\`);
+      fail(`workflows: dashboard query contract is missing ${evidence}`);
     }
   }
   if (!sidebar.includes('to="/workflows"')) {
