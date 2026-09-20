@@ -9,7 +9,7 @@ import type { RuntimeModel } from "../copilot";
  * and lands on the default, so failure here is a soft landing, not an error a person sees.
  */
 export function createModelCompleter(deps: {
-  model: { provider: "openai" | "anthropic"; defaultModel: string };
+  model: RuntimeModel;
   resolveApiKey: () => Promise<string | null>;
 }) {
   return async (prompt: string, signal?: AbortSignal): Promise<string> => {
