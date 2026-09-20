@@ -80,9 +80,12 @@ export function workflowDetailQueryOptions(id: string | null) {
     enabled: Boolean(id),
     queryFn: async (): Promise<WorkflowDetail> => {
       if (!id) throw new Error("A workflow id is required.");
-      const response = await client(`/api/workflows/${encodeURIComponent(id)}`, {
-        fallback: "That workflow could not be loaded.",
-      });
+      const response = await client(
+        `/api/workflows/${encodeURIComponent(id)}`,
+        {
+          fallback: "That workflow could not be loaded.",
+        },
+      );
       return (await response.json()) as WorkflowDetail;
     },
   });
