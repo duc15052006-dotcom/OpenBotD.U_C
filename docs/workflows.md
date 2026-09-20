@@ -96,6 +96,12 @@ Completing one step can promote dependent steps to `ready`; those new ready vers
 up by the same durable bridge. This is what lets a multi-step DAG continue autonomously instead of
 stopping after each dependency boundary.
 
+### Autonomous concurrency limits
+
+Before an autonomous ready step starts or a due wait resumes, the workflow store applies cluster-wide admission control under a PostgreSQL transaction advisory lock. At most **20** autonomous workflow steps may be `running` across one deployment, and at most **4** may be `running` for one Bot.
+
+This is an admission ceiling rather than a queue batch size, so multiple replicas cannot race past it. If capacity is full, the exact claimed work item is deferred with backoff and its claim attempt is rolled back; healthy work therefore does not exhaust its retry budget merely because the deployment stayed busy. The workflow step remains `ready` or `waiting` and can be admitted later.
+
 ## Durable waits
 
 A running step can enter `waiting` with an exact future timestamp and an optional provider label.
