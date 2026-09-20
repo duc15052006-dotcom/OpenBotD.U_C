@@ -155,7 +155,7 @@ export type WorkQueue = {
    * the caller can discover that condition, so a normal release would eventually exhaust healthy
    * work merely because the deployment stayed busy long enough.
    */
-  defer: (input: {
+  defer?: (input: {
     kind: string;
     key: string;
     owner: string;
