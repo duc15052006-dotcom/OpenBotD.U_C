@@ -1429,14 +1429,13 @@ function checkAgentDeletionRevokesAutonomy(): void {
     'status: "cancelled"',
   ]) {
     if (!profiles.includes(evidence)) {
-      fail(`agents: soft delete no longer revokes unattended work through ${evidence}`);
+      fail(
+        `agents: soft delete no longer revokes unattended work through ${evidence}`,
+      );
     }
   }
 
-  for (const evidence of [
-    "agentProfiles",
-    "isNull(agentProfiles.deletedAt)",
-  ]) {
+  for (const evidence of ["agentProfiles", "isNull(agentProfiles.deletedAt)"]) {
     if (!routineStore.includes(evidence)) {
       fail(`routines: deleted-Agent firing guard is missing ${evidence}`);
     }
