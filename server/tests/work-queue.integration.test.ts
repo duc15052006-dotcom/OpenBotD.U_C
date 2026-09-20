@@ -327,7 +327,7 @@ describe("claiming durable work", () => {
       });
     }
 
-    const [cleanup] = await queue.claimExhausted?.({
+    const [cleanup] = await queue.claimExhausted!({
       kind,
       owner: "cleanup-1",
       leaseMs: 30_000,
@@ -342,7 +342,7 @@ describe("claiming durable work", () => {
       owner: "cleanup-1",
       delayMs: 0,
     });
-    const [again] = await queue.claimExhausted?.({
+    const [again] = await queue.claimExhausted!({
       kind,
       owner: "cleanup-2",
       leaseMs: 30_000,
