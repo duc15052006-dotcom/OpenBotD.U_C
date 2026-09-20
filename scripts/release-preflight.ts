@@ -1459,6 +1459,53 @@ function checkAgentDeletionRevokesAutonomy(): void {
   }
 }
 
+function checkHandoffRevocation(): void {
+  const channelRoutes = read("server/src/channels/routes.ts");
+  const handoffDelivery = read("server/src/agents/handoff-delivery.ts");
+  const handoffRunner = read("server/src/agents/handoff-runner.ts");
+  const server = read("server/src/index.ts");
+
+  for (const evidence of [
+    "channel deleted before handoff completed",
+    "eq(workItems.kind, HANDOFF_KIND)",
+    "isNull(workItems.finishedAt)",
+  ]) {
+    if (!channelRoutes.includes(evidence)) {
+      fail(`handoff: channel deletion no longer revokes queued work through ${evidence}`);
+    }
+  }
+
+  for (const evidence of [
+    "continuationGuard",
+    '"HandoffContinuationCancelled"',
+    "agent.abortRun()",
+    "runner.stop({ threadId: where.threadId, runId })",
+  ]) {
+    if (!handoffDelivery.includes(evidence)) {
+      fail(`handoff: running delivery revocation is missing ${evidence}`);
+    }
+  }
+
+  for (const evidence of [
+    '"HandoffContinuationCancelled"',
+    '"agent.handoff_cancelled"',
+  ]) {
+    if (!handoffRunner.includes(evidence)) {
+      fail(`handoff: terminal cancellation handling is missing ${evidence}`);
+    }
+  }
+
+  for (const evidence of [
+    "continuationGuard: async (work) =>",
+    "isNull(channels.deletedAt)",
+    "isNull(agentProfiles.deletedAt)",
+  ]) {
+    if (!server.includes(evidence)) {
+      fail(`handoff: durable live-authority guard is missing ${evidence}`);
+    }
+  }
+}
+
 function checkDurableAgentWake(): void {
   const tools = read("server/src/plugins/builtin-routines.ts");
   const store = read("server/src/routines/store.ts");
@@ -1903,6 +1950,7 @@ checkDesktopCredentialBoundary();
 checkProviderConnectionTest();
 checkFirstCoworkerHandoff();
 checkAgentDeletionRevokesAutonomy();
+checkHandoffRevocation();
 checkDurableAgentWake();
 checkDurableWorkflowState();
 checkVersionSources();
