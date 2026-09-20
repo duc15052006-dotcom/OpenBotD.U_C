@@ -32,6 +32,12 @@ export type TurnRunner = (
     agentId: string;
     threadId: string; // the owner's thread for the channel
     instruction: string; // the user message of this turn
+    /**
+     * Optional fail-closed permission check for a long-running headless turn.
+     * Workflow continuations use this to stop an already-started turn after the durable workflow
+     * is cancelled. Routine turns omit it.
+     */
+    continuationGuard?: () => Promise<boolean>;
   } & (
     | { routineId: string; workflowId?: never }
     | { workflowId: string; routineId?: never }
