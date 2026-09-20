@@ -1665,9 +1665,7 @@ function checkDurableWorkflowState(): void {
     "stopTurn();",
   ]) {
     if (!headlessTurn.includes(evidence)) {
-      fail(
-        `workflows: cancelled headless-turn guard is missing ${evidence}`,
-      );
+      fail(`workflows: cancelled headless-turn guard is missing ${evidence}`);
     }
   }
   for (const evidence of [
