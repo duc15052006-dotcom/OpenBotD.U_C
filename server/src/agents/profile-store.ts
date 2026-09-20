@@ -1,4 +1,4 @@
-import { and, eq, isNotNull, isNull, or } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
 import type { CredentialStore } from "../credentials";
 import type { Database } from "../db/client";
 import {
@@ -6,6 +6,9 @@ import {
   agentProfiles,
   agents,
   deploymentPackages,
+  routines,
+  workflowRuns,
+  workflowSteps,
 } from "../db/schema";
 import {
   authFromConfiguration,
@@ -749,6 +752,59 @@ export function createAgentProfileStore(
             .update(agentProfiles)
             .set({ deletedAt, updatedAt: deletedAt })
             .where(eq(agentProfiles.agentId, id));
+
+          /*
+           * Deleting a coworker is also revoking its unattended authority.
+           *
+           * The canonical `agents` row intentionally survives this soft delete, so foreign keys
+           * alone do not stop routines or workflows. Disable/cancel them in THIS transaction so the
+           * delete cannot commit while schedulers still see durable work as live. Queued routine
+           * items re-read `enabled`; queued workflow items re-read the run/step state; an already
+           * running workflow turn is stopped by the durable continuation guard.
+           */
+          await transaction
+            .update(routines)
+            .set({ enabled: false, updatedAt: deletedAt })
+            .where(and(eq(routines.agentId, id), eq(routines.enabled, true)));
+
+          const cancellableWorkflows = await transaction
+            .select({ id: workflowRuns.id })
+            .from(workflowRuns)
+            .where(
+              and(
+                eq(workflowRuns.agentId, id),
+                inArray(workflowRuns.status, ["active", "paused"]),
+              ),
+            );
+          const workflowIds = cancellableWorkflows.map((row) => row.id);
+          if (workflowIds.length > 0) {
+            await transaction
+              .update(workflowSteps)
+              .set({
+                status: "cancelled",
+                finishedAt: deletedAt,
+                updatedAt: deletedAt,
+              })
+              .where(
+                and(
+                  inArray(workflowSteps.workflowId, workflowIds),
+                  inArray(workflowSteps.status, [
+                    "blocked",
+                    "ready",
+                    "running",
+                    "waiting",
+                  ]),
+                ),
+              );
+            await transaction
+              .update(workflowRuns)
+              .set({
+                status: "cancelled",
+                finishedAt: deletedAt,
+                updatedAt: deletedAt,
+              })
+              .where(inArray(workflowRuns.id, workflowIds));
+          }
 
           /*
            * And its key stops working.
