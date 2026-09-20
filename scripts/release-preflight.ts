@@ -1540,6 +1540,10 @@ function checkDurableWorkflowState(): void {
     "greatest(",
     "date_trunc('milliseconds', now())",
     "${" + "input.waitUntil} > now()",
+    "MAX_CONCURRENT_WORKFLOW_STEPS = 20",
+    "MAX_CONCURRENT_WORKFLOW_STEPS_PER_AGENT = 4",
+    "workflow-autonomous-capacity",
+    "WorkflowCapacityError",
   ]) {
     if (!store.includes(evidence)) {
       fail(`workflows: durable recovery boundary is missing ${evidence}`);
@@ -1572,6 +1576,8 @@ function checkDurableWorkflowState(): void {
     "item.attempts >= maxAttempts",
     "Autonomous wait continuation exhausted its retry budget",
     "failWaitingStep(",
+    "WorkflowCapacityError",
+    "queue.defer",
   ]) {
     if (!wake.includes(evidence)) {
       fail(`workflows: durable wake bridge is missing ${evidence}`);
