@@ -1503,6 +1503,7 @@ function checkDurableWorkflowState(): void {
   const assetMigration = read("server/drizzle/0044_workflow_assets.sql");
   const resumeMigration = read("server/drizzle/0045_workflow_resume_stamp.sql");
   const runner = read("server/src/workflows/runner.ts");
+  const headlessTurn = read("server/src/routines/run-turn.ts");
   const builtin = read("server/src/plugins/builtin-workflows.ts");
   const transport = read("server/src/plugins/transport.ts");
   const catalogue = read("server/src/plugins/catalogue.ts");
@@ -1649,11 +1650,22 @@ function checkDurableWorkflowState(): void {
     "expectedAttempt",
     "checkpoint the step durably",
     "The autonomous continuation ended without checkpointing this workflow step.",
+    "continuationGuard: async () =>",
+    'current.status === "cancelled"',
   ]) {
     if (!runner.includes(evidence)) {
       fail(
         `workflows: autonomous continuation invariant is missing ${evidence}`,
       );
+    }
+  }
+  for (const evidence of [
+    "continuationGuard",
+    "WorkflowContinuationCancelled",
+    "stopTurn();",
+  ]) {
+    if (!headlessTurn.includes(evidence)) {
+      fail(`workflows: cancelled headless-turn guard is missing ${evidence}`);
     }
   }
   for (const evidence of [

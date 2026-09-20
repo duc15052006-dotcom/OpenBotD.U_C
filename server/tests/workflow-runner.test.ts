@@ -99,6 +99,29 @@ describe("workflow autonomous continuation", () => {
     expect(turnCalls[0]?.instruction).toContain("checkpoint the step durably");
   });
 
+  test("passes a durable cancellation guard into the headless workflow turn", async () => {
+    let current = plan();
+    let checked = 0;
+    const runner = createWorkflowRunner({
+      workflowStore: {
+        get: async () => current,
+        failStep: async () => step("failed"),
+      },
+      channelStore: channelStore(),
+      runTurn: async (input) => {
+        expect(input.continuationGuard).toBeDefined();
+        expect(await input.continuationGuard?.()).toBe(true);
+        current = plan("cancelled", step("cancelled"));
+        expect(await input.continuationGuard?.()).toBe(false);
+        checked += 1;
+        return { replyText: "Cancellation observed." };
+      },
+    });
+
+    await runner.run(INPUT);
+    expect(checked).toBe(1);
+  });
+
   test("fails closed when a successful turn leaves the same attempt running", async () => {
     const failures: unknown[][] = [];
     const runner = createWorkflowRunner({

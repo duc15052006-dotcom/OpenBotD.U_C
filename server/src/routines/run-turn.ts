@@ -256,7 +256,8 @@ export function createTurnRunner(options: {
   } = options;
 
   return async (turnInput) => {
-    const { ownerUserId, agentId, threadId, instruction } = turnInput;
+    const { ownerUserId, agentId, threadId, instruction, continuationGuard } =
+      turnInput;
     const source =
       "workflowId" in turnInput && turnInput.workflowId
         ? "workflow"
@@ -397,6 +398,8 @@ export function createTurnRunner(options: {
     let deadline: ReturnType<typeof setTimeout> | undefined;
     let backstop: ReturnType<typeof setTimeout> | undefined;
     let heartbeatError: unknown;
+    /** Whether the durable caller revoked permission for this workflow turn. */
+    let continuationError: unknown;
     /** Whether the deadline stopped this turn. See the throw below the `finally`. */
     let stopped = false;
     /**
@@ -429,24 +432,50 @@ export function createTurnRunner(options: {
     };
 
     heartbeat = setInterval(() => {
-      void intelligence
-        .ɵrenewThreadLock({ threadId, runId, ttlSeconds: lockTtlSeconds })
-        .catch((error: unknown) => {
+      void (async () => {
+        try {
+          await intelligence.ɵrenewThreadLock({
+            threadId,
+            runId,
+            ttlSeconds: lockTtlSeconds,
+          });
+          if (continuationGuard && !(await continuationGuard())) {
+            const error = new Error(
+              "The workflow continuation was cancelled while it was running.",
+            );
+            error.name = "WorkflowContinuationCancelled";
+            continuationError = error;
+            clearHeartbeat();
+            stopTurn();
+          }
+        } catch (error) {
           if (heartbeat === undefined) return;
           /*
            * A lock we no longer hold means somebody else is in this thread — the person, most
            * likely, having just typed something. Continuing would write this turn's events into
            * their run, so the turn is stopped and the failure is raised rather than recovered.
+           *
+           * A guard read failure is handled the same fail-closed way: unattended workflow work
+           * must not keep using Browser/Tools when durable cancellation state cannot be verified.
            */
           clearHeartbeat();
           heartbeatError = error;
           stopTurn();
-        });
+        }
+      })();
     }, heartbeatMs);
     // So a heartbeat that is still pending cannot hold a one-shot process open.
     heartbeat.unref?.();
 
     try {
+      if (continuationGuard && !(await continuationGuard())) {
+        const error = new Error(
+          "The workflow continuation was cancelled before the headless run started.",
+        );
+        error.name = "WorkflowContinuationCancelled";
+        throw error;
+      }
+
       const completed = new Promise<void>((resolve, reject) => {
         let terminal: Error | undefined;
         runner
@@ -520,6 +549,10 @@ export function createTurnRunner(options: {
     if (heartbeatError !== undefined) {
       await stopPromise;
       throw heartbeatError;
+    }
+    if (continuationError !== undefined) {
+      await stopPromise;
+      throw continuationError;
     }
 
     /*

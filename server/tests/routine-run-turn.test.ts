@@ -108,6 +108,7 @@ function harness(options: {
   heartbeatMs?: number;
   lockTtlSeconds?: number;
   workflow?: boolean;
+  continuationGuard?: () => Promise<boolean>;
 }) {
   const order: string[] = [];
   const calls = {
@@ -230,6 +231,9 @@ function harness(options: {
             agentId: AGENT_ID,
             threadId: THREAD_ID,
             instruction: INSTRUCTION,
+            ...(options.continuationGuard
+              ? { continuationGuard: options.continuationGuard }
+              : {}),
           }
         : {
             ownerUserId: OWNER,
@@ -270,6 +274,29 @@ describe("a routine's headless turn", () => {
     const { run } = harness({});
 
     expect(await run()).toEqual({ replyText: "Three things happened." });
+  });
+
+  test("stops an in-flight workflow turn when its durable continuation guard is revoked", async () => {
+    let checks = 0;
+    const { run, calls, agent } = harness({
+      workflow: true,
+      heartbeatMs: 2,
+      continuationGuard: async () => {
+        checks += 1;
+        return checks === 1;
+      },
+      drive: ({ agent: driven, observer }) => {
+        driven.onAbort = () => observer.complete();
+      },
+    });
+
+    await expect(run()).rejects.toThrow(
+      "workflow continuation was cancelled while it was running",
+    );
+
+    expect(agent.aborts).toBe(1);
+    expect(calls.stops).toHaveLength(1);
+    expect(calls.cleaned).toHaveLength(1);
   });
 
   test("does not leak history into the reply: the before-set must be taken after seeding, not before", async () => {
