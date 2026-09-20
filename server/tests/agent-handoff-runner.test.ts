@@ -407,6 +407,30 @@ describe("a hop that failed for good", () => {
     expect(offered).toEqual([]);
   });
 
+  test("a durably revoked hop is terminal and is never retried or noticed", async () => {
+    const {
+      runner: sweeper,
+      calls,
+      offered,
+      events,
+    } = runner({
+      deliver: async () => {
+        const error = new Error("the channel was deleted");
+        error.name = "HandoffContinuationCancelled";
+        throw error;
+      },
+    });
+
+    const report = await sweeper.sweep();
+
+    expect(calls.map((call) => call.verb)).toContain("finish");
+    expect(calls.map((call) => call.verb)).not.toContain("release");
+    expect(calls.map((call) => call.verb)).not.toContain("offer");
+    expect(offered).toEqual([]);
+    expect(events).toContain("agent.handoff_cancelled");
+    expect(report.skipped[0]?.reason).toContain("channel was deleted");
+  });
+
   test("a hop with tries left is simply released", async () => {
     const {
       runner: sweeper,

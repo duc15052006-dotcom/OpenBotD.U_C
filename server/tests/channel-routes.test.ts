@@ -40,6 +40,7 @@ import {
   deploymentPackages,
   intelligenceChannelMappings,
   users,
+  workItems,
 } from "../src/db/schema";
 import { TEST_POOL, testDatabaseUrl } from "./support/database";
 import { testEnvironment } from "./support/environment";
@@ -1474,6 +1475,56 @@ describe("channel soft delete", () => {
     expect(
       otherPage.channels.find((channel) => channel.id === created.id),
     ).toBeUndefined();
+  });
+
+  test("terminalizes queued or claimed handoffs owned by the deleted channel", async () => {
+    const actor = await createPersistentUser();
+    const agentId = await createPersistentAgent({
+      name: "Delegating agent",
+      owner: actor,
+    });
+    const created = await persistentStore.create(actor, [agentId]);
+    createdChannelIds.push(created.id);
+    const key = persistentId("handoff");
+
+    await database.insert(workItems).values({
+      kind: "bot.message",
+      key,
+      payload: {
+        fromBotId: agentId,
+        toBotId: agentId,
+        actorId: actor.id,
+        threadId: created.threadId,
+        runId: "test-run",
+        depth: 1,
+        task: "work that must not outlive its channel",
+      },
+      claimedBy: "replica-test",
+      leaseUntil: new Date(Date.now() + 60_000),
+    });
+
+    try {
+      await persistentStore.softDelete(actor, created.id);
+
+      const [row] = await database
+        .select({
+          finishedAt: workItems.finishedAt,
+          claimedBy: workItems.claimedBy,
+          leaseUntil: workItems.leaseUntil,
+          lastError: workItems.lastError,
+        })
+        .from(workItems)
+        .where(and(eq(workItems.kind, "bot.message"), eq(workItems.key, key)));
+
+      expect(row?.finishedAt).not.toBeNull();
+      expect(row?.claimedBy).toBeNull();
+      expect(row?.leaseUntil).toBeNull();
+      expect(row?.lastError).toBe("channel deleted before handoff completed");
+    } finally {
+      await database
+        .delete(workItems)
+        .where(and(eq(workItems.kind, "bot.message"), eq(workItems.key, key)));
+    }
   });
 
   test("stamps deleted_at on the channel", async () => {

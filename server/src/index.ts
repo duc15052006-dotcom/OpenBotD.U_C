@@ -5,7 +5,7 @@ import {
   IntelligenceAgentRunner,
 } from "@copilotkit/runtime/v2";
 import { serve } from "bun";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { COMPUTER_GUIDANCE } from "../../shared/bot-prompt";
 import { workOwner } from "../../shared/work-owner";
 import { mintRunAssertion, readRunAssertion } from "./agents/callback-token";
@@ -91,6 +91,7 @@ import {
 } from "./credentials";
 import { createDatabase } from "./db/client";
 import {
+  agentProfiles,
   channelAgents,
   channelMemberships,
   channels,
@@ -1195,6 +1196,55 @@ if (config.handoff.maxDepth > 0 && config.handoff.maxPerRun > 0) {
           botId,
           initiator: { kind: "handoff", id: fromBotId },
         });
+      },
+      /*
+       * Durable revocation check for unattended handoff work.
+       *
+       * The asking channel must still exist for this actor, and both Bots named by the hop must still
+       * be live. This is checked before the delivery starts and again on the delivery heartbeat, so
+       * deleting the channel or either Bot revokes an already-running hop instead of merely hiding
+       * the place where its answer would have landed.
+       */
+      continuationGuard: async (work) => {
+        const [activeChannel] = await database
+          .select({ threadId: intelligenceChannelMappings.threadId })
+          .from(intelligenceChannelMappings)
+          .innerJoin(
+            channels,
+            and(
+              eq(channels.id, intelligenceChannelMappings.channelId),
+              isNull(channels.deletedAt),
+            ),
+          )
+          .innerJoin(
+            channelMemberships,
+            and(
+              eq(
+                channelMemberships.channelId,
+                intelligenceChannelMappings.channelId,
+              ),
+              eq(channelMemberships.userId, work.actorId),
+            ),
+          )
+          .where(
+            and(
+              eq(intelligenceChannelMappings.threadId, work.threadId),
+              eq(intelligenceChannelMappings.userId, work.actorId),
+            ),
+          )
+          .limit(1);
+        if (!activeChannel) return false;
+
+        const liveBots = await database
+          .select({ agentId: agentProfiles.agentId })
+          .from(agentProfiles)
+          .where(
+            and(
+              inArray(agentProfiles.agentId, [work.fromBotId, work.toBotId]),
+              isNull(agentProfiles.deletedAt),
+            ),
+          );
+        return new Set(liveBots.map((profile) => profile.agentId)).size === 2;
       },
       history: copilotRuntime.history,
       lock: copilotRuntime.threadLock,
