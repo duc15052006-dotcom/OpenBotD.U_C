@@ -150,7 +150,10 @@ export function createRoutineRunner(options: {
       }));
     } catch (error) {
       const reason = reasonOf(error);
-      if (error instanceof Error && error.name === "HeadlessContinuationCancelled") {
+      if (
+        error instanceof Error &&
+        error.name === "HeadlessContinuationCancelled"
+      ) {
         await routineStore.finishRun(routineRunId, "skipped", reason);
         return;
       }
