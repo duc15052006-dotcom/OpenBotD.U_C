@@ -353,6 +353,46 @@ describe("durable ready-step dispatch", () => {
     expect(redelivered.attempts).toBe(1);
   });
 
+  test("exhausted ready cleanup can fail only the exact autonomous dispatch stamp", async () => {
+    const { owner, agentId, channel } = await setUp();
+    const who = identity(owner, agentId);
+    const plan = await store.create(planInput(owner, agentId, channel.id));
+    const queued = (await store.readySteps(500)).find(
+      (candidate) =>
+        candidate.workflowId === plan.id && candidate.stepKey === "script",
+    );
+    expect(queued).toBeDefined();
+
+    const running = await store.startReadyStep(
+      who,
+      plan.id,
+      "script",
+      queued?.readyAt as Date,
+      0,
+    );
+    await expect(
+      store.failAutonomousRunningStep(
+        who,
+        plan.id,
+        "script",
+        new Date((queued?.readyAt.getTime() ?? 0) + 1),
+        running.attempts,
+        "stale cleanup",
+      ),
+    ).rejects.toBeInstanceOf(WorkflowRefusedError);
+
+    const failed = await store.failAutonomousRunningStep(
+      who,
+      plan.id,
+      "script",
+      queued?.readyAt as Date,
+      running.attempts,
+      "worker died on final dispatch",
+    );
+    expect(failed.status).toBe("failed");
+    expect(failed.failureReason).toContain("worker died");
+  });
+
   test("a manual start makes an older queued ready item stale", async () => {
     const { owner, agentId, channel } = await setUp();
     const who = identity(owner, agentId);
@@ -575,6 +615,77 @@ describe("durable waits", () => {
       1,
     );
     expect(continued.status).toBe("running");
+  });
+
+  test("an old wait stamp cannot fail a newer resumed state on the same attempt", async () => {
+    const { owner, agentId, channel } = await setUp();
+    const who = identity(owner, agentId);
+    const plan = await store.create(planInput(owner, agentId, channel.id));
+    await store.startStep(who, plan.id, "script");
+
+    const firstWait = new Date(Date.now() + 60_000);
+    const firstWaiting = await store.waitStep(who, plan.id, "script", {
+      waitUntil: firstWait,
+      provider: "video-generator",
+    });
+    await database
+      .update(workflowSteps)
+      .set({ waitUntil: new Date(Date.now() - 2_000) })
+      .where(eq(workflowSteps.id, firstWaiting.id));
+    const firstDue = (await store.dueWaitingSteps(500)).find(
+      (candidate) =>
+        candidate.workflowId === plan.id && candidate.stepKey === "script",
+    );
+    await store.resumeWaitingStep(
+      who,
+      plan.id,
+      "script",
+      firstDue?.waitUntil as Date,
+      1,
+    );
+
+    const secondWait = new Date(Date.now() + 120_000);
+    const secondWaiting = await store.waitStep(who, plan.id, "script", {
+      waitUntil: secondWait,
+      provider: "video-generator",
+    });
+    await database
+      .update(workflowSteps)
+      .set({ waitUntil: new Date(Date.now() - 1_000) })
+      .where(eq(workflowSteps.id, secondWaiting.id));
+    const secondDue = (await store.dueWaitingSteps(500)).find(
+      (candidate) =>
+        candidate.workflowId === plan.id && candidate.stepKey === "script",
+    );
+    const resumed = await store.resumeWaitingStep(
+      who,
+      plan.id,
+      "script",
+      secondDue?.waitUntil as Date,
+      1,
+    );
+    expect(resumed.attempts).toBe(1);
+
+    await expect(
+      store.failAutonomousRunningStep(
+        who,
+        plan.id,
+        "script",
+        firstDue?.waitUntil as Date,
+        1,
+        "stale cleanup",
+      ),
+    ).rejects.toBeInstanceOf(WorkflowRefusedError);
+
+    const failed = await store.failAutonomousRunningStep(
+      who,
+      plan.id,
+      "script",
+      secondDue?.waitUntil as Date,
+      1,
+      "final cleanup",
+    );
+    expect(failed.status).toBe("failed");
   });
 
   test("an exhausted wake can fail only its exact waiting attempt", async () => {
