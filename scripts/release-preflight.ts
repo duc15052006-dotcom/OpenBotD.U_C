@@ -1481,7 +1481,7 @@ function checkHandoffRevocation(): void {
     "continuationGuard",
     '"HandoffContinuationCancelled"',
     "agent.abortRun()",
-    "runner.stop({ threadId: where.threadId, runId })",
+    ".stop({ threadId: where.threadId, runId })",
   ]) {
     if (!handoffDelivery.includes(evidence)) {
       fail(`handoff: running delivery revocation is missing ${evidence}`);
