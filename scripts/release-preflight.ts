@@ -1546,6 +1546,7 @@ function checkProviderRuntimeCompatibility(): void {
   const microsoft = read("agent-microsoft/src/main.py");
   const pydantic = read("agent-pydantic-ai/src/main.py");
   const langroid = read("agent-langroid/src/main.py");
+  const langroidRequirements = read("agent-langroid/requirements.txt");
   const agno = read("agent-agno/src/main.py");
 
   for (const evidence of [
@@ -1573,6 +1574,13 @@ function checkProviderRuntimeCompatibility(): void {
       fail(`models: Anthropic selector transport is missing ${evidence}`);
     }
   }
+  if (!langroidRequirements.includes("langroid[litellm]")) {
+    fail("models: Langroid LiteLLM support must come from langroid[litellm]");
+  }
+  if (langroidRequirements.includes("ag-ui-langroid[litellm]")) {
+    fail("models: ag-ui-langroid does not provide the litellm extra");
+  }
+
   for (const [name, source, evidence] of [
     ["mastra", mastra, "createAnthropic"],
     ["ag2", ag2, "AnthropicConfig"],
