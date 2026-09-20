@@ -29,7 +29,8 @@ agent = Agent(
     # In memory, because a Bot's history lives in OpenBot's database and not in the harness. Two
     # places remembering the same conversation is how they come to disagree.
     db=InMemoryDb(),
-    model=LiteLLM(id=_model_id()),
+    # Agno sends sampling params that some reasoning models reject; let LiteLLM drop unsupported ones.
+    model=LiteLLM(id=_model_id(), request_params={"drop_params": True}),
     # No role, goal or backstory invented on somebody's behalf. A Bot answers the question it is
     # asked, and anybody who wants a persona sets one in OpenBot where the rest of them live.
     instructions="Answer the question you are asked, briefly and correctly.",
