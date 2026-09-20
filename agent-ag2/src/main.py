@@ -4,16 +4,26 @@ import os
 
 from ag2 import Agent
 from ag2.ag_ui import AGUIStream
-from ag2.config import OpenAIConfig
+from ag2.config import AnthropicConfig, OpenAIConfig
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 TOKEN_HEADER = "x-openbot-agent-token"
 
+def _config() -> AnthropicConfig | OpenAIConfig:
+    """Use the provider OpenBot selected, through AG2's native provider config."""
+    provider = (os.environ.get("BOT_PROVIDER") or "openai").strip()
+    model = (os.environ.get("BOT_MODEL") or "gpt-4o-mini").strip()
+    if provider == "anthropic":
+        base_url = (os.environ.get("ANTHROPIC_BASE_URL") or "").strip() or "https://api.anthropic.com"
+        return AnthropicConfig(model=model, base_url=base_url)
+    return OpenAIConfig(model=model)
+
+
 agent = Agent(
     name="openbot",
     prompt="Answer the question you are asked, briefly and correctly.",
-    config=OpenAIConfig(model=(os.environ.get("BOT_MODEL") or "gpt-4o-mini").strip()),
+    config=_config(),
 )
 stream = AGUIStream(agent)
 

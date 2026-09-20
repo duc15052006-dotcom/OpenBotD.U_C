@@ -26,6 +26,11 @@ def _model_id() -> str:
     return f"litellm/{provider}/{model}"
 
 
+# Compose exports unused provider keys as empty strings. Langroid treats an empty OpenAI key as
+# configured and refuses before LiteLLM can use the selected provider, so make empty mean absent.
+if not os.environ.get("OPENAI_API_KEY"):
+    os.environ.pop("OPENAI_API_KEY", None)
+
 agent = ChatAgent(
     ChatAgentConfig(
         llm=OpenAIGPTConfig(chat_model=_model_id(), parallel_tool_calls=False),
