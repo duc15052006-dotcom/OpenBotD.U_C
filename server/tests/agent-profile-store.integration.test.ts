@@ -25,7 +25,10 @@ import {
   channels,
   deploymentPackages,
   intelligenceChannelMappings,
+  routines,
   users,
+  workflowRuns,
+  workflowSteps,
 } from "../src/db/schema";
 import { TEST_POOL, testDatabaseUrl } from "./support/database";
 
@@ -808,6 +811,81 @@ describe("agent profile store integration", () => {
     await expect(
       store.setHidden(owner, source.agentId, true),
     ).rejects.toBeInstanceOf(AgentNotFoundError);
+  });
+
+  test("soft delete revokes routines and non-terminal workflows for that Bot", async () => {
+    const owner = await createUser();
+    const source = await createProfileFixture({ owner });
+
+    const routineId = id("routine");
+    await database.insert(routines).values({
+      id: routineId,
+      ownerUserId: owner.id,
+      agentId: source.agentId,
+      channelId: id("routine-channel"),
+      instruction: "Continue unattended work.",
+      cron: "0 9 * * *",
+      timezone: "UTC",
+      enabled: true,
+      nextRunAt: new Date("2026-09-21T09:00:00.000Z"),
+    });
+
+    const workflowId = id("workflow");
+    await database.insert(workflowRuns).values({
+      id: workflowId,
+      ownerUserId: owner.id,
+      agentId: source.agentId,
+      channelId: id("workflow-channel"),
+      title: "Deletion cancellation",
+      status: "active",
+    });
+    await database.insert(workflowSteps).values([
+      {
+        id: id("workflow-step-running"),
+        workflowId,
+        key: "running",
+        position: 0,
+        instruction: "Keep working.",
+        status: "running",
+        attempts: 1,
+      },
+      {
+        id: id("workflow-step-done"),
+        workflowId,
+        key: "done",
+        position: 1,
+        instruction: "Already done.",
+        dependsOn: ["running"],
+        status: "succeeded",
+        attempts: 1,
+        finishedAt: new Date("2026-09-20T08:00:00.000Z"),
+      },
+    ]);
+
+    await store.softDelete(owner, source.agentId);
+
+    const [routine] = await database
+      .select()
+      .from(routines)
+      .where(eq(routines.id, routineId));
+    expect(routine?.enabled).toBe(false);
+
+    const [workflow] = await database
+      .select()
+      .from(workflowRuns)
+      .where(eq(workflowRuns.id, workflowId));
+    expect(workflow?.status).toBe("cancelled");
+    expect(workflow?.finishedAt).toBeInstanceOf(Date);
+
+    const steps = await database
+      .select()
+      .from(workflowSteps)
+      .where(eq(workflowSteps.workflowId, workflowId));
+    const running = steps.find((row) => row.key === "running");
+    const done = steps.find((row) => row.key === "done");
+    expect(running?.status).toBe("cancelled");
+    expect(running?.finishedAt).toBeInstanceOf(Date);
+    expect(done?.status).toBe("succeeded");
   });
 
   test("rolls back canonical creation when the profile insert fails", async () => {
