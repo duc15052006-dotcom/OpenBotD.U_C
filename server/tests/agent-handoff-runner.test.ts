@@ -408,7 +408,12 @@ describe("a hop that failed for good", () => {
   });
 
   test("a durably revoked hop is terminal and is never retried or noticed", async () => {
-    const { runner: sweeper, calls, offered, events } = runner({
+    const {
+      runner: sweeper,
+      calls,
+      offered,
+      events,
+    } = runner({
       deliver: async () => {
         const error = new Error("the channel was deleted");
         error.name = "HandoffContinuationCancelled";
