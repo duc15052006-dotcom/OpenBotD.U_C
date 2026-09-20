@@ -1507,6 +1507,12 @@ function checkDurableWorkflowState(): void {
   const transport = read("server/src/plugins/transport.ts");
   const catalogue = read("server/src/plugins/catalogue.ts");
   const botPrompt = read("shared/bot-prompt.ts");
+  const dashboardRoutes = read("server/src/workflows/routes.ts");
+  const appServer = read("server/src/app.ts");
+  const dashboardUi = read("app/src/components/workflows/workflows-list.tsx");
+  const dashboardRoute = read("app/src/routes/_authed/_app/workflows.tsx");
+  const dashboardQueries = read("app/src/lib/workflows/queries.ts");
+  const sidebar = read("app/src/components/app-sidebar/app-sidebar.tsx");
 
   for (const evidence of [
     'workflowRunStatus = pgEnum("workflow_run_status"',
@@ -1547,6 +1553,9 @@ function checkDurableWorkflowState(): void {
     "failReadyStep(",
     "failAutonomousRunningStep(",
     "eq(workflowSteps.resumedFromWaitUntil, expectedDispatchStamp)",
+    "getForOwner: planForOwner",
+    "listForOwner(ownerUserId)",
+    "eq(workflowRuns.ownerUserId, ownerUserId)",
   ]) {
     if (!store.includes(evidence)) {
       fail(`workflows: durable recovery boundary is missing ${evidence}`);
@@ -1702,6 +1711,54 @@ function checkDurableWorkflowState(): void {
     if (!assetMigration.includes(evidence)) {
       fail(`workflows: asset migration is missing ${evidence}`);
     }
+  }
+
+  for (const evidence of [
+    "createWorkflowRoutes(",
+    "context.var.actor.id",
+    "listForOwner(",
+    "getForOwner(",
+    "listAssets(",
+    "workflowStore.pause(",
+    "workflowStore.resume(",
+    "workflowStore.cancel(",
+  ]) {
+    if (!dashboardRoutes.includes(evidence)) {
+      fail(\`workflows: dashboard owner boundary is missing \${evidence}\`);
+    }
+  }
+  if (!appServer.includes('"/api/workflows"')) {
+    fail("workflows: dashboard API is not mounted");
+  }
+  for (const evidence of [
+    "workflowsQueryOptions()",
+    "workflowDetailQueryOptions(selectedId)",
+    "setWorkflowStatusMutationOptions(queryClient)",
+    "Cancel workflow",
+  ]) {
+    if (!dashboardUi.includes(evidence)) {
+      fail(\`workflows: dashboard UI is missing \${evidence}\`);
+    }
+  }
+  for (const evidence of [
+    'createFileRoute("/_authed/_app/workflows")',
+    'title="Workflows"',
+  ]) {
+    if (!dashboardRoute.includes(evidence)) {
+      fail(\`workflows: dashboard route is missing \${evidence}\`);
+    }
+  }
+  for (const evidence of [
+    '"/api/workflows"',
+    '"/api/workflows/"',
+    'workflowKeys.detail',
+  ]) {
+    if (!dashboardQueries.includes(evidence)) {
+      fail(\`workflows: dashboard query contract is missing \${evidence}\`);
+    }
+  }
+  if (!sidebar.includes('to="/workflows"')) {
+    fail("workflows: dashboard is not reachable from the app sidebar");
   }
 
   for (const evidence of ["useWorkflowTools(workflowStore)"]) {
