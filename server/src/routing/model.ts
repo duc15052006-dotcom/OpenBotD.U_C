@@ -19,7 +19,9 @@ export function createModelCompleter(deps: {
 
     const anthropic = deps.model.provider === "anthropic";
     const response = await fetch(
-      anthropic ? anthropicMessagesUrl(process.env) : chatCompletionsUrl(process.env),
+      anthropic
+        ? anthropicMessagesUrl(process.env)
+        : chatCompletionsUrl(process.env),
       {
         method: "POST",
         headers: {
@@ -40,7 +42,8 @@ export function createModelCompleter(deps: {
           : AbortSignal.timeout(10_000),
       },
     );
-    if (!response.ok) throw new Error(`router model answered ${response.status}`);
+    if (!response.ok)
+      throw new Error(`router model answered ${response.status}`);
 
     const body = (await response.json()) as {
       choices?: { message?: { content?: unknown } }[];
