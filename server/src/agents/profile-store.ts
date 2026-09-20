@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import type { CredentialStore } from "../credentials";
 import type { Database } from "../db/client";
 import {
@@ -7,6 +7,7 @@ import {
   agents,
   deploymentPackages,
   routines,
+  workItems,
   workflowRuns,
   workflowSteps,
 } from "../db/schema";
@@ -757,11 +758,34 @@ export function createAgentProfileStore(
            * Deleting a coworker is also revoking its unattended authority.
            *
            * The canonical `agents` row intentionally survives this soft delete, so foreign keys
-           * alone do not stop routines or workflows. Disable/cancel them in THIS transaction so the
-           * delete cannot commit while schedulers still see durable work as live. Queued routine
-           * items re-read `enabled`; queued workflow items re-read the run/step state; an already
-           * running workflow turn is stopped by the durable continuation guard.
+           * alone do not stop routines, workflows or Bot-to-Bot handoffs. Disable/cancel them in
+           * THIS transaction so the delete cannot commit while schedulers still see durable work as
+           * live. Queued routine items re-read `enabled`; queued workflow items re-read the
+           * run/step state. Handoffs are terminalized here because their queue row itself is their
+           * authority: clearing the lease and setting `finishedAt` means a claimed row cannot renew
+           * and an unclaimed row cannot be picked up after deletion commits. Already-running
+           * workflow turns and handoff deliveries are stopped by their durable continuation guards.
            */
+          await transaction
+            .update(workItems)
+            .set({
+              finishedAt: deletedAt,
+              claimedBy: null,
+              leaseUntil: null,
+              lastError: "agent deleted before handoff completed",
+              updatedAt: deletedAt,
+            })
+            .where(
+              and(
+                eq(workItems.kind, "bot.message"),
+                isNull(workItems.finishedAt),
+                or(
+                  sql`${workItems.payload}->>'fromBotId' = ${id}`,
+                  sql`${workItems.payload}->>'toBotId' = ${id}`,
+                ),
+              ),
+            );
+
           await transaction
             .update(routines)
             .set({ enabled: false, updatedAt: deletedAt })
