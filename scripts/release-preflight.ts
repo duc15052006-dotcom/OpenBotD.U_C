@@ -1600,7 +1600,7 @@ function checkDurableWorkflowState(): void {
   }
   for (const evidence of [
     "async defer({ kind, key, owner, delayMs, reason })",
-    "greatest(${workItems.attempts} - 1, 0)",
+    "greatest(" + "${workItems.attempts}" + " - 1, 0)",
   ]) {
     if (!queue.includes(evidence)) {
       fail(`workflows: capacity-safe queue defer is missing ${evidence}`);
