@@ -308,6 +308,19 @@ export function createAgentRoutes(
    * dialog nagged built-in coworkers about a credential they never needed.
    */
   managedEndpoint?: string,
+  /**
+   * Non-destructive runtime cleanup after the durable Agent delete commits.
+   *
+   * External Computer shutdown is deliberately outside the profile transaction: a supervisor/network
+   * failure must not resurrect an Agent whose credentials, routines and workflows were already
+   * revoked. The caller logs a failed cleanup and the Computer culler is the recovery backstop.
+   */
+  lifecycle?: {
+    onDeleted?: (
+      actor: AppVariables["actor"],
+      agentId: string,
+    ) => Promise<void>;
+  },
 ) {
   /** The dto with the one fact only this closure knows: whether the coworker runs on our own Bot. */
   const dto = (actor: AgentActor, agent: AgentProfile) => ({
@@ -671,12 +684,29 @@ export function createAgentRoutes(
   });
 
   routes.delete("/:agentId", requireUser, async (context) => {
-    if (!context.req.param("agentId").trim()) {
+    const agentId = context.req.param("agentId").trim();
+    if (!agentId) {
       return context.json({ error: "A Bot id is required." }, 400);
     }
     try {
-      await store.softDelete(context.var.actor, context.req.param("agentId"));
-      await record(context, "bot.deleted", context.req.param("agentId"));
+      await store.softDelete(context.var.actor, agentId);
+      await record(context, "bot.deleted", agentId);
+      try {
+        await lifecycle?.onDeleted?.(context.var.actor, agentId);
+      } catch (error) {
+        /*
+         * The durable delete already committed. A failed external stop cannot turn the HTTP response
+         * into "delete failed" and invite a retry of a destructive action. The culler re-detects
+         * Computers owned by deleted Agents and retries shutdown independently.
+         */
+        console.error(
+          JSON.stringify({
+            type: "agent-delete-computer-stop-failed",
+            agentId,
+            reason: error instanceof Error ? error.message : String(error),
+          }),
+        );
+      }
       return context.body(null, 204);
     } catch (error) {
       return mapStoreError(context, error);
