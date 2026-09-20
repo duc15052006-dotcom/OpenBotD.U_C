@@ -396,59 +396,59 @@ export function createHandoffDelivery(options: {
           await Promise.race([
             settled(
               runner.run({
-              threadId: where.threadId,
-              agent,
-              /*
-               * What the conversation KEEPS, which is not what the model was sent.
-               *
-               * The runner persists whatever it is given here, and given nothing it persists the whole
-               * prompt: the asking conversation's history repeated into a second conversation, and a
-               * paragraph of instructions to a model sitting in a bubble that looks like something the
-               * person typed. What belongs in a transcript is the one line saying why this Bot spoke.
-               */
-              persistedInputMessages: shown
-                ? [{ id: `handoff-${runId}`, role: "user", content: shown }]
-                : [],
-              /*
-               * NOTHING IS PASSED FOR THE CONNECTION, and that is load-bearing.
-               *
-               * The lock hands back a join token as well as a run id, and it reads like the thing to
-               * present here. It is not: it is what a BROWSER presents to join a conversation and
-               * watch it, and the runner's socket is a different connection with its own credential.
-               * Handing it in overrides that credential, the socket is refused, and because the runner
-               * treats a socket that will not connect as something to keep retrying rather than as a
-               * failed run, nothing is ever emitted and nothing ever completes. The hop hangs, in
-               * total silence, until the deadline below ends it.
-               *
-               * What makes this run legitimate is the lock itself: the gateway compares the run id on
-               * every event to the one the lock holds. Taking the lock is the whole of the ceremony.
-               */
-              input: {
                 threadId: where.threadId,
-                runId,
+                agent,
                 /*
-                 * The same conversation the agent was given, so the run's own record of what it was
-                 * asked agrees with what it read.
+                 * What the conversation KEEPS, which is not what the model was sent.
+                 *
+                 * The runner persists whatever it is given here, and given nothing it persists the whole
+                 * prompt: the asking conversation's history repeated into a second conversation, and a
+                 * paragraph of instructions to a model sitting in a bubble that looks like something the
+                 * person typed. What belongs in a transcript is the one line saying why this Bot spoke.
                  */
-                messages: asked,
-                tools: [],
-                context: [],
-                state: {},
+                persistedInputMessages: shown
+                  ? [{ id: `handoff-${runId}`, role: "user", content: shown }]
+                  : [],
                 /*
-                 * The deployment's own statement of what this run is, carrying how deep the chain has
-                 * gone. It is what stops the addressed Bot handing the work on for ever, and it is
-                 * signed, so the Bot cannot edit its own depth on the way past.
+                 * NOTHING IS PASSED FOR THE CONNECTION, and that is load-bearing.
+                 *
+                 * The lock hands back a join token as well as a run id, and it reads like the thing to
+                 * present here. It is not: it is what a BROWSER presents to join a conversation and
+                 * watch it, and the runner's socket is a different connection with its own credential.
+                 * Handing it in overrides that credential, the socket is refused, and because the runner
+                 * treats a socket that will not connect as something to keep retrying rather than as a
+                 * failed run, nothing is ever emitted and nothing ever completes. The hop hangs, in
+                 * total silence, until the deadline below ends it.
+                 *
+                 * What makes this run legitimate is the lock itself: the gateway compares the run id on
+                 * every event to the one the lock holds. Taking the lock is the whole of the ceremony.
                  */
-                forwardedProps: { openbotRun: assertion },
-              },
-            }),
-            deadlineMs,
-            () =>
-              `${work.toBotId} did not finish within ${Math.round(deadlineMs / 1000)}s ${
-                seen.count === 0
-                  ? "and never reached its model"
-                  : `after ${seen.count} events, the last ${seen.last}`
-              }`,
+                input: {
+                  threadId: where.threadId,
+                  runId,
+                  /*
+                   * The same conversation the agent was given, so the run's own record of what it was
+                   * asked agrees with what it read.
+                   */
+                  messages: asked,
+                  tools: [],
+                  context: [],
+                  state: {},
+                  /*
+                   * The deployment's own statement of what this run is, carrying how deep the chain has
+                   * gone. It is what stops the addressed Bot handing the work on for ever, and it is
+                   * signed, so the Bot cannot edit its own depth on the way past.
+                   */
+                  forwardedProps: { openbotRun: assertion },
+                },
+              }),
+              deadlineMs,
+              () =>
+                `${work.toBotId} did not finish within ${Math.round(deadlineMs / 1000)}s ${
+                  seen.count === 0
+                    ? "and never reached its model"
+                    : `after ${seen.count} events, the last ${seen.last}`
+                }`,
             ),
             cancelled,
           ]);
