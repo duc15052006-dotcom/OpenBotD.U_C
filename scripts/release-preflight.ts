@@ -1415,6 +1415,51 @@ function checkFirstCoworkerHandoff(): void {
   }
 }
 
+function checkAgentDeletionRevokesAutonomy(): void {
+  const profiles = read("server/src/agents/profile-store.ts");
+  const routineStore = read("server/src/routines/store.ts");
+  const routineRunner = read("server/src/routines/runner.ts");
+  const workflowRunner = read("server/src/workflows/runner.ts");
+  const headlessTurn = read("server/src/routines/run-turn.ts");
+
+  for (const evidence of [
+    "eq(routines.agentId, id)",
+    'inArray(workflowRuns.status, ["active", "paused"])',
+    "inArray(workflowSteps.status, [",
+    'status: "cancelled"',
+  ]) {
+    if (!profiles.includes(evidence)) {
+      fail(`agents: soft delete no longer revokes unattended work through ${evidence}`);
+    }
+  }
+
+  for (const evidence of [
+    "agentProfiles",
+    "isNull(agentProfiles.deletedAt)",
+  ]) {
+    if (!routineStore.includes(evidence)) {
+      fail(`routines: deleted-Agent firing guard is missing ${evidence}`);
+    }
+  }
+
+  for (const evidence of [
+    "routineStore.routineForFiring(routineId)",
+    '"HeadlessContinuationCancelled"',
+    '"skipped"',
+  ]) {
+    if (!routineRunner.includes(evidence)) {
+      fail(`routines: running deletion guard is missing ${evidence}`);
+    }
+  }
+
+  if (!workflowRunner.includes('"HeadlessContinuationCancelled"')) {
+    fail("workflows: cancelled headless dispatch is no longer terminal");
+  }
+  if (!headlessTurn.includes('error.name = "HeadlessContinuationCancelled"')) {
+    fail("headless turns: shared cancellation marker is missing");
+  }
+}
+
 function checkDurableAgentWake(): void {
   const tools = read("server/src/plugins/builtin-routines.ts");
   const store = read("server/src/routines/store.ts");
@@ -1858,6 +1903,7 @@ checkDesktopUpdatePath();
 checkDesktopCredentialBoundary();
 checkProviderConnectionTest();
 checkFirstCoworkerHandoff();
+checkAgentDeletionRevokesAutonomy();
 checkDurableAgentWake();
 checkDurableWorkflowState();
 checkVersionSources();
