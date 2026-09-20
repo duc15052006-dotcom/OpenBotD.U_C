@@ -1,6 +1,6 @@
 import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { authFromConfiguration } from "../src/agents/auth-header";
 import {
   AgentNotFoundError,
@@ -27,6 +27,7 @@ import {
   intelligenceChannelMappings,
   routines,
   users,
+  workItems,
   workflowRuns,
   workflowSteps,
 } from "../src/db/schema";
@@ -44,8 +45,14 @@ const createdUserIds: string[] = [];
 const createdAgentIds: string[] = [];
 const createdChannelIds: string[] = [];
 const createdPackageIds: string[] = [];
+const createdWorkItemKeys: string[] = [];
 
 afterEach(async () => {
+  for (const key of createdWorkItemKeys.splice(0)) {
+    await database
+      .delete(workItems)
+      .where(and(eq(workItems.kind, "bot.message"), eq(workItems.key, key)));
+  }
   for (const channelId of createdChannelIds.splice(0)) {
     await database.delete(channels).where(eq(channels.id, channelId));
   }
@@ -813,7 +820,7 @@ describe("agent profile store integration", () => {
     ).rejects.toBeInstanceOf(AgentNotFoundError);
   });
 
-  test("soft delete revokes routines and non-terminal workflows for that Bot", async () => {
+  test("soft delete revokes routines, workflows and handoffs for that Bot", async () => {
     const owner = await createUser();
     const source = await createProfileFixture({ owner });
 
@@ -829,6 +836,60 @@ describe("agent profile store integration", () => {
       enabled: true,
       nextRunAt: new Date("2026-09-21T09:00:00.000Z"),
     });
+
+    const fromHandoffKey = id("handoff-from");
+    const toHandoffKey = id("handoff-to");
+    const unrelatedHandoffKey = id("handoff-unrelated");
+    createdWorkItemKeys.push(
+      fromHandoffKey,
+      toHandoffKey,
+      unrelatedHandoffKey,
+    );
+    await database.insert(workItems).values([
+      {
+        kind: "bot.message",
+        key: fromHandoffKey,
+        payload: {
+          fromBotId: source.agentId,
+          toBotId: "peer-agent",
+          actorId: owner.id,
+          threadId: id("thread-from"),
+          runId: id("run-from"),
+          depth: 1,
+          task: "claimed handoff from the Bot being deleted",
+        },
+        claimedBy: "replica-a",
+        leaseUntil: new Date(Date.now() + 60_000),
+      },
+      {
+        kind: "bot.message",
+        key: toHandoffKey,
+        payload: {
+          fromBotId: "peer-agent",
+          toBotId: source.agentId,
+          actorId: owner.id,
+          threadId: id("thread-to"),
+          runId: id("run-to"),
+          depth: 1,
+          task: "queued handoff to the Bot being deleted",
+        },
+      },
+      {
+        kind: "bot.message",
+        key: unrelatedHandoffKey,
+        payload: {
+          fromBotId: "peer-agent-a",
+          toBotId: "peer-agent-b",
+          actorId: owner.id,
+          threadId: id("thread-unrelated"),
+          runId: id("run-unrelated"),
+          depth: 1,
+          task: "unrelated work must survive",
+        },
+        claimedBy: "replica-b",
+        leaseUntil: new Date(Date.now() + 60_000),
+      },
+    ]);
 
     const workflowId = id("workflow");
     await database.insert(workflowRuns).values({
@@ -869,6 +930,37 @@ describe("agent profile store integration", () => {
       .from(routines)
       .where(eq(routines.id, routineId));
     expect(routine?.enabled).toBe(false);
+
+    const handoffs = await database
+      .select()
+      .from(workItems)
+      .where(
+        and(
+          eq(workItems.kind, "bot.message"),
+          inArray(workItems.key, [
+            fromHandoffKey,
+            toHandoffKey,
+            unrelatedHandoffKey,
+          ]),
+        ),
+      );
+    const fromHandoff = handoffs.find((row) => row.key === fromHandoffKey);
+    const toHandoff = handoffs.find((row) => row.key === toHandoffKey);
+    const unrelatedHandoff = handoffs.find(
+      (row) => row.key === unrelatedHandoffKey,
+    );
+    for (const revoked of [fromHandoff, toHandoff]) {
+      expect(revoked?.finishedAt).toBeInstanceOf(Date);
+      expect(revoked?.claimedBy).toBeNull();
+      expect(revoked?.leaseUntil).toBeNull();
+      expect(revoked?.lastError).toBe(
+        "agent deleted before handoff completed",
+      );
+    }
+    expect(unrelatedHandoff?.finishedAt).toBeNull();
+    expect(unrelatedHandoff?.claimedBy).toBe("replica-b");
+    expect(unrelatedHandoff?.leaseUntil).toBeInstanceOf(Date);
+    expect(unrelatedHandoff?.lastError).toBeNull();
 
     const [workflow] = await database
       .select()
