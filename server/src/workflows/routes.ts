@@ -88,9 +88,9 @@ export function createWorkflowRoutes(
     const id = context.req.param("id").trim();
     if (!id) return context.json({ error: "A workflow id is required." }, 400);
 
-    const body = (await context.req.json().catch(() => null)) as
-      | { action?: unknown }
-      | null;
+    const body = (await context.req.json().catch(() => null)) as {
+      action?: unknown;
+    } | null;
     const action = body?.action;
     if (!["pause", "resume", "cancel"].includes(String(action))) {
       return context.json(
@@ -137,7 +137,10 @@ function runDto(run: WorkflowRun): WorkflowListDto {
   };
 }
 
-function detailDto(plan: WorkflowPlan, assets: WorkflowAsset[]): WorkflowDetailDto {
+function detailDto(
+  plan: WorkflowPlan,
+  assets: WorkflowAsset[],
+): WorkflowDetailDto {
   return {
     workflow: {
       ...runDto(plan),
