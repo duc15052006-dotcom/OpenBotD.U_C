@@ -19,6 +19,9 @@ import {
 } from "../src/db/schema";
 import {
   createWorkflowStore,
+  MAX_CONCURRENT_WORKFLOW_STEPS,
+  MAX_CONCURRENT_WORKFLOW_STEPS_PER_AGENT,
+  WorkflowCapacityError,
   WorkflowNotFoundError,
   WorkflowRefusedError,
 } from "../src/workflows/store";
@@ -364,6 +367,105 @@ describe("durable ready-step dispatch", () => {
     await expect(
       store.startReadyStep(who, plan.id, "script", queued?.readyAt as Date, 0),
     ).rejects.toThrow(/another attempt/);
+  });
+
+  test("caps autonomous running steps per Bot without mutating the refused ready step", async () => {
+    const { owner, agentId, channel } = await setUp();
+    const who = identity(owner, agentId);
+    const plans = [];
+
+    for (let index = 0; index <= MAX_CONCURRENT_WORKFLOW_STEPS_PER_AGENT; index += 1) {
+      plans.push(
+        await store.create({
+          ...planInput(owner, agentId, channel.id),
+          title: `Capacity ${index}`,
+        }),
+      );
+    }
+
+    for (const plan of plans.slice(0, MAX_CONCURRENT_WORKFLOW_STEPS_PER_AGENT)) {
+      const queued = (await store.readySteps(500)).find(
+        (candidate) =>
+          candidate.workflowId === plan.id && candidate.stepKey === "script",
+      );
+      await store.startReadyStep(
+        who,
+        plan.id,
+        "script",
+        queued?.readyAt as Date,
+        0,
+      );
+    }
+
+    const refused = plans[MAX_CONCURRENT_WORKFLOW_STEPS_PER_AGENT]!;
+    const queued = (await store.readySteps(500)).find(
+      (candidate) =>
+        candidate.workflowId === refused.id && candidate.stepKey === "script",
+    );
+    await expect(
+      store.startReadyStep(
+        who,
+        refused.id,
+        "script",
+        queued?.readyAt as Date,
+        0,
+      ),
+    ).rejects.toBeInstanceOf(WorkflowCapacityError);
+
+    const unchanged = await store.get(who, refused.id);
+    expect(unchanged?.steps[0]?.status).toBe("ready");
+    expect(unchanged?.steps[0]?.attempts).toBe(0);
+  });
+
+  test("caps autonomous workflow steps across Bots in the deployment", async () => {
+    const owner = await createUser();
+    const agentIds = [];
+    for (let index = 0; index < 6; index += 1) {
+      agentIds.push(await createAgent(owner, `Capacity Bot ${index}`));
+    }
+    const channel = await createChannel(owner, agentIds);
+    let started = 0;
+
+    for (const agentId of agentIds.slice(0, 5)) {
+      for (let index = 0; index < MAX_CONCURRENT_WORKFLOW_STEPS_PER_AGENT; index += 1) {
+        const plan = await store.create({
+          ...planInput(owner, agentId, channel.id),
+          title: `Deployment capacity ${started}`,
+        });
+        const queued = (await store.readySteps(500)).find(
+          (candidate) =>
+            candidate.workflowId === plan.id && candidate.stepKey === "script",
+        );
+        await store.startReadyStep(
+          identity(owner, agentId),
+          plan.id,
+          "script",
+          queued?.readyAt as Date,
+          0,
+        );
+        started += 1;
+      }
+    }
+    expect(started).toBe(MAX_CONCURRENT_WORKFLOW_STEPS);
+
+    const extraAgent = agentIds[5]!;
+    const extra = await store.create({
+      ...planInput(owner, extraAgent, channel.id),
+      title: "Deployment capacity overflow",
+    });
+    const queued = (await store.readySteps(500)).find(
+      (candidate) =>
+        candidate.workflowId === extra.id && candidate.stepKey === "script",
+    );
+    await expect(
+      store.startReadyStep(
+        identity(owner, extraAgent),
+        extra.id,
+        "script",
+        queued?.readyAt as Date,
+        0,
+      ),
+    ).rejects.toBeInstanceOf(WorkflowCapacityError);
   });
 
   test("pause and resume gives still-ready work a fresh deterministic key", async () => {
