@@ -419,12 +419,7 @@ export function createWorkflowStore(database: Database): WorkflowStore {
       })
       .from(workflowSteps)
       .innerJoin(workflowRuns, eq(workflowRuns.id, workflowSteps.workflowId))
-      .where(
-        and(
-          eq(workflowRuns.status, "active"),
-          eq(workflowSteps.status, "running"),
-        ),
-      );
+      .where(eq(workflowSteps.status, "running"));
 
     const deploymentRunning = counts?.deployment ?? 0;
     const agentRunning = counts?.agent ?? 0;
