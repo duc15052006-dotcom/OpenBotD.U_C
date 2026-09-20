@@ -1705,7 +1705,7 @@ function checkDurableWorkflowState(): void {
   }
   for (const evidence of [
     "continuationGuard",
-    "WorkflowContinuationCancelled",
+    "HeadlessContinuationCancelled",
     "stopTurn();",
   ]) {
     if (!headlessTurn.includes(evidence)) {
