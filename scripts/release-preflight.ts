@@ -166,7 +166,9 @@ function checkDesktopNativeBunExtraction(): void {
     }
   }
   if (install.includes('crate::quiet::command("powershell")')) {
-    fail("desktop: Bun extraction regressed to an external PowerShell dependency");
+    fail(
+      "desktop: Bun extraction regressed to an external PowerShell dependency",
+    );
   }
 }
 
