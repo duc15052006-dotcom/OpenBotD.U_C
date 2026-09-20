@@ -292,84 +292,54 @@ fn install_bun_with(
     }
     let archive = fetch_verified(download, into)?;
     let staged = into.join(format!("bun.download{}", std::env::consts::EXE_SUFFIX));
-    extract(&archive, &staged)?;
-    verify(&staged)?;
-    std::fs::rename(&staged, &binary).map_err(|error| unwritable(&binary, &error.to_string()))?;
+    let result = extract(&archive, &staged)
+        .and_then(|()| verify(&staged))
+        .and_then(|()| {
+            std::fs::rename(&staged, &binary)
+                .map_err(|error| unwritable(&binary, &error.to_string()))
+        });
+    if let Err(mut problem) = result {
+        if let Err(error) = std::fs::remove_file(&staged) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                problem.detail = Some(format!(
+                    "{}; could not remove incomplete runtime {}: {error}",
+                    problem.detail.as_deref().unwrap_or(&problem.said),
+                    staged.display(),
+                ));
+            }
+        }
+        return Err(problem);
+    }
     Ok(binary)
 }
 
-#[cfg(windows)]
 fn extract_bun(archive: &Path, target: &Path, entry: &str) -> Result<(), Problem> {
-    // Extract only the expected executable. Paths travel as environment values, never as
-    // PowerShell source, so spaces and quotes in a profile directory cannot change the command.
-    let script = r#"$ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-$zip = [IO.Compression.ZipFile]::OpenRead($env:OPENBOT_BUN_ARCHIVE)
-try {
-    $entry = $zip.GetEntry($env:OPENBOT_BUN_ENTRY)
-    if ($null -eq $entry) { throw 'The Bun archive does not contain the expected executable.' }
-    [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $env:OPENBOT_BUN_TARGET, $true)
-} finally {
-    $zip.Dispose()
-}"#;
-    let output = crate::quiet::command("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", script])
-        .env("OPENBOT_BUN_ARCHIVE", archive)
-        .env("OPENBOT_BUN_TARGET", target)
-        .env("OPENBOT_BUN_ENTRY", entry)
-        .output()
-        .map_err(|error| {
-            Problem::with(
-                "OpenBot could not unpack its app runtime. Try again.",
-                error.to_string(),
-            )
-        })?;
-    if !output.status.success() {
-        return Err(Problem::with(
+    let unpack_error = |error: &dyn std::fmt::Display| {
+        Problem::with(
             "OpenBot could not unpack its app runtime. Try again.",
-            format!(
-                "PowerShell {}: {}{}",
-                output.status,
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            ),
-        ));
-    }
-    Ok(())
-}
+            format!("{} entry {entry}: {error}", archive.display()),
+        )
+    };
 
-#[cfg(target_os = "macos")]
-fn extract_bun(archive: &Path, target: &Path, entry: &str) -> Result<(), Problem> {
-    use std::os::unix::fs::PermissionsExt;
-
-    // unzip ships with macOS itself. Use its absolute path and extract only the expected file;
-    // neither Xcode's command-line tools, Homebrew, nor a configured shell PATH is needed.
-    let file =
+    /*
+     * Read only the expected executable from the verified archive and copy it to our own staging
+     * path. Archive paths never choose output locations, so traversal entries cannot escape the
+     * installation directory, and fresh Windows installs no longer depend on PowerShell.
+     */
+    let file = std::fs::File::open(archive).map_err(|error| unpack_error(&error))?;
+    let mut zip = zip::ZipArchive::new(file).map_err(|error| unpack_error(&error))?;
+    let mut executable = zip.by_name(entry).map_err(|error| unpack_error(&error))?;
+    let mut file =
         std::fs::File::create(target).map_err(|error| unwritable(target, &error.to_string()))?;
-    let output = crate::quiet::command("/usr/bin/unzip")
-        .arg("-p")
-        .arg(archive)
-        .arg(entry)
-        .stdout(file)
-        .output()
-        .map_err(|error| {
-            Problem::with(
-                "OpenBot could not unpack its app runtime. Try again.",
-                error.to_string(),
-            )
-        })?;
-    if !output.status.success() {
-        return Err(Problem::with(
-            "OpenBot could not unpack its app runtime. Try again.",
-            format!(
-                "unzip {}: {}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
-            ),
-        ));
+    std::io::copy(&mut executable, &mut file).map_err(|error| unpack_error(&error))?;
+    drop(file);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(target, std::fs::Permissions::from_mode(0o755))
+            .map_err(|error| unwritable(target, &error.to_string()))?;
     }
-    std::fs::set_permissions(target, std::fs::Permissions::from_mode(0o755))
-        .map_err(|error| unwritable(target, &error.to_string()))?;
     Ok(())
 }
 
