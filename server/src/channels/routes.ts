@@ -744,6 +744,42 @@ export function createChannelStore(
             .set({ deletedAt: new Date(), updatedAt: new Date() })
             .where(and(eq(channels.id, channelId), isNull(channels.deletedAt)));
 
+          /*
+           * Handoffs are unattended work owned by the conversation that asked.
+           *
+           * Soft-deleting the channel therefore revokes every still-live forward, relay and failure
+           * notice whose payload points at one of this channel's user-scoped threads. Marking the
+           * queue rows finished in the SAME transaction means another replica cannot claim queued
+           * work after the delete commits, and a replica already holding one loses its next renew.
+           * The delivery heartbeat separately observes the same durable channel state and stops the
+           * exact Intelligence run, which closes the already-running side of the race.
+           */
+          const mappedThreads = await transaction
+            .select({ threadId: intelligenceChannelMappings.threadId })
+            .from(intelligenceChannelMappings)
+            .where(eq(intelligenceChannelMappings.channelId, channelId));
+          if (mappedThreads.length > 0) {
+            await transaction
+              .update(workItems)
+              .set({
+                finishedAt: sql`now()`,
+                claimedBy: null,
+                leaseUntil: null,
+                lastError: "channel deleted before handoff completed",
+                updatedAt: sql`now()`,
+              })
+              .where(
+                and(
+                  eq(workItems.kind, HANDOFF_KIND),
+                  isNull(workItems.finishedAt),
+                  inArray(
+                    sql<string>`${workItems.payload}->>'threadId'`,
+                    mappedThreads.map((mapping) => mapping.threadId),
+                  ),
+                ),
+              );
+          }
+
           // Read on this transaction, so the members told are the ones the channel had when it was
           // hidden. Soft leaves the membership rows in place, so this reads the same list a repeat
           // call would.
