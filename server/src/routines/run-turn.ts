@@ -256,13 +256,8 @@ export function createTurnRunner(options: {
   } = options;
 
   return async (turnInput) => {
-    const {
-      ownerUserId,
-      agentId,
-      threadId,
-      instruction,
-      continuationGuard,
-    } = turnInput;
+    const { ownerUserId, agentId, threadId, instruction, continuationGuard } =
+      turnInput;
     const source =
       "workflowId" in turnInput && turnInput.workflowId
         ? "workflow"
