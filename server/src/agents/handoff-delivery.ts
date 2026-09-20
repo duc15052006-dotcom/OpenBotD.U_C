@@ -367,7 +367,11 @@ export function createHandoffDelivery(options: {
           void (async () => {
             try {
               await lock.renew({ threadId: where.threadId, runId });
-              if (continuationGuard && !(await continuationGuard(work))) {
+              if (heartbeat === undefined) return;
+              if (continuationGuard) {
+                const mayContinue = await continuationGuard(work);
+                if (heartbeat === undefined) return;
+                if (mayContinue) return;
                 const error = new Error(
                   "The handoff was cancelled while the addressed Bot was running.",
                 );
