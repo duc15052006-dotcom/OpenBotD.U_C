@@ -293,7 +293,9 @@ function terminal(status: WorkflowStatus): boolean {
 export type WorkflowStore = {
   create(input: WorkflowInput): Promise<WorkflowPlan>;
   get(identity: WorkflowIdentity, id: string): Promise<WorkflowPlan | null>;
+  getForOwner(ownerUserId: string, id: string): Promise<WorkflowPlan | null>;
   listFor(identity: WorkflowIdentity): Promise<WorkflowRun[]>;
+  listForOwner(ownerUserId: string): Promise<WorkflowRun[]>;
   pause(identity: WorkflowIdentity, id: string): Promise<WorkflowPlan>;
   resume(identity: WorkflowIdentity, id: string): Promise<WorkflowPlan>;
   cancel(identity: WorkflowIdentity, id: string): Promise<WorkflowPlan>;
@@ -600,6 +602,29 @@ export function createWorkflowStore(database: Database): WorkflowStore {
     return { ...toRun(run), steps: steps.map(toStep) };
   }
 
+  async function planForOwner(
+    ownerUserId: string,
+    id: string,
+  ): Promise<WorkflowPlan | null> {
+    const [run] = await database
+      .select()
+      .from(workflowRuns)
+      .where(
+        and(
+          eq(workflowRuns.id, id),
+          eq(workflowRuns.ownerUserId, ownerUserId),
+        ),
+      )
+      .limit(1);
+    if (!run) return null;
+    const steps = await database
+      .select()
+      .from(workflowSteps)
+      .where(eq(workflowSteps.workflowId, id))
+      .orderBy(asc(workflowSteps.position), asc(workflowSteps.id));
+    return { ...toRun(run), steps: steps.map(toStep) };
+  }
+
   async function transitionRun(
     identity: WorkflowIdentity,
     id: string,
@@ -764,6 +789,7 @@ export function createWorkflowStore(database: Database): WorkflowStore {
     },
 
     get: planFor,
+    getForOwner: planForOwner,
 
     async listFor(identity) {
       const rows = await database
@@ -775,6 +801,15 @@ export function createWorkflowStore(database: Database): WorkflowStore {
             eq(workflowRuns.agentId, identity.agentId),
           ),
         )
+        .orderBy(asc(workflowRuns.createdAt), asc(workflowRuns.id));
+      return rows.map(toRun);
+    },
+
+    async listForOwner(ownerUserId) {
+      const rows = await database
+        .select()
+        .from(workflowRuns)
+        .where(eq(workflowRuns.ownerUserId, ownerUserId))
         .orderBy(asc(workflowRuns.createdAt), asc(workflowRuns.id));
       return rows.map(toRun);
     },
