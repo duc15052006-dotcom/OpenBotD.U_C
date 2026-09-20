@@ -5,6 +5,7 @@ import {
   offerReadyWorkflowSteps,
   WORKFLOW_READY_DISPATCH_KIND,
 } from "../src/workflows/ready";
+import { WorkflowCapacityError } from "../src/workflows/store";
 
 function queueStub(overrides: Partial<WorkQueue> = {}): WorkQueue {
   return {
@@ -144,6 +145,41 @@ describe("workflow ready-step dispatch", () => {
     });
 
     expect(renewals).toBeGreaterThan(1);
+  });
+
+  test("defers capacity-blocked ready work without spending a retry", async () => {
+    let deferred = 0;
+    let released = 0;
+    const report = await dispatchClaimedReadyWorkflowSteps({
+      owner: "worker-1",
+      retryDelayMs: 9_000,
+      queue: queueStub({
+        claim: async () => [item(4)],
+        defer: async (input) => {
+          deferred += 1;
+          expect(input.delayMs).toBe(9_000);
+          return true;
+        },
+        release: async () => {
+          released += 1;
+          return true;
+        },
+      }),
+      store: {
+        readySteps: async () => [],
+        startReadyStep: async () => {
+          throw new WorkflowCapacityError("workflow capacity is full");
+        },
+        failStep: async () => {
+          throw new Error("not used");
+        },
+      },
+    });
+
+    expect(deferred).toBe(1);
+    expect(released).toBe(0);
+    expect(report.started).toEqual([]);
+    expect(report.skipped[0]?.reason).toContain("capacity");
   });
 
   test("releases a transient dispatch failure so the exact CAS can be retried", async () => {
