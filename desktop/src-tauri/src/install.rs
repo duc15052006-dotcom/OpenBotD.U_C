@@ -825,20 +825,18 @@ mod tests {
         (dir, download)
     }
 
-    #[cfg(target_os = "macos")]
-    fn macos_bun_zip_fixture(name: &str) -> (PathBuf, Download) {
+    fn bun_zip_fixture(name: &str) -> (PathBuf, Download) {
         use base64::Engine as _;
 
-        // A real ZIP containing only bun-fixture/bun: a /bin/sh script printing 1.3.14.
-        // Fixed bytes keep both digest verification and extraction in this offline regression.
+        // Deflated ZIP with the expected Bun entry and a traversal entry that must never be written.
         let bytes = base64::engine::general_purpose::STANDARD.decode(
-            "UEsDBBQAAAAAAAAAIVwlsF+1HAAAABwAAAAPAAAAYnVuLWZpeHR1cmUvYnVuIyEvYmluL3NoCnByaW50ZiAnMS4zLjE0XG4nClBLAQIUAxQAAAAAAAAAIVwlsF+1HAAAABwAAAAPAAAAAAAAAAAAAACAAQAAAABidW4tZml4dHVyZS9idW5QSwUGAAAAAAEAAQA9AAAASQAAAAAA",
+            "UEsDBBQAAAAIAAAAIVwlsF+1HgAAABwAAAAPAAAAYnVuLWZpeHR1cmUvYnVuU1bUT8rM0y/O4CooyswrSVNQN9Qz1jM0iclT5wIAUEsDBBQAAAAIAAAAIVw6VdAHFwAAABUAAAANAAAALi4vdW5leHBlY3RlZMstLS5RyMsvUUhKVUitKClKTC5JTQEAUEsBAhQDFAAAAAgAAAAhXCWwX7UeAAAAHAAAAA8AAAAAAAAAAAAAAIABAAAAAGJ1bi1maXh0dXJlL2J1blBLAQIUAxQAAAAIAAAAIVw6VdAHFwAAABUAAAANAAAAAAAAAAAAAACAAUsAAAAuLi91bmV4cGVjdGVkUEsFBgAAAAACAAIAeAAAAI0AAAAAAA==",
         ).unwrap();
         let root = temp_root(name);
         std::fs::create_dir_all(&root).unwrap();
         let download = Download {
             url: "http://127.0.0.1:1/never-reached".into(),
-            sha256: "15be25bd806770f73afe7d2bab41ae26b2a380645e3100c60f391dc97ac0126e",
+            sha256: "afeced1e41e23b9a5a7c63fb917f68ee663a3735f02fe717cf859be06b1e29b6",
             file: "bun-fixture.zip",
         };
         std::fs::write(root.join(download.file), bytes).unwrap();
@@ -870,7 +868,7 @@ mod tests {
             return;
         }
         std::env::set_var("PATH", "/openbot-no-developer-tools");
-        let (root, download) = macos_bun_zip_fixture("bun Mac's fresh account");
+        let (root, download) = bun_zip_fixture("bun Mac's fresh account");
         let binary = ensure_bun_with(None, || {
             install_bun_with(
                 &root,
@@ -889,7 +887,7 @@ mod tests {
     #[test]
     #[cfg(target_os = "macos")]
     fn macos_missing_bun_archive_entry_is_not_published_or_run() {
-        let (root, download) = macos_bun_zip_fixture("bun Mac missing entry");
+        let (root, download) = bun_zip_fixture("bun Mac missing entry");
         let failure = install_bun_with(
             &root,
             &download,
