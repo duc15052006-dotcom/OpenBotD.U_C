@@ -384,6 +384,21 @@ describe("one-time wake lifecycle", () => {
     ).rejects.toThrow(/exact time/);
   });
 
+  test("a routine is no longer fireable after its Agent is soft deleted", async () => {
+    const { owner, agentId, channel } = await setUp();
+    const routine = await store.create({
+      ownerUserId: owner.id,
+      agentId,
+      channelId: channel.id,
+      instruction: "Do not survive Bot deletion.",
+      cron: DAILY,
+    });
+
+    expect(await store.routineForFiring(routine.id)).not.toBeNull();
+    await profileStore.softDelete(owner, agentId);
+    expect(await store.routineForFiring(routine.id)).toBeNull();
+  });
+
   test("consume is compare-and-set and records the exact committed wake", async () => {
     const { owner, agentId, channel } = await setUp();
     const runAt = new Date(Date.now() + 60 * 60_000);
