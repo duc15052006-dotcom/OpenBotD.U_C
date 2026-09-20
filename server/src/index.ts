@@ -1524,6 +1524,8 @@ const app = createApp(
   agentModelConnections,
   agentInstructionsStore,
   agentKnowledgeStore,
+  // Owner-scoped read/control surface for the durable workflow dashboard.
+  workflowStore,
 );
 
 /**
