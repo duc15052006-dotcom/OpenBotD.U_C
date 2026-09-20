@@ -12,11 +12,11 @@
  * Idleness is read from the audit trail, which is a record of what a Bot did rather than a question
  * put to the thing that did it.
  */
-import { and, inArray, like, ne, sql } from "drizzle-orm";
+import { and, inArray, isNotNull, like, ne, sql } from "drizzle-orm";
 import { recordAuditEvent, type AuditStore } from "../audit";
 import type { ComputerProvider } from "../computer/provider";
 import type { Database } from "../db/client";
-import { auditEvents } from "../db/schema";
+import { agentProfiles, auditEvents } from "../db/schema";
 import { DEFAULT_MAX_ATTEMPTS, type WorkQueue } from "./queue";
 
 export const CULL_KIND = "computer.suspend";
@@ -82,6 +82,23 @@ async function lastActedAt(
   );
 }
 
+async function deletedAgentIds(
+  database: Database,
+  botIds: string[],
+): Promise<Set<string>> {
+  if (botIds.length === 0) return new Set();
+  const rows = await database
+    .select({ botId: agentProfiles.agentId })
+    .from(agentProfiles)
+    .where(
+      and(
+        inArray(agentProfiles.agentId, botIds),
+        isNotNull(agentProfiles.deletedAt),
+      ),
+    );
+  return new Set(rows.map((row) => row.botId));
+}
+
 /**
  * Offer every idle computer for suspension.
  *
@@ -95,13 +112,23 @@ export async function offerIdleComputers(
   const now = options.now?.() ?? new Date();
   const computers = await options.provider.list();
   const running = computers.filter((computer) => computer.status === "running");
-  const used = await lastActedAt(
-    options.database,
-    running.map((computer) => computer.botId),
-  );
+  const runningIds = running.map((computer) => computer.botId);
+  const [used, deleted] = await Promise.all([
+    lastActedAt(options.database, runningIds),
+    deletedAgentIds(options.database, runningIds),
+  ]);
 
   const offered: string[] = [];
   for (const computer of running) {
+    if (deleted.has(computer.botId)) {
+      await options.queue.offer({
+        kind: CULL_KIND,
+        key: `${computer.botId}:agent-deleted`,
+        payload: { botId: computer.botId, reason: "agent_deleted" },
+      });
+      offered.push(computer.botId);
+      continue;
+    }
     const since =
       used.get(computer.botId) ??
       (computer.startedAt ? new Date(computer.startedAt) : undefined);
@@ -174,6 +201,44 @@ export async function suspendClaimedComputers(
       continue;
     }
     try {
+      const deletionWork = item.payload.reason === "agent_deleted";
+      if (deletionWork) {
+        const stillDeleted = (
+          await deletedAgentIds(options.database, [botId])
+        ).has(botId);
+        if (!stillDeleted) {
+          await options.queue.finish({
+            kind: CULL_KIND,
+            key: item.key,
+            owner: options.owner,
+          });
+          report.skipped.push({
+            botId,
+            reason: "the Agent is no longer deleted",
+          });
+          continue;
+        }
+
+        await options.provider.stop(botId);
+        await recordAuditEvent(options.auditStore, {
+          eventType: "computer.stopped",
+          targetType: "computer",
+          targetId: botId,
+          initiator: { kind: "deployment" },
+          payload: {
+            bot: botId,
+            reason: "agent_deleted",
+          },
+        });
+        await options.queue.finish({
+          kind: CULL_KIND,
+          key: item.key,
+          owner: options.owner,
+        });
+        report.suspended.push(botId);
+        continue;
+      }
+
       const now = options.now?.() ?? new Date();
       const used = await lastActedAt(options.database, [botId]);
       const since = used.get(botId);
