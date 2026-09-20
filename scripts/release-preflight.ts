@@ -147,6 +147,31 @@ function checkDesktopBoundary(): void {
   }
 }
 
+function checkDesktopNativeBunExtraction(): void {
+  const cargo = read("desktop/src-tauri/Cargo.toml");
+  const install = read("desktop/src-tauri/src/install.rs");
+
+  if (!cargo.includes('zip = { version = "2.4.2"')) {
+    fail("desktop: native Bun ZIP dependency is missing");
+  }
+  for (const evidence of [
+    "zip::ZipArchive::new",
+    "zip.by_name(entry)",
+    "std::io::copy(&mut executable, &mut file)",
+    "could not remove incomplete runtime",
+    "bun_extraction_only_writes_the_expected_file",
+  ]) {
+    if (!install.includes(evidence)) {
+      fail(`desktop: native Bun extraction boundary is missing ${evidence}`);
+    }
+  }
+  if (install.includes('crate::quiet::command("powershell")')) {
+    fail(
+      "desktop: Bun extraction regressed to an external PowerShell dependency",
+    );
+  }
+}
+
 function checkComputerSandboxBoundary(): void {
   const compose = read("docker-compose.yml");
   const supervisor = read("supervisor/src/docker.ts");
@@ -1947,6 +1972,7 @@ function checkVersionSources(): void {
 }
 
 checkDesktopBoundary();
+checkDesktopNativeBunExtraction();
 checkComputerSandboxBoundary();
 checkInteractiveComputerControls();
 checkReleaseWiring();
