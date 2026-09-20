@@ -1751,7 +1751,7 @@ function checkDurableWorkflowState(): void {
   for (const evidence of [
     '"/api/workflows"',
     '"/api/workflows/"',
-    'workflowKeys.detail',
+    "workflowKeys.detail",
   ]) {
     if (!dashboardQueries.includes(evidence)) {
       fail(`workflows: dashboard query contract is missing ${evidence}`);
