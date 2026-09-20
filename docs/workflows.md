@@ -153,7 +153,7 @@ serialized transaction. Completed or previously failed steps remain as evidence 
 
 ## Workflow dashboard
 
-The signed-in person can inspect their own durable workflows at \`/workflows\`. The dashboard shows
+The signed-in person can inspect their own durable workflows at `/workflows`. The dashboard shows
 workflow status, the coworker carrying it out, durable step state, attempts, provider/wait metadata,
 failure reasons and the per-step asset ledger. It can pause, resume or cancel a non-terminal
 workflow; creation and structural editing stay conversational through the Agent so there is still one
