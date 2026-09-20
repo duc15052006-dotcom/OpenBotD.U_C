@@ -1446,6 +1446,10 @@ function checkDurableAgentWake(): void {
     "async createOneShot(",
     "async consumeOneShot(",
     'scheduleKind === "once"',
+    "MAX_CONCURRENT_ROUTINE_RUNS = 20",
+    "MAX_CONCURRENT_ROUTINE_RUNS_PER_AGENT = 4",
+    "insertRunWithCapacity(",
+    "routine-run-capacity",
     "databaseNow(transaction)",
     "requireDatabaseFuture(",
     "${" + "at} > now()",
@@ -1471,6 +1475,7 @@ function checkDurableAgentWake(): void {
     'routine.scheduleKind === "once" || lateBy <= graceMs',
     "consumeOneShot(",
     "scheduleKind: routine.scheduleKind",
+    "insertRunWithCapacity(routineId)",
   ]) {
     if (!sweep.includes(evidence)) {
       fail(`routines: one-shot wake/recovery invariant is missing ${evidence}`);

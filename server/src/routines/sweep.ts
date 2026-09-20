@@ -454,7 +454,22 @@ export async function dispatchClaimedRoutines(
        * DISPATCH failures only, and a turn that failed is final for this firing — the fatigue rule
        * owns that, not this loop.
        */
-      const { runId } = await options.routineStore.insertRun(routineId);
+      const admission =
+        await options.routineStore.insertRunWithCapacity(routineId);
+      if (admission.skippedReason !== null) {
+        await finishOrSay(
+          options,
+          item.key,
+          routineId,
+          admission.skippedReason,
+        );
+        report.skipped.push({
+          routineId,
+          reason: admission.skippedReason,
+        });
+        continue;
+      }
+      const { runId } = admission;
       /*
        * A dispatch that throws leaves the row this attempt opened with no status, AND NOTHING HERE
        * CLOSES IT — the reaper above does, once the row is older than any turn could still be

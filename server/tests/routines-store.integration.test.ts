@@ -17,6 +17,8 @@ import {
 } from "../src/db/schema";
 import {
   createRoutineStore,
+  MAX_CONCURRENT_ROUTINE_RUNS,
+  MAX_CONCURRENT_ROUTINE_RUNS_PER_AGENT,
   MAX_ENABLED_ROUTINES,
   MAX_INSTRUCTION_CODE_POINTS,
   MAX_RUN_ERROR,
@@ -154,6 +156,86 @@ describe("owner-guarding", () => {
     });
 
     expect(await store.listFor(stranger.id)).toEqual([]);
+  });
+});
+
+describe("unattended-run concurrency caps", () => {
+  test("records a skipped firing when one Bot already has its run capacity in flight", async () => {
+    const { owner, agentId, channel } = await setUp();
+    const routine = await store.create({
+      ownerUserId: owner.id,
+      agentId,
+      channelId: channel.id,
+      instruction: "Check the render queue.",
+      cron: DAILY,
+    });
+
+    for (
+      let index = 0;
+      index < MAX_CONCURRENT_ROUTINE_RUNS_PER_AGENT;
+      index += 1
+    ) {
+      await store.insertRun(routine.id);
+    }
+
+    const admission = await store.insertRunWithCapacity(routine.id);
+    expect(admission.skippedReason).toContain("this Bot already has");
+
+    const [row] = await database
+      .select()
+      .from(routineRuns)
+      .where(eq(routineRuns.id, admission.runId));
+    expect(row?.status).toBe("skipped");
+    expect(row?.finishedAt).toBeInstanceOf(Date);
+    expect(row?.error).toContain(String(MAX_CONCURRENT_ROUTINE_RUNS_PER_AGENT));
+  });
+
+  test("serializes the deployment cap so concurrent openings cannot both cross it", async () => {
+    const owner = await createUser();
+    const agentIds: string[] = [];
+    for (let index = 0; index < 7; index += 1) {
+      agentIds.push(await createAgent(owner, `Worker ${index + 1}`));
+    }
+    const channel = await createChannel(owner, agentIds);
+    const routineIds: string[] = [];
+    for (const [index, agentId] of agentIds.entries()) {
+      const routine = await store.create({
+        ownerUserId: owner.id,
+        agentId,
+        channelId: channel.id,
+        instruction: `Run bounded task ${index + 1}.`,
+        cron: DAILY,
+      });
+      routineIds.push(routine.id);
+    }
+
+    // Seed one below the deployment ceiling without violating the per-Bot ceiling.
+    let seeded = 0;
+    for (const routineId of routineIds.slice(0, 5)) {
+      const wanted = Math.min(
+        MAX_CONCURRENT_ROUTINE_RUNS_PER_AGENT,
+        MAX_CONCURRENT_ROUTINE_RUNS - 1 - seeded,
+      );
+      for (let index = 0; index < wanted; index += 1) {
+        await store.insertRun(routineId);
+        seeded += 1;
+      }
+      if (seeded === MAX_CONCURRENT_ROUTINE_RUNS - 1) break;
+    }
+    expect(seeded).toBe(MAX_CONCURRENT_ROUTINE_RUNS - 1);
+
+    const contenders = routineIds.slice(5, 7);
+    const admissions = await Promise.all(
+      contenders.map((routineId) => store.insertRunWithCapacity(routineId)),
+    );
+    expect(
+      admissions.filter((admission) => admission.skippedReason === null),
+    ).toHaveLength(1);
+    expect(
+      admissions.filter((admission) =>
+        admission.skippedReason?.includes("deployment already has"),
+      ),
+    ).toHaveLength(1);
   });
 });
 
