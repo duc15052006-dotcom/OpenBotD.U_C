@@ -840,11 +840,7 @@ describe("agent profile store integration", () => {
     const fromHandoffKey = id("handoff-from");
     const toHandoffKey = id("handoff-to");
     const unrelatedHandoffKey = id("handoff-unrelated");
-    createdWorkItemKeys.push(
-      fromHandoffKey,
-      toHandoffKey,
-      unrelatedHandoffKey,
-    );
+    createdWorkItemKeys.push(fromHandoffKey, toHandoffKey, unrelatedHandoffKey);
     await database.insert(workItems).values([
       {
         kind: "bot.message",
@@ -953,9 +949,7 @@ describe("agent profile store integration", () => {
       expect(revoked?.finishedAt).toBeInstanceOf(Date);
       expect(revoked?.claimedBy).toBeNull();
       expect(revoked?.leaseUntil).toBeNull();
-      expect(revoked?.lastError).toBe(
-        "agent deleted before handoff completed",
-      );
+      expect(revoked?.lastError).toBe("agent deleted before handoff completed");
     }
     expect(unrelatedHandoff?.finishedAt).toBeNull();
     expect(unrelatedHandoff?.claimedBy).toBe("replica-b");
