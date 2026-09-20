@@ -74,6 +74,8 @@ import {
 import { REFUSAL_MARKER, vendorAnswer } from "./plugins/tools";
 import { createRoutineRoutes, type RoutineStore } from "./routines/routes";
 import type { RoutineRunner } from "./routines/runner";
+import { createWorkflowRoutes } from "./workflows/routes";
+import type { WorkflowStore } from "./workflows/store";
 import type { IntentRouter } from "./routing/classify";
 import { createRoutingRoutes } from "./routing/routes";
 import type { PackageStatusReader } from "./tenant-package";
@@ -327,6 +329,8 @@ export function createApp(
   agentInstructions?: AgentInstructionsStore,
   /** Bounded uploaded reference material owned by one Agent. */
   agentKnowledge?: AgentKnowledgeStore,
+  /** A person's durable multi-step workflows, exposed read/control-only to their dashboard. */
+  workflowStore?: WorkflowStore,
 ) {
   const app = new Hono<{ Variables: AppVariables }>();
 
@@ -1273,6 +1277,13 @@ export function createApp(
 
   if (routineStore) {
     app.route("/api/routines", createRoutineRoutes(routineStore, requireUser));
+  }
+
+  if (workflowStore) {
+    app.route(
+      "/api/workflows",
+      createWorkflowRoutes(workflowStore, requireUser),
+    );
   }
 
   if (componentStore) {

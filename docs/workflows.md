@@ -151,6 +151,19 @@ newer or manually-started attempt.
 Cancel marks the run terminal and cancels every still-blocked, ready, running or waiting step in one
 serialized transaction. Completed or previously failed steps remain as evidence of what happened.
 
+## Workflow dashboard
+
+The signed-in person can inspect their own durable workflows at `/workflows`. The dashboard shows
+workflow status, the coworker carrying it out, durable step state, attempts, provider/wait metadata,
+failure reasons and the per-step asset ledger. It can pause, resume or cancel a non-terminal
+workflow; creation and structural editing stay conversational through the Agent so there is still one
+orchestration path rather than a second browser-side workflow builder.
+
+The browser never supplies an owner id or Bot id for dashboard reads or controls. The API derives the
+owner from the authenticated session, resolves the workflow by that owner, and then uses the Bot id
+persisted on the workflow for mutations and asset reads. A workflow belonging to another person is
+therefore indistinguishable from one that does not exist.
+
 ## Security invariants
 
 Workflow state never stores API keys, browser passwords or host credentials. It does not widen Browser,
