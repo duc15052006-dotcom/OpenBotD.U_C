@@ -16,9 +16,7 @@ type WorkflowReadyStore = Pick<
   WorkflowStore,
   "readySteps" | "startReadyStep" | "failStep"
 > &
-  Partial<
-    Pick<WorkflowStore, "failReadyStep" | "failAutonomousRunningStep">
-  >;
+  Partial<Pick<WorkflowStore, "failReadyStep" | "failAutonomousRunningStep">>;
 
 export type WorkflowReadyOptions = {
   store: WorkflowReadyStore;
@@ -398,7 +396,9 @@ export async function reconcileExhaustedReadyWorkflowSteps(
       report.skipped.push({ workflowId, stepKey, reason: failure });
     } catch (error) {
       const reason =
-        error instanceof Error ? error.message : "exhausted ready cleanup failed";
+        error instanceof Error
+          ? error.message
+          : "exhausted ready cleanup failed";
       if (error instanceof WorkflowRefusedError) {
         await options.queue.finish({
           kind: WORKFLOW_READY_DISPATCH_KIND,
