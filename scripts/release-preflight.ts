@@ -1424,6 +1424,10 @@ function checkAgentDeletionRevokesAutonomy(): void {
 
   for (const evidence of [
     "eq(routines.agentId, id)",
+    'eq(workItems.kind, "bot.message")',
+    "workItems.payload}->>'fromBotId'",
+    "workItems.payload}->>'toBotId'",
+    "agent deleted before handoff completed",
     'inArray(workflowRuns.status, ["active", "paused"])',
     "inArray(workflowSteps.status, [",
     'status: "cancelled"',
