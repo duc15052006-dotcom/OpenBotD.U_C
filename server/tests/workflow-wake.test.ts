@@ -360,7 +360,7 @@ describe("workflow wake bridge", () => {
 
     expect(finished).toBe(1);
     expect(failed).toHaveLength(1);
-    expect((failed[0]?.[3] as Date).toISOString()).toBe(
+    expect((failed[0]![3] as Date).toISOString()).toBe(
       "2026-09-20T07:30:00.000Z",
     );
     expect(failed[0]?.[4]).toBe(3);
