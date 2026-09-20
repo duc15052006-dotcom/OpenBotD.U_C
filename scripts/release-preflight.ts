@@ -1537,6 +1537,54 @@ function checkHandoffRevocation(): void {
   }
 }
 
+function checkProviderRuntimeCompatibility(): void {
+  const copilot = read("server/src/copilot.ts");
+  const credentials = read("server/src/credentials.ts");
+  const routing = read("server/src/routing/model.ts");
+  const mastra = read("agent-mastra/src/mastra/index.ts");
+  const ag2 = read("agent-ag2/src/main.py");
+  const microsoft = read("agent-microsoft/src/main.py");
+  const pydantic = read("agent-pydantic-ai/src/main.py");
+  const langroid = read("agent-langroid/src/main.py");
+  const agno = read("agent-agno/src/main.py");
+
+  for (const evidence of [
+    'provider: "openai" | "anthropic"',
+    "normalizeModelBaseUrls",
+    'selectedProvider === "anthropic"',
+  ]) {
+    if (!copilot.includes(evidence)) {
+      fail(`models: deployment provider selection is missing ${evidence}`);
+    }
+  }
+  for (const evidence of ["ANTHROPIC_API_KEY", 'provider === "anthropic"']) {
+    if (!credentials.includes(evidence)) {
+      fail(`models: provider-scoped credential resolution is missing ${evidence}`);
+    }
+  }
+  for (const evidence of [
+    "anthropicMessagesUrl",
+    '"anthropic-version": "2023-06-01"',
+    '"x-api-key": key',
+  ]) {
+    if (!routing.includes(evidence)) {
+      fail(`models: Anthropic selector transport is missing ${evidence}`);
+    }
+  }
+  for (const [name, source, evidence] of [
+    ["mastra", mastra, "createAnthropic"],
+    ["ag2", ag2, "AnthropicConfig"],
+    ["microsoft", microsoft, "AnthropicClient"],
+    ["pydantic", pydantic, 'model.startswith(f"{provider}:")'],
+    ["langroid", langroid, 'os.environ.pop("OPENAI_API_KEY", None)'],
+    ["agno", agno, '"drop_params": True'],
+  ] as const) {
+    if (!source.includes(evidence)) {
+      fail(`models: ${name} provider compatibility is missing ${evidence}`);
+    }
+  }
+}
+
 function checkDurableAgentWake(): void {
   const tools = read("server/src/plugins/builtin-routines.ts");
   const store = read("server/src/routines/store.ts");
@@ -1983,6 +2031,7 @@ checkProviderConnectionTest();
 checkFirstCoworkerHandoff();
 checkAgentDeletionRevokesAutonomy();
 checkHandoffRevocation();
+checkProviderRuntimeCompatibility();
 checkDurableAgentWake();
 checkDurableWorkflowState();
 checkVersionSources();
