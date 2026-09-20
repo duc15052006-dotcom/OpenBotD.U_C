@@ -209,6 +209,33 @@ describe("claiming durable work", () => {
     ).toHaveLength(0);
   });
 
+  test("deferring gives a capacity-blocked claim back without spending an attempt", async () => {
+    await queue.offer({ kind, key: "capacity" });
+    const [first] = await queue.claim({
+      kind,
+      owner: "replica-1",
+      leaseMs: 30_000,
+    });
+    expect(first?.attempts).toBe(1);
+
+    expect(
+      await queue.defer?.({
+        kind,
+        key: "capacity",
+        owner: "replica-1",
+        delayMs: 0,
+        reason: "capacity full",
+      }),
+    ).toBe(true);
+
+    const [second] = await queue.claim({
+      kind,
+      owner: "replica-2",
+      leaseMs: 30_000,
+    });
+    expect(second?.attempts).toBe(1);
+  });
+
   /*
    * Both of these are the same bug from two ends: the lease says who may act on an item, and only
    * `renew` used to ask. A replica whose lease had quietly gone could delete or reschedule work

@@ -5,6 +5,7 @@ import {
   offerDueWorkflowWaits,
   WORKFLOW_WAIT_RESUME_KIND,
 } from "../src/workflows/wake";
+import { WorkflowCapacityError } from "../src/workflows/store";
 
 function queueStub(overrides: Partial<WorkQueue> = {}): WorkQueue {
   return {
@@ -214,6 +215,58 @@ describe("workflow wake bridge", () => {
 
     // One renewal before the continuation plus heartbeat renewals while it is running.
     expect(renewals).toBeGreaterThan(1);
+  });
+
+  test("defers capacity-blocked wait wakes without spending a retry", async () => {
+    let deferred = 0;
+    let released = 0;
+    const report = await dispatchClaimedWorkflowWaits({
+      owner: "worker-1",
+      retryDelayMs: 11_000,
+      queue: queueStub({
+        claim: async () => [
+          {
+            kind: WORKFLOW_WAIT_RESUME_KIND,
+            key: "wake-capacity",
+            attempts: 4,
+            payload: {
+              ownerUserId: "user-1",
+              agentId: "bot-1",
+              workflowId: "workflow-1",
+              stepKey: "render",
+              waitUntil: "2026-09-20T07:30:00.000Z",
+              attempts: 2,
+            },
+          },
+        ],
+        defer: async (input) => {
+          deferred += 1;
+          expect(input.delayMs).toBe(11_000);
+          return true;
+        },
+        release: async () => {
+          released += 1;
+          return true;
+        },
+      }),
+      store: {
+        dueWaitingSteps: async () => [],
+        resumeWaitingStep: async () => {
+          throw new WorkflowCapacityError("workflow capacity is full");
+        },
+        failWaitingStep: async () => {
+          throw new Error("not used");
+        },
+        failStep: async () => {
+          throw new Error("not used");
+        },
+      },
+    });
+
+    expect(deferred).toBe(1);
+    expect(released).toBe(0);
+    expect(report.resumed).toEqual([]);
+    expect(report.skipped[0]?.reason).toContain("capacity");
   });
 
   test("releases the same wake when headless dispatch fails", async () => {

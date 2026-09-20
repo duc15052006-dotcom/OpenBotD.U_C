@@ -1,4 +1,4 @@
-import type { WorkflowStore } from "./store";
+import { WorkflowCapacityError, type WorkflowStore } from "./store";
 import { DEFAULT_MAX_ATTEMPTS, type WorkQueue } from "../work/queue";
 
 export const WORKFLOW_READY_DISPATCH_KIND = "workflow_ready_dispatch";
@@ -215,6 +215,23 @@ export async function dispatchClaimedReadyWorkflowSteps(
         error instanceof Error
           ? error.message
           : "workflow ready step could not start";
+
+      if (error instanceof WorkflowCapacityError) {
+        if (!options.queue.defer) {
+          throw new Error(
+            "work queue defer is unavailable for workflow capacity backoff",
+          );
+        }
+        await options.queue.defer({
+          kind: WORKFLOW_READY_DISPATCH_KIND,
+          key: item.key,
+          owner: options.owner,
+          delayMs: options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS,
+          reason,
+        });
+        report.skipped.push({ workflowId, stepKey, reason });
+        continue;
+      }
 
       // A newer/manual start, pause/cancel, or changed ready stamp makes this exact queue item
       // permanently stale. Finishing it is safe because a later ready transition gets a new stamp.

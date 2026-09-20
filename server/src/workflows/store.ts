@@ -28,6 +28,13 @@ export const MAX_WORKFLOW_FAILURE_CODE_POINTS = 500;
 export const MAX_WORKFLOW_PROVIDER_CODE_POINTS = 120;
 export const MAX_WORKFLOW_ASSET_REF_CODE_POINTS = 512;
 export const MAX_WORKFLOW_ASSET_LABEL_CODE_POINTS = 200;
+/**
+ * Unattended workflow turns need hard cluster-wide ceilings just like routines. These are
+ * admission caps, not queue batch sizes: every replica serializes the count + state transition
+ * under one PostgreSQL advisory lock before a ready/waiting step becomes running.
+ */
+export const MAX_CONCURRENT_WORKFLOW_STEPS = 20;
+export const MAX_CONCURRENT_WORKFLOW_STEPS_PER_AGENT = 4;
 
 const ACTIVE_STEP_STATUSES = [
   "blocked",
@@ -153,6 +160,13 @@ export class WorkflowRefusedError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "WorkflowRefusedError";
+  }
+}
+
+export class WorkflowCapacityError extends WorkflowRefusedError {
+  constructor(message: string) {
+    super(message);
+    this.name = "WorkflowCapacityError";
   }
 }
 
@@ -382,6 +396,43 @@ export function createWorkflowStore(database: Database): WorkflowStore {
     await transaction.execute(
       sql`select pg_advisory_xact_lock(hashtext(${`workflow-${id}`}))`,
     );
+  }
+
+  async function admitAutonomousStep(
+    transaction: Transaction,
+    agentId: string,
+  ): Promise<void> {
+    /*
+     * Count + admission is one serialized decision across every API replica. Row locks cannot
+     * protect "how many rows are running", so the advisory lock is the cluster-wide mutex for this
+     * small critical section. It is taken only after the exact workflow's own lock, and no path
+     * takes these two locks in the reverse order.
+     */
+    await transaction.execute(
+      sql`select pg_advisory_xact_lock(hashtext('workflow-autonomous-capacity'))`,
+    );
+
+    const [counts] = await transaction
+      .select({
+        deployment: sql<number>`count(*)::int`,
+        agent: sql<number>`count(*) filter (where ${workflowRuns.agentId} = ${agentId})::int`,
+      })
+      .from(workflowSteps)
+      .innerJoin(workflowRuns, eq(workflowRuns.id, workflowSteps.workflowId))
+      .where(eq(workflowSteps.status, "running"));
+
+    const deploymentRunning = counts?.deployment ?? 0;
+    const agentRunning = counts?.agent ?? 0;
+    if (deploymentRunning >= MAX_CONCURRENT_WORKFLOW_STEPS) {
+      throw new WorkflowCapacityError(
+        `Workflow capacity is full: this deployment already has ${MAX_CONCURRENT_WORKFLOW_STEPS} autonomous steps running.`,
+      );
+    }
+    if (agentRunning >= MAX_CONCURRENT_WORKFLOW_STEPS_PER_AGENT) {
+      throw new WorkflowCapacityError(
+        `Workflow capacity is full: this Bot already has ${MAX_CONCURRENT_WORKFLOW_STEPS_PER_AGENT} autonomous steps running.`,
+      );
+    }
   }
 
   async function resolveChannel(input: WorkflowInput): Promise<string> {
@@ -890,6 +941,8 @@ export function createWorkflowStore(database: Database): WorkflowStore {
           );
         }
 
+        await admitAutonomousStep(transaction, identity.agentId);
+
         const [row] = await transaction
           .update(workflowSteps)
           .set({
@@ -1025,6 +1078,9 @@ export function createWorkflowStore(database: Database): WorkflowStore {
         ) {
           return toStep(current);
         }
+
+        await admitAutonomousStep(transaction, identity.agentId);
+
         const [row] = await transaction
           .update(workflowSteps)
           .set({

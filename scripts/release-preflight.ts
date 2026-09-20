@@ -1498,6 +1498,7 @@ function checkDurableWorkflowState(): void {
   const migration = read("server/drizzle/0043_workflow_state.sql");
   const ready = read("server/src/workflows/ready.ts");
   const wake = read("server/src/workflows/wake.ts");
+  const queue = read("server/src/work/queue.ts");
   const server = read("server/src/index.ts");
   const assetMigration = read("server/drizzle/0044_workflow_assets.sql");
   const resumeMigration = read("server/drizzle/0045_workflow_resume_stamp.sql");
@@ -1539,6 +1540,10 @@ function checkDurableWorkflowState(): void {
     "greatest(",
     "date_trunc('milliseconds', now())",
     "${" + "input.waitUntil} > now()",
+    "MAX_CONCURRENT_WORKFLOW_STEPS = 20",
+    "MAX_CONCURRENT_WORKFLOW_STEPS_PER_AGENT = 4",
+    "workflow-autonomous-capacity",
+    "WorkflowCapacityError",
   ]) {
     if (!store.includes(evidence)) {
       fail(`workflows: durable recovery boundary is missing ${evidence}`);
@@ -1571,6 +1576,8 @@ function checkDurableWorkflowState(): void {
     "item.attempts >= maxAttempts",
     "Autonomous wait continuation exhausted its retry budget",
     "failWaitingStep(",
+    "WorkflowCapacityError",
+    "queue.defer",
   ]) {
     if (!wake.includes(evidence)) {
       fail(`workflows: durable wake bridge is missing ${evidence}`);
@@ -1584,9 +1591,20 @@ function checkDurableWorkflowState(): void {
     "queue.release({",
     "item.attempts >= maxAttempts",
     "Autonomous continuation exhausted its retry budget",
+    "WorkflowCapacityError",
+    "queue.defer",
   ]) {
     if (!ready.includes(evidence)) {
       fail(`workflows: durable ready-step bridge is missing ${evidence}`);
+    }
+  }
+  for (const evidence of [
+    "async defer({ kind, key, owner, delayMs, reason })",
+    "attempts: sql`greatest(",
+    "workItems.attempts} - 1, 0)",
+  ]) {
+    if (!queue.includes(evidence)) {
+      fail(`workflows: capacity-safe queue defer is missing ${evidence}`);
     }
   }
   if (!server.includes("sweepReadyWorkflowSteps(workflowReady)")) {
