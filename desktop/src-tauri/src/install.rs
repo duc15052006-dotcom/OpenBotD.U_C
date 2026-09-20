@@ -996,12 +996,18 @@ mod tests {
         let result = install_bun_with(
             &dir,
             &download,
-            |_, _| Err(failure.clone()),
+            |_, target| {
+                std::fs::write(target, b"partially extracted executable").unwrap();
+                Err(failure.clone())
+            },
             |_| panic!("failed extraction must not be executed"),
         );
         assert_eq!(result, Err(failure));
         assert!(!dir
             .join(format!("bun{}", std::env::consts::EXE_SUFFIX))
+            .exists());
+        assert!(!dir
+            .join(format!("bun.download{}", std::env::consts::EXE_SUFFIX))
             .exists());
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -1024,6 +1030,9 @@ mod tests {
         assert_eq!(result, Err(failure));
         assert!(!dir
             .join(format!("bun{}", std::env::consts::EXE_SUFFIX))
+            .exists());
+        assert!(!dir
+            .join(format!("bun.download{}", std::env::consts::EXE_SUFFIX))
             .exists());
         let _ = std::fs::remove_dir_all(dir);
     }
