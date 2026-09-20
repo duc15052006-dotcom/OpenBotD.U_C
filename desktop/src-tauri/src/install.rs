@@ -313,6 +313,7 @@ fn install_bun_with(
     Ok(binary)
 }
 
+#[cfg(any(windows, target_os = "macos", test))]
 fn extract_bun(archive: &Path, target: &Path, entry: &str) -> Result<(), Problem> {
     let unpack_error = |error: &dyn std::fmt::Display| {
         Problem::with(
