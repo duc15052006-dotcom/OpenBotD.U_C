@@ -1544,6 +1544,9 @@ function checkDurableWorkflowState(): void {
     "MAX_CONCURRENT_WORKFLOW_STEPS_PER_AGENT = 4",
     "workflow-autonomous-capacity",
     "WorkflowCapacityError",
+    "failReadyStep(",
+    "failAutonomousRunningStep(",
+    "eq(workflowSteps.resumedFromWaitUntil, expectedDispatchStamp)",
   ]) {
     if (!store.includes(evidence)) {
       fail(`workflows: durable recovery boundary is missing ${evidence}`);
@@ -1578,6 +1581,9 @@ function checkDurableWorkflowState(): void {
     "failWaitingStep(",
     "WorkflowCapacityError",
     "queue.defer",
+    "reconcileExhaustedWorkflowWaits(",
+    "claimExhausted",
+    "failAutonomousRunningStep(",
   ]) {
     if (!wake.includes(evidence)) {
       fail(`workflows: durable wake bridge is missing ${evidence}`);
@@ -1593,6 +1599,10 @@ function checkDurableWorkflowState(): void {
     "Autonomous continuation exhausted its retry budget",
     "WorkflowCapacityError",
     "queue.defer",
+    "reconcileExhaustedReadyWorkflowSteps(",
+    "claimExhausted",
+    "failReadyStep(",
+    "failAutonomousRunningStep(",
   ]) {
     if (!ready.includes(evidence)) {
       fail(`workflows: durable ready-step bridge is missing ${evidence}`);
@@ -1602,6 +1612,8 @@ function checkDurableWorkflowState(): void {
     "async defer({ kind, key, owner, delayMs, reason })",
     "attempts: sql`greatest(",
     "workItems.attempts} - 1, 0)",
+    "async claimExhausted({",
+    '"attempts" >=',
   ]) {
     if (!queue.includes(evidence)) {
       fail(`workflows: capacity-safe queue defer is missing ${evidence}`);

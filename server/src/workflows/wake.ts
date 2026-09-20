@@ -1,4 +1,8 @@
-import { WorkflowCapacityError, type WorkflowStore } from "./store";
+import {
+  WorkflowCapacityError,
+  WorkflowRefusedError,
+  type WorkflowStore,
+} from "./store";
 import { DEFAULT_MAX_ATTEMPTS, type WorkQueue } from "../work/queue";
 
 export const WORKFLOW_WAIT_RESUME_KIND = "workflow_wait_resume";
@@ -11,7 +15,8 @@ const DEFAULT_RETRY_DELAY_MS = 5_000;
 type WorkflowWakeStore = Pick<
   WorkflowStore,
   "dueWaitingSteps" | "resumeWaitingStep" | "failWaitingStep" | "failStep"
->;
+> &
+  Partial<Pick<WorkflowStore, "failAutonomousRunningStep">>;
 
 export type WorkflowWakeOptions = {
   store: WorkflowWakeStore;
@@ -318,12 +323,146 @@ export async function dispatchClaimedWorkflowWaits(
   return report;
 }
 
+export async function reconcileExhaustedWorkflowWaits(
+  options: WorkflowWakeOptions,
+): Promise<WorkflowWakeReport> {
+  if (
+    !options.queue.claimExhausted ||
+    !options.store.failAutonomousRunningStep
+  ) {
+    throw new Error(
+      "exhausted workflow wait recovery capabilities are unavailable",
+    );
+  }
+  const leaseMs = options.leaseMs ?? DEFAULT_LEASE_MS;
+  const maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
+  const claimed = await options.queue.claimExhausted({
+    kind: WORKFLOW_WAIT_RESUME_KIND,
+    owner: options.owner,
+    leaseMs,
+    limit: options.limit ?? DEFAULT_LIMIT,
+    maxAttempts,
+  });
+  const report: WorkflowWakeReport = {
+    considered: claimed.length,
+    resumed: [],
+    skipped: [],
+  };
+
+  for (const item of claimed) {
+    const workflowId =
+      typeof item.payload.workflowId === "string"
+        ? item.payload.workflowId
+        : "";
+    const stepKey =
+      typeof item.payload.stepKey === "string" ? item.payload.stepKey : "";
+    const ownerUserId =
+      typeof item.payload.ownerUserId === "string"
+        ? item.payload.ownerUserId
+        : "";
+    const agentId =
+      typeof item.payload.agentId === "string" ? item.payload.agentId : "";
+    const stamp =
+      typeof item.payload.waitUntil === "string"
+        ? new Date(item.payload.waitUntil)
+        : null;
+    const expectedAttempt =
+      typeof item.payload.attempts === "number" &&
+      Number.isInteger(item.payload.attempts) &&
+      item.payload.attempts > 0
+        ? item.payload.attempts
+        : 0;
+
+    if (
+      !workflowId ||
+      !stepKey ||
+      !ownerUserId ||
+      !agentId ||
+      expectedAttempt === 0 ||
+      !stamp ||
+      Number.isNaN(stamp.getTime())
+    ) {
+      await options.queue.finish({
+        kind: WORKFLOW_WAIT_RESUME_KIND,
+        key: item.key,
+        owner: options.owner,
+      });
+      report.skipped.push({
+        workflowId,
+        stepKey,
+        reason: "exhausted workflow wait payload is invalid",
+      });
+      continue;
+    }
+
+    const identity = { ownerUserId, agentId };
+    const failure =
+      "Autonomous wait continuation exhausted its retry budget after a worker interruption.";
+    try {
+      try {
+        await options.store.failAutonomousRunningStep(
+          identity,
+          workflowId,
+          stepKey,
+          stamp,
+          expectedAttempt,
+          failure,
+        );
+      } catch (error) {
+        if (!(error instanceof WorkflowRefusedError)) throw error;
+        await options.store.failWaitingStep(
+          identity,
+          workflowId,
+          stepKey,
+          stamp,
+          expectedAttempt,
+          failure,
+        );
+      }
+      await options.queue.finish({
+        kind: WORKFLOW_WAIT_RESUME_KIND,
+        key: item.key,
+        owner: options.owner,
+      });
+      report.skipped.push({ workflowId, stepKey, reason: failure });
+    } catch (error) {
+      const reason =
+        error instanceof Error
+          ? error.message
+          : "exhausted wait cleanup failed";
+      if (error instanceof WorkflowRefusedError) {
+        await options.queue.finish({
+          kind: WORKFLOW_WAIT_RESUME_KIND,
+          key: item.key,
+          owner: options.owner,
+        });
+      } else {
+        await options.queue.release({
+          kind: WORKFLOW_WAIT_RESUME_KIND,
+          key: item.key,
+          owner: options.owner,
+          delayMs: options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS,
+          reason,
+        });
+      }
+      report.skipped.push({ workflowId, stepKey, reason });
+    }
+  }
+  return report;
+}
+
 export async function sweepWorkflowWaits(
   options: WorkflowWakeOptions,
 ): Promise<WorkflowWakeReport & { queued: number; already: number }> {
   const offered = await offerDueWorkflowWaits(options);
   const dispatched = await dispatchClaimedWorkflowWaits(options);
-  return { ...offered, ...dispatched };
+  const recovered = await reconcileExhaustedWorkflowWaits(options);
+  return {
+    ...offered,
+    considered: dispatched.considered + recovered.considered,
+    resumed: dispatched.resumed,
+    skipped: [...dispatched.skipped, ...recovered.skipped],
+  };
 }
 
 export const WORKFLOW_WAKE_MAX_ATTEMPTS = DEFAULT_MAX_ATTEMPTS;

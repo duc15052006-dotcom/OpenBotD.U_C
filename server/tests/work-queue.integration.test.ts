@@ -309,6 +309,48 @@ describe("claiming durable work", () => {
    * A permanently failing item has to stop somewhere a person can see, rather than retrying until
    * somebody notices, which on a queue with no dashboard is never.
    */
+  test("an exhausted cleanup claim does not increase the retry count", async () => {
+    await queue.offer({ kind, key: "exhausted-cleanup" });
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await queue.claim({
+        kind,
+        owner: "replica-1",
+        leaseMs: 30_000,
+        maxAttempts: 2,
+      });
+      await queue.release({
+        kind,
+        key: "exhausted-cleanup",
+        owner: "replica-1",
+        delayMs: 0,
+      });
+    }
+
+    const [cleanup] = await queue.claimExhausted!({
+      kind,
+      owner: "cleanup-1",
+      leaseMs: 30_000,
+      maxAttempts: 2,
+    });
+    expect(cleanup?.key).toBe("exhausted-cleanup");
+    expect(cleanup?.attempts).toBe(2);
+
+    await queue.release({
+      kind,
+      key: "exhausted-cleanup",
+      owner: "cleanup-1",
+      delayMs: 0,
+    });
+    const [again] = await queue.claimExhausted!({
+      kind,
+      owner: "cleanup-2",
+      leaseMs: 30_000,
+      maxAttempts: 2,
+    });
+    expect(again?.attempts).toBe(2);
+  });
+
   test("an item stops being offered once it runs out of attempts", async () => {
     await queue.offer({ kind, key: "bot-a" });
 
