@@ -28,7 +28,7 @@ import {
   DEPLOYMENT_INITIATOR,
   recordAuditEvent,
 } from "./audit";
-import { createDevRequireUser } from "./auth/dev-actor";
+import { createDevRequireUser, DEV_ACTOR } from "./auth/dev-actor";
 import {
   type AppVariables,
   type AuthService,
@@ -1147,6 +1147,18 @@ export function createApp(
         // The managed Bot's address, so a coworker created without an endpoint — which creation
         // stores as running at this address — can be told apart from one a person hosts.
         config.managedAgent?.endpoint?.toString(),
+        computerGateway
+          ? {
+              onDeleted: async (actor, agentId) => {
+                await computerGateway.stopComputer(agentId, {
+                  id: actor.id,
+                  ...(actor.email === DEV_ACTOR.email
+                    ? {}
+                    : { userId: actor.id }),
+                });
+              },
+            }
+          : undefined,
       ),
     );
     if (agentModels) {
