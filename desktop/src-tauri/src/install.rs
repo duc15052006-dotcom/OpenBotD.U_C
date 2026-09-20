@@ -860,6 +860,25 @@ mod tests {
     }
 
     #[test]
+    fn bun_extraction_only_writes_the_expected_file() {
+        let (root, download) = bun_zip_fixture("bun extraction paths");
+        let into = root.join("installed");
+        std::fs::create_dir(&into).unwrap();
+        let target = into.join(format!("bun{}", std::env::consts::EXE_SUFFIX));
+        let archive = fetch_verified(&download, &root).unwrap();
+
+        extract_bun(&archive, &target, "bun-fixture/bun").unwrap();
+
+        assert_eq!(
+            std::fs::read(&target).unwrap(),
+            b"#!/bin/sh\nprintf '1.3.14\\n'\n"
+        );
+        assert_eq!(std::fs::read_dir(&into).unwrap().count(), 1);
+        assert!(!root.join("unexpected").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     #[cfg(target_os = "macos")]
     fn macos_bun_installation_works_without_developer_tools() {
         if crate::test_support::isolated_process(
@@ -885,9 +904,8 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_os = "macos")]
-    fn macos_missing_bun_archive_entry_is_not_published_or_run() {
-        let (root, download) = bun_zip_fixture("bun Mac missing entry");
+    fn missing_bun_archive_entry_is_not_published_or_run() {
+        let (root, download) = bun_zip_fixture("bun missing entry");
         let failure = install_bun_with(
             &root,
             &download,
@@ -895,8 +913,13 @@ mod tests {
             |_| panic!("a missing archive entry must not be run"),
         )
         .unwrap_err();
-        assert!(failure.detail.unwrap().contains("unzip"));
-        assert!(!root.join("bun").exists());
+        assert!(failure.detail.unwrap().contains("missing/bun"));
+        assert!(!root
+            .join(format!("bun{}", std::env::consts::EXE_SUFFIX))
+            .exists());
+        assert!(!root
+            .join(format!("bun.download{}", std::env::consts::EXE_SUFFIX))
+            .exists());
         std::fs::remove_dir_all(root).unwrap();
     }
 
