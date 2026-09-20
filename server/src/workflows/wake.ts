@@ -326,7 +326,10 @@ export async function dispatchClaimedWorkflowWaits(
 export async function reconcileExhaustedWorkflowWaits(
   options: WorkflowWakeOptions,
 ): Promise<WorkflowWakeReport> {
-  if (!options.queue.claimExhausted || !options.store.failAutonomousRunningStep) {
+  if (
+    !options.queue.claimExhausted ||
+    !options.store.failAutonomousRunningStep
+  ) {
     throw new Error(
       "exhausted workflow wait recovery capabilities are unavailable",
     );
@@ -424,7 +427,9 @@ export async function reconcileExhaustedWorkflowWaits(
       report.skipped.push({ workflowId, stepKey, reason: failure });
     } catch (error) {
       const reason =
-        error instanceof Error ? error.message : "exhausted wait cleanup failed";
+        error instanceof Error
+          ? error.message
+          : "exhausted wait cleanup failed";
       if (error instanceof WorkflowRefusedError) {
         await options.queue.finish({
           kind: WORKFLOW_WAIT_RESUME_KIND,
