@@ -374,7 +374,11 @@ describe("durable ready-step dispatch", () => {
     const who = identity(owner, agentId);
     const plans = [];
 
-    for (let index = 0; index <= MAX_CONCURRENT_WORKFLOW_STEPS_PER_AGENT; index += 1) {
+    for (
+      let index = 0;
+      index <= MAX_CONCURRENT_WORKFLOW_STEPS_PER_AGENT;
+      index += 1
+    ) {
       plans.push(
         await store.create({
           ...planInput(owner, agentId, channel.id),
@@ -383,7 +387,10 @@ describe("durable ready-step dispatch", () => {
       );
     }
 
-    for (const plan of plans.slice(0, MAX_CONCURRENT_WORKFLOW_STEPS_PER_AGENT)) {
+    for (const plan of plans.slice(
+      0,
+      MAX_CONCURRENT_WORKFLOW_STEPS_PER_AGENT,
+    )) {
       const queued = (await store.readySteps(500)).find(
         (candidate) =>
           candidate.workflowId === plan.id && candidate.stepKey === "script",
@@ -427,7 +434,11 @@ describe("durable ready-step dispatch", () => {
     let started = 0;
 
     for (const agentId of agentIds.slice(0, 5)) {
-      for (let index = 0; index < MAX_CONCURRENT_WORKFLOW_STEPS_PER_AGENT; index += 1) {
+      for (
+        let index = 0;
+        index < MAX_CONCURRENT_WORKFLOW_STEPS_PER_AGENT;
+        index += 1
+      ) {
         const plan = await store.create({
           ...planInput(owner, agentId, channel.id),
           title: `Deployment capacity ${started}`,
