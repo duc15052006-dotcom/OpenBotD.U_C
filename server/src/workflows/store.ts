@@ -610,10 +610,7 @@ export function createWorkflowStore(database: Database): WorkflowStore {
       .select()
       .from(workflowRuns)
       .where(
-        and(
-          eq(workflowRuns.id, id),
-          eq(workflowRuns.ownerUserId, ownerUserId),
-        ),
+        and(eq(workflowRuns.id, id), eq(workflowRuns.ownerUserId, ownerUserId)),
       )
       .limit(1);
     if (!run) return null;
