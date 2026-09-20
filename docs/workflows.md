@@ -102,6 +102,12 @@ Before an autonomous ready step starts or a due wait resumes, the workflow store
 
 This is an admission ceiling rather than a queue batch size, so multiple replicas cannot race past it. If capacity is full, the exact claimed work item is deferred with backoff and its claim attempt is rolled back; healthy work therefore does not exhaust its retry budget merely because the deployment stayed busy. The workflow step remains `ready` or `waiting` and can be admitted later.
 
+### Exhausted-attempt crash recovery
+
+Normal queue execution stops after its bounded retry budget. A separate cleanup lane leases exhausted workflow work without incrementing its attempt count. This closes the crash window where a worker can die on its final dispatch after the durable step has already moved to `running`: the normal claim lane will not run the side effect again, while cleanup reconciles only the exact persisted ready/wait dispatch stamp and attempt.
+
+Cleanup can fail an exact still-`ready`, still-`waiting`, or exact autonomous `running` state. A stale queue item cannot fail a newer state, including a later wait/resume cycle that kept the same workflow attempt number, because the exact dispatch timestamp must still match. Transient cleanup failures are released for another cleanup pass; stale items are finished harmlessly.
+
 ## Durable waits
 
 A running step can enter `waiting` with an exact future timestamp and an optional provider label.
