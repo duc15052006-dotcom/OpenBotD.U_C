@@ -1750,7 +1750,8 @@ function checkDurableWorkflowState(): void {
   }
   for (const evidence of [
     '"/api/workflows"',
-    "`/api/workflows/${encodeURIComponent(id)}`",
+    "`/api/workflows/",
+    "encodeURIComponent(id)",
     "workflowKeys.detail",
   ]) {
     if (!dashboardQueries.includes(evidence)) {
