@@ -1471,7 +1471,9 @@ function checkHandoffRevocation(): void {
     "isNull(workItems.finishedAt)",
   ]) {
     if (!channelRoutes.includes(evidence)) {
-      fail(`handoff: channel deletion no longer revokes queued work through ${evidence}`);
+      fail(
+        `handoff: channel deletion no longer revokes queued work through ${evidence}`,
+      );
     }
   }
 
