@@ -1,4 +1,4 @@
-ag-ui-langroid
+ag-ui-langroid[litellm]
 langroid
 fastapi
 python-multipart
