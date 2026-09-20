@@ -1600,7 +1600,7 @@ function checkDurableWorkflowState(): void {
   }
   for (const evidence of [
     "async defer({ kind, key, owner, delayMs, reason })",
-    "attempts: sql\`greatest(",
+    "attempts: sql`greatest(",
     "workItems.attempts} - 1, 0)",
   ]) {
     if (!queue.includes(evidence)) {
