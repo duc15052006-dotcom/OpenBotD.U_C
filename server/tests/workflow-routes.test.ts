@@ -214,11 +214,7 @@ describe("workflow dashboard routes", () => {
     expect((await response.json()).workflow.status).toBe("paused");
     expect(calls).toEqual([
       ["getForOwner", actor.id, "workflow-1"],
-      [
-        "pause",
-        { ownerUserId: actor.id, agentId: "agent-1" },
-        "workflow-1",
-      ],
+      ["pause", { ownerUserId: actor.id, agentId: "agent-1" }, "workflow-1"],
     ]);
   });
 
