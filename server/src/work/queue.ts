@@ -148,6 +148,21 @@ export type WorkQueue = {
     reason?: string;
   }) => Promise<boolean>;
   /**
+   * Put claimed work back for later WITHOUT spending one of its retry attempts.
+   *
+   * This is only for an external admission condition such as a deployment concurrency ceiling:
+   * nothing failed, the worker simply was not allowed to begin. Claim increments attempts before
+   * the caller can discover that condition, so a normal release would eventually exhaust healthy
+   * work merely because the deployment stayed busy long enough.
+   */
+  defer: (input: {
+    kind: string;
+    key: string;
+    owner: string;
+    delayMs: number;
+    reason?: string;
+  }) => Promise<boolean>;
+  /**
    * Drop what is done with, older than the retention window. Returns how many went.
    *
    * Both kinds of done: finished, and given up on. An item at its attempt cap is not finished and was
@@ -380,6 +395,27 @@ export function createWorkQueue(database: Database): WorkQueue {
         .where(ours(kind, key, owner))
         .returning({ key: workItems.key });
       return Boolean(released);
+    },
+
+    async defer({ kind, key, owner, delayMs, reason }) {
+      /*
+       * Claim increments attempts before the worker can discover a shared-capacity refusal. Undo
+       * exactly that claim here, while the row is still leased to this owner, and push it out. The
+       * GREATEST guard is defensive against malformed/manual rows; attempts must never go negative.
+       */
+      const [deferred] = await database
+        .update(workItems)
+        .set({
+          claimedBy: null,
+          leaseUntil: null,
+          attempts: sql`greatest(${workItems.attempts} - 1, 0)`,
+          runAt: fromNow(delayMs),
+          updatedAt: sql`now()`,
+          ...(reason === undefined ? {} : { lastError: reason }),
+        })
+        .where(ours(kind, key, owner))
+        .returning({ key: workItems.key });
+      return Boolean(deferred);
     },
 
     async purge({
