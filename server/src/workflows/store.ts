@@ -328,11 +328,27 @@ export type WorkflowStore = {
     id: string,
     key: string,
   ): Promise<WorkflowPlan>;
+  failReadyStep(
+    identity: WorkflowIdentity,
+    id: string,
+    key: string,
+    expectedReadyAt: Date,
+    expectedAttempt: number,
+    reason: string,
+  ): Promise<WorkflowStep>;
   failWaitingStep(
     identity: WorkflowIdentity,
     id: string,
     key: string,
     expectedWaitUntil: Date,
+    expectedAttempt: number,
+    reason: string,
+  ): Promise<WorkflowStep>;
+  failAutonomousRunningStep(
+    identity: WorkflowIdentity,
+    id: string,
+    key: string,
+    expectedDispatchStamp: Date,
     expectedAttempt: number,
     reason: string,
   ): Promise<WorkflowStep>;
@@ -1203,6 +1219,64 @@ export function createWorkflowStore(database: Database): WorkflowStore {
       return (await planFor(identity, id)) as WorkflowPlan;
     },
 
+    async failReadyStep(
+      identity,
+      id,
+      key,
+      expectedReadyAt,
+      expectedAttempt,
+      reason,
+    ) {
+      if (
+        !(expectedReadyAt instanceof Date) ||
+        Number.isNaN(expectedReadyAt.getTime()) ||
+        !Number.isInteger(expectedAttempt) ||
+        expectedAttempt < 0
+      ) {
+        throw new WorkflowRefusedError(
+          "A ready-step failure needs an exact ready timestamp and attempt.",
+        );
+      }
+      const failureReason = textWithin(
+        reason,
+        "A workflow failure reason",
+        MAX_WORKFLOW_FAILURE_CODE_POINTS,
+      );
+      return await database.transaction(async (transaction) => {
+        await lockWorkflow(transaction, id);
+        const run = await loadOwned(transaction, identity, id);
+        if (terminal(run.status)) {
+          throw new WorkflowRefusedError("That workflow has already finished.");
+        }
+        const [row] = await transaction
+          .update(workflowSteps)
+          .set({
+            status: "failed",
+            failureReason,
+            finishedAt: sql`now()`,
+            waitUntil: null,
+            resumedFromWaitUntil: null,
+            updatedAt: sql`now()`,
+          })
+          .where(
+            and(
+              eq(workflowSteps.workflowId, id),
+              eq(workflowSteps.key, stepKey(key)),
+              eq(workflowSteps.status, "ready"),
+              eq(workflowSteps.attempts, expectedAttempt),
+              eq(workflowSteps.updatedAt, expectedReadyAt),
+            ),
+          )
+          .returning();
+        if (!row) {
+          throw new WorkflowRefusedError(
+            "That ready workflow step changed before it could be failed.",
+          );
+        }
+        return toStep(row);
+      });
+    },
+
     async failWaitingStep(
       identity,
       id,
@@ -1255,6 +1329,64 @@ export function createWorkflowStore(database: Database): WorkflowStore {
         if (!row) {
           throw new WorkflowRefusedError(
             "That waiting workflow step changed before it could be failed.",
+          );
+        }
+        return toStep(row);
+      });
+    },
+
+    async failAutonomousRunningStep(
+      identity,
+      id,
+      key,
+      expectedDispatchStamp,
+      expectedAttempt,
+      reason,
+    ) {
+      if (
+        !(expectedDispatchStamp instanceof Date) ||
+        Number.isNaN(expectedDispatchStamp.getTime()) ||
+        !Number.isInteger(expectedAttempt) ||
+        expectedAttempt <= 0
+      ) {
+        throw new WorkflowRefusedError(
+          "A running-step failure needs an exact dispatch stamp and attempt.",
+        );
+      }
+      const failureReason = textWithin(
+        reason,
+        "A workflow failure reason",
+        MAX_WORKFLOW_FAILURE_CODE_POINTS,
+      );
+      return await database.transaction(async (transaction) => {
+        await lockWorkflow(transaction, id);
+        const run = await loadOwned(transaction, identity, id);
+        if (terminal(run.status)) {
+          throw new WorkflowRefusedError("That workflow has already finished.");
+        }
+        const [row] = await transaction
+          .update(workflowSteps)
+          .set({
+            status: "failed",
+            failureReason,
+            finishedAt: sql`now()`,
+            waitUntil: null,
+            resumedFromWaitUntil: null,
+            updatedAt: sql`now()`,
+          })
+          .where(
+            and(
+              eq(workflowSteps.workflowId, id),
+              eq(workflowSteps.key, stepKey(key)),
+              eq(workflowSteps.status, "running"),
+              eq(workflowSteps.attempts, expectedAttempt),
+              eq(workflowSteps.resumedFromWaitUntil, expectedDispatchStamp),
+            ),
+          )
+          .returning();
+        if (!row) {
+          throw new WorkflowRefusedError(
+            "That running workflow step changed before exhausted work could fail it.",
           );
         }
         return toStep(row);
