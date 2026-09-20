@@ -13,7 +13,7 @@
  */
 import type { AbstractAgent, BaseEvent } from "@ag-ui/client";
 import type { Observable } from "rxjs";
-import type { HandoffDelivery } from "./handoff-runner";
+import type { HandoffDelivery, HandoffWork } from "./handoff-runner";
 import { textOf } from "./message-text";
 
 /** Whatever runs an agent against a thread and records what it did. */
@@ -25,6 +25,11 @@ export type ThreadRunner = {
     /** What the conversation keeps, when that is not the whole of what the model was sent. */
     persistedInputMessages?: readonly unknown[];
   }) => Observable<BaseEvent>;
+  /** Stop the exact run when durable handoff authority is revoked while it is executing. */
+  stop: (request: {
+    threadId: string;
+    runId?: string;
+  }) => Promise<boolean | undefined>;
 };
 
 /**
@@ -145,6 +150,10 @@ export function createHandoffDelivery(options: {
    * conversation it was asked in locked against them for as long as the process lives.
    */
   deadlineMs?: number;
+  /** Durable authority for this hop; false means unattended work must stop. */
+  continuationGuard?: (work: HandoffWork) => Promise<boolean>;
+  /** Injectable only so cancellation can be driven quickly in regression tests. */
+  heartbeatMs?: number;
 }): HandoffDelivery {
   const {
     agentFor,
@@ -156,10 +165,20 @@ export function createHandoffDelivery(options: {
     setBusy,
     newRunId,
     deadlineMs = DEFAULT_DELIVERY_DEADLINE_MS,
+    continuationGuard,
+    heartbeatMs = LOCK_RENEW_EVERY_MS,
   } = options;
 
   return {
     async deliver({ work, message, shown, assertion }) {
+      if (continuationGuard && !(await continuationGuard(work))) {
+        const error = new Error(
+          "The handoff was cancelled before the addressed Bot started.",
+        );
+        error.name = "HandoffContinuationCancelled";
+        throw error;
+      }
+
       const agent = await agentFor({
         actorId: work.actorId,
         botId: work.toBotId,
@@ -325,13 +344,58 @@ export function createHandoffDelivery(options: {
          * and the platform's window is short; a lock that lapses mid-answer lets a second run into the
          * conversation, which is the thing it exists to prevent.
          */
-        const heartbeat = setInterval(() => {
-          void lock.renew({ threadId: where.threadId, runId }).catch(() => {});
-        }, LOCK_RENEW_EVERY_MS);
+        let heartbeat: ReturnType<typeof setInterval> | undefined;
+        let stopPromise: Promise<boolean | undefined> | undefined;
+        let rejectCancellation: ((error: Error) => void) | undefined;
+
+        const stopTurn = () => {
+          try {
+            agent.abortRun();
+          } catch {
+            // runner.stop below is the authoritative platform-side stop path.
+          }
+          stopPromise ??= runner
+            .stop({ threadId: where.threadId, runId })
+            .catch(() => undefined);
+        };
+
+        const cancelled = new Promise<never>((_resolve, reject) => {
+          rejectCancellation = reject;
+        });
+
+        heartbeat = setInterval(() => {
+          void (async () => {
+            try {
+              await lock.renew({ threadId: where.threadId, runId });
+              if (continuationGuard && !(await continuationGuard(work))) {
+                const error = new Error(
+                  "The handoff was cancelled while the addressed Bot was running.",
+                );
+                error.name = "HandoffContinuationCancelled";
+                if (heartbeat !== undefined) {
+                  clearInterval(heartbeat);
+                  heartbeat = undefined;
+                }
+                stopTurn();
+                rejectCancellation?.(error);
+              }
+            } catch (error) {
+              if (heartbeat === undefined) return;
+              clearInterval(heartbeat);
+              heartbeat = undefined;
+              stopTurn();
+              rejectCancellation?.(
+                error instanceof Error ? error : new Error(String(error)),
+              );
+            }
+          })();
+        }, heartbeatMs);
+        heartbeat.unref?.();
 
         try {
-          await settled(
-            runner.run({
+          await Promise.race([
+            settled(
+              runner.run({
               threadId: where.threadId,
               agent,
               /*
@@ -385,7 +449,9 @@ export function createHandoffDelivery(options: {
                   ? "and never reached its model"
                   : `after ${seen.count} events, the last ${seen.last}`
               }`,
-          );
+            ),
+            cancelled,
+          ]);
           /*
            * Only once the run is on record, and only when it said something: a conversation lifted to
            * the top of somebody's list for a turn that failed, or said nothing, is a conversation
@@ -403,7 +469,8 @@ export function createHandoffDelivery(options: {
             });
           }
         } finally {
-          clearInterval(heartbeat);
+          if (heartbeat !== undefined) clearInterval(heartbeat);
+          if (stopPromise) await stopPromise;
           /*
            * Given back whatever happened. Left held, the conversation is unusable by anybody until the
            * lock expires: the person cannot ask a follow-up and the next hop is refused, which turns
