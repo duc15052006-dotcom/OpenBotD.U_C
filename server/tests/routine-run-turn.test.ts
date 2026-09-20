@@ -241,6 +241,9 @@ function harness(options: {
             agentId: AGENT_ID,
             threadId: THREAD_ID,
             instruction: INSTRUCTION,
+            ...(options.continuationGuard
+              ? { continuationGuard: options.continuationGuard }
+              : {}),
           },
     );
 
@@ -292,6 +295,28 @@ describe("a routine's headless turn", () => {
 
     await expect(run()).rejects.toThrow(
       "workflow continuation was cancelled while it was running",
+    );
+
+    expect(agent.aborts).toBe(1);
+    expect(calls.stops).toHaveLength(1);
+    expect(calls.cleaned).toHaveLength(1);
+  });
+
+  test("stops an in-flight routine turn when its durable guard is revoked", async () => {
+    let checks = 0;
+    const { run, calls, agent } = harness({
+      heartbeatMs: 2,
+      continuationGuard: async () => {
+        checks += 1;
+        return checks === 1;
+      },
+      drive: ({ agent: driven, observer }) => {
+        driven.onAbort = () => observer.complete();
+      },
+    });
+
+    await expect(run()).rejects.toThrow(
+      "routine continuation was cancelled while it was running",
     );
 
     expect(agent.aborts).toBe(1);

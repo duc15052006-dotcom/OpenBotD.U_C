@@ -76,26 +76,37 @@ export function createWorkflowRunner(options: {
         return;
       }
 
-      const { replyText } = await runTurn({
-        ownerUserId: input.ownerUserId,
-        workflowId: input.workflowId,
-        agentId: input.agentId,
-        threadId: channel.threadId,
-        continuationGuard: async () => {
-          const current = await workflowStore.get(identity, input.workflowId);
-          if (!current || current.status === "cancelled") return false;
-          const currentStep = current.steps.find(
-            (candidate) => candidate.key === input.stepKey,
-          );
-          return currentStep?.status !== "cancelled";
-        },
-        instruction: continuationInstruction({
+      let replyText: string;
+      try {
+        ({ replyText } = await runTurn({
+          ownerUserId: input.ownerUserId,
           workflowId: input.workflowId,
-          stepKey: input.stepKey,
-          attempt: input.expectedAttempt,
-          instruction: step.instruction,
-        }),
-      });
+          agentId: input.agentId,
+          threadId: channel.threadId,
+          continuationGuard: async () => {
+            const current = await workflowStore.get(identity, input.workflowId);
+            if (!current || current.status === "cancelled") return false;
+            const currentStep = current.steps.find(
+              (candidate) => candidate.key === input.stepKey,
+            );
+            return currentStep?.status !== "cancelled";
+          },
+          instruction: continuationInstruction({
+            workflowId: input.workflowId,
+            stepKey: input.stepKey,
+            attempt: input.expectedAttempt,
+            instruction: step.instruction,
+          }),
+        }));
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.name === "HeadlessContinuationCancelled"
+        ) {
+          return;
+        }
+        throw error;
+      }
 
       const after = await workflowStore.get(identity, input.workflowId);
       const checkpointed = after?.steps.find(

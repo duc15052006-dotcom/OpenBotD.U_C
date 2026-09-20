@@ -441,9 +441,11 @@ export function createTurnRunner(options: {
           });
           if (continuationGuard && !(await continuationGuard())) {
             const error = new Error(
-              "The workflow continuation was cancelled while it was running.",
+              source === "workflow"
+                ? "The workflow continuation was cancelled while it was running."
+                : "The routine continuation was cancelled while it was running.",
             );
-            error.name = "WorkflowContinuationCancelled";
+            error.name = "HeadlessContinuationCancelled";
             continuationError = error;
             clearHeartbeat();
             stopTurn();
@@ -455,8 +457,8 @@ export function createTurnRunner(options: {
            * likely, having just typed something. Continuing would write this turn's events into
            * their run, so the turn is stopped and the failure is raised rather than recovered.
            *
-           * A guard read failure is handled the same fail-closed way: unattended workflow work
-           * must not keep using Browser/Tools when durable cancellation state cannot be verified.
+           * A guard read failure is handled the same fail-closed way: unattended work must not
+           * keep using Browser/Tools when durable cancellation state cannot be verified.
            */
           clearHeartbeat();
           heartbeatError = error;
@@ -470,9 +472,11 @@ export function createTurnRunner(options: {
     try {
       if (continuationGuard && !(await continuationGuard())) {
         const error = new Error(
-          "The workflow continuation was cancelled before the headless run started.",
+          source === "workflow"
+            ? "The workflow continuation was cancelled before the headless run started."
+            : "The routine continuation was cancelled before the headless run started.",
         );
-        error.name = "WorkflowContinuationCancelled";
+        error.name = "HeadlessContinuationCancelled";
         throw error;
       }
 

@@ -34,8 +34,8 @@ export type TurnRunner = (
     instruction: string; // the user message of this turn
     /**
      * Optional fail-closed permission check for a long-running headless turn.
-     * Workflow continuations use this to stop an already-started turn after the durable workflow
-     * is cancelled. Routine turns omit it.
+     * Workflows use it for durable cancellation; routines use it so deleting the routine or its
+     * Agent stops an already-started unattended turn.
      */
     continuationGuard?: () => Promise<boolean>;
   } & (
@@ -144,10 +144,19 @@ export function createRoutineRunner(options: {
         routineId,
         agentId,
         threadId: channel.threadId,
+        continuationGuard: async () =>
+          (await routineStore.routineForFiring(routineId)) !== null,
         instruction,
       }));
     } catch (error) {
       const reason = reasonOf(error);
+      if (
+        error instanceof Error &&
+        error.name === "HeadlessContinuationCancelled"
+      ) {
+        await routineStore.finishRun(routineRunId, "skipped", reason);
+        return;
+      }
       await routineStore.finishRun(routineRunId, "failed", reason);
 
       /*

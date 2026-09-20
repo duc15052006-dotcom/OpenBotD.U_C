@@ -122,6 +122,37 @@ describe("workflow autonomous continuation", () => {
     expect(checked).toBe(1);
   });
 
+  test("treats headless cancellation as terminal without failing the cancelled step", async () => {
+    const failures: unknown[][] = [];
+    const activity: unknown[][] = [];
+    const cancellation = new Error(
+      "The workflow continuation was cancelled while it was running.",
+    );
+    cancellation.name = "HeadlessContinuationCancelled";
+    const runner = createWorkflowRunner({
+      workflowStore: {
+        get: async () => plan(),
+        failStep: async (...args) => {
+          failures.push(args);
+          return step("failed");
+        },
+      },
+      channelStore: channelStore({
+        recordActivity: async (...args) => {
+          activity.push(args);
+        },
+      }),
+      runTurn: async () => {
+        throw cancellation;
+      },
+    });
+
+    await runner.run(INPUT);
+
+    expect(failures).toEqual([]);
+    expect(activity).toEqual([]);
+  });
+
   test("fails closed when a successful turn leaves the same attempt running", async () => {
     const failures: unknown[][] = [];
     const runner = createWorkflowRunner({

@@ -34,6 +34,7 @@ import {
 } from "drizzle-orm";
 import type { Database } from "../db/client";
 import {
+  agentProfiles,
   channelAgents,
   channelMemberships,
   channels,
@@ -992,6 +993,13 @@ export function createRoutineStore(database: Database): RoutineStore {
           lastRunAt: routines.lastRunAt,
         })
         .from(routines)
+        .innerJoin(
+          agentProfiles,
+          and(
+            eq(agentProfiles.agentId, routines.agentId),
+            isNull(agentProfiles.deletedAt),
+          ),
+        )
         .where(eq(routines.id, id))
         .limit(1);
       return row ?? null;
