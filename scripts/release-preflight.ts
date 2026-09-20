@@ -1559,7 +1559,9 @@ function checkProviderRuntimeCompatibility(): void {
   }
   for (const evidence of ["ANTHROPIC_API_KEY", 'provider === "anthropic"']) {
     if (!credentials.includes(evidence)) {
-      fail(`models: provider-scoped credential resolution is missing ${evidence}`);
+      fail(
+        `models: provider-scoped credential resolution is missing ${evidence}`,
+      );
     }
   }
   for (const evidence of [
