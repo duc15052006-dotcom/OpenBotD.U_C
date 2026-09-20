@@ -3,6 +3,7 @@ import type { WorkItem, WorkQueue } from "../src/work/queue";
 import {
   dispatchClaimedReadyWorkflowSteps,
   offerReadyWorkflowSteps,
+  reconcileExhaustedReadyWorkflowSteps,
   WORKFLOW_READY_DISPATCH_KIND,
 } from "../src/workflows/ready";
 import { WorkflowCapacityError } from "../src/workflows/store";
@@ -11,6 +12,7 @@ function queueStub(overrides: Partial<WorkQueue> = {}): WorkQueue {
   return {
     offer: async () => "queued",
     claim: async () => [],
+    claimExhausted: async () => [],
     renew: async () => true,
     finish: async () => true,
     release: async () => true,
@@ -206,6 +208,46 @@ describe("workflow ready-step dispatch", () => {
     });
 
     expect(released).toBe(1);
+  });
+
+  test("reconciles a crash on the final ready dispatch attempt", async () => {
+    const failed: unknown[][] = [];
+    let finished = 0;
+    const report = await reconcileExhaustedReadyWorkflowSteps({
+      owner: "cleanup-1",
+      maxAttempts: 5,
+      queue: queueStub({
+        claimExhausted: async () => [item(5)],
+        finish: async () => {
+          finished += 1;
+          return true;
+        },
+      }),
+      store: {
+        readySteps: async () => [],
+        startReadyStep: async () => {
+          throw new Error("not used");
+        },
+        failStep: async () => {
+          throw new Error("not used");
+        },
+        failReadyStep: async () => {
+          throw new Error("should use running recovery first");
+        },
+        failAutonomousRunningStep: async (...args) => {
+          failed.push(args);
+          return {} as never;
+        },
+      },
+    });
+
+    expect(finished).toBe(1);
+    expect(failed).toHaveLength(1);
+    expect((failed[0]?.[3] as Date).toISOString()).toBe(
+      "2026-09-19T16:00:00.000Z",
+    );
+    expect(failed[0]?.[4]).toBe(1);
+    expect(report.skipped[0]?.reason).toContain("worker interruption");
   });
 
   test("fails the exact running attempt when autonomous retries are exhausted", async () => {
