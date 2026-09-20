@@ -140,7 +140,7 @@ export function WorkflowsList() {
             <DialogTitle>{selected?.title ?? "Workflow"}</DialogTitle>
             <DialogDescription>
               {selected
-                ? agentName(selected.agentId) + " · " + selected.status
+                ? `${agentName(selected.agentId)} · ${selected.status}`
                 : "Durable workflow state"}
             </DialogDescription>
           </DialogHeader>
