@@ -251,6 +251,26 @@ describe("owner and Bot isolation", () => {
   });
 });
 
+describe("owner-scoped workflow dashboard reads", () => {
+  test("list and detail never expose another owner's workflow", async () => {
+    const first = await setUp();
+    const second = await setUp();
+    const firstPlan = await store.create(
+      planInput(first.owner, first.agentId, first.channel.id),
+    );
+    const secondPlan = await store.create(
+      planInput(second.owner, second.agentId, second.channel.id),
+    );
+
+    const firstRows = await store.listForOwner(first.owner.id);
+    expect(firstRows.map((row) => row.id)).toContain(firstPlan.id);
+    expect(firstRows.map((row) => row.id)).not.toContain(secondPlan.id);
+
+    expect(await store.getForOwner(first.owner.id, firstPlan.id)).not.toBeNull();
+    expect(await store.getForOwner(first.owner.id, secondPlan.id)).toBeNull();
+  });
+});
+
 describe("dependency and lifecycle transitions", () => {
   test("completion promotes dependencies and the last step completes the run", async () => {
     const { owner, agentId, channel } = await setUp();
