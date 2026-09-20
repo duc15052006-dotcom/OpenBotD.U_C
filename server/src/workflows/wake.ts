@@ -14,12 +14,9 @@ const DEFAULT_RETRY_DELAY_MS = 5_000;
 
 type WorkflowWakeStore = Pick<
   WorkflowStore,
-  | "dueWaitingSteps"
-  | "resumeWaitingStep"
-  | "failWaitingStep"
-  | "failAutonomousRunningStep"
-  | "failStep"
->;
+  "dueWaitingSteps" | "resumeWaitingStep" | "failWaitingStep" | "failStep"
+> &
+  Partial<Pick<WorkflowStore, "failAutonomousRunningStep">>;
 
 export type WorkflowWakeOptions = {
   store: WorkflowWakeStore;
@@ -329,9 +326,9 @@ export async function dispatchClaimedWorkflowWaits(
 export async function reconcileExhaustedWorkflowWaits(
   options: WorkflowWakeOptions,
 ): Promise<WorkflowWakeReport> {
-  if (!options.queue.claimExhausted) {
+  if (!options.queue.claimExhausted || !options.store.failAutonomousRunningStep) {
     throw new Error(
-      "work queue exhausted-item claims are unavailable for workflow recovery",
+      "exhausted workflow wait recovery capabilities are unavailable",
     );
   }
   const leaseMs = options.leaseMs ?? DEFAULT_LEASE_MS;
