@@ -81,6 +81,14 @@ export function createWorkflowRunner(options: {
         workflowId: input.workflowId,
         agentId: input.agentId,
         threadId: channel.threadId,
+        continuationGuard: async () => {
+          const current = await workflowStore.get(identity, input.workflowId);
+          if (!current || current.status === "cancelled") return false;
+          const currentStep = current.steps.find(
+            (candidate) => candidate.key === input.stepKey,
+          );
+          return currentStep?.status !== "cancelled";
+        },
         instruction: continuationInstruction({
           workflowId: input.workflowId,
           stepKey: input.stepKey,
