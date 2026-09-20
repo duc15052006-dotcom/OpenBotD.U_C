@@ -266,7 +266,9 @@ describe("owner-scoped workflow dashboard reads", () => {
     expect(firstRows.map((row) => row.id)).toContain(firstPlan.id);
     expect(firstRows.map((row) => row.id)).not.toContain(secondPlan.id);
 
-    expect(await store.getForOwner(first.owner.id, firstPlan.id)).not.toBeNull();
+    expect(
+      await store.getForOwner(first.owner.id, firstPlan.id),
+    ).not.toBeNull();
     expect(await store.getForOwner(first.owner.id, secondPlan.id)).toBeNull();
   });
 });
