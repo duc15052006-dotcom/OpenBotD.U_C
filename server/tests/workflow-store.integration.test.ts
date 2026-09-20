@@ -404,6 +404,10 @@ describe("durable ready-step dispatch", () => {
       );
     }
 
+    // Pausing the workflow does not stop the already-running headless turn, so it must
+    // continue occupying capacity until that step actually checkpoints.
+    await store.pause(who, plans[0]!.id);
+
     const refused = plans[MAX_CONCURRENT_WORKFLOW_STEPS_PER_AGENT]!;
     const queued = (await store.readySteps(500)).find(
       (candidate) =>
