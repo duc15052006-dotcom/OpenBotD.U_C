@@ -451,13 +451,13 @@ function reachOf(raw: string): Reach {
   } catch {
     return "public";
   }
-  bare = bare.replace(/^\\[|\\]$/g, "").replace(/\\.+$/, "");
+  bare = bare.replace(/^\[|\]$/g, "").replace(/\.+$/, "");
 
   if (
     bare === "localhost" ||
     bare === "::1" ||
     bare === "0:0:0:0:0:0:0:1" ||
-    /^127\\./.test(bare)
+    /^127\./.test(bare)
   ) {
     return "loopback";
   }
@@ -467,7 +467,7 @@ function reachOf(raw: string): Reach {
   }
 
   const octets = bare.split(".");
-  if (octets.length === 4 && octets.every((part) => /^\\d{1,3}$/.test(part))) {
+  if (octets.length === 4 && octets.every((part) => /^\d{1,3}$/.test(part))) {
     const [a, b] = octets.map(Number) as [number, number, number, number];
     const privateV4 =
       a === 10 ||
