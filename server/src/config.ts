@@ -406,6 +406,90 @@ function keyEncryptionKey(environment: Environment): string {
   return value;
 }
 
+
+/**
+ * Whether this deployment may run with no sign-in at all.
+ *
+ * OPENBOT_SINGLE_USER is an explicit opt-in, but an opt-in alone must not turn a publicly
+ * reachable deployment into one administrator with no authentication. Loopback is silent,
+ * private/LAN addresses are allowed with a warning, and public or unparseable addresses fail closed.
+ */
+function singleUserAllowed(
+  environment: Environment,
+  hasProvider: boolean,
+): boolean {
+  if (!singleUserEnabled(environment, hasProvider)) return false;
+
+  const reachable = [
+    optional(environment, "OPENBOT_PUBLIC_URL"),
+    optional(environment, "OPENBOT_APP_URL"),
+    ...commaSeparated(environment, "TRUSTED_ORIGINS"),
+  ].filter((value): value is string => value !== undefined);
+
+  const published = reachable.filter((value) => reachOf(value) === "public");
+  if (published.length > 0) {
+    throw new Error(
+      `OPENBOT_SINGLE_USER admits every request as one administrator with no sign-in, so it cannot be combined with an address the public internet reaches: ${published.join(", ")}. Configure GOOGLE_OAUTH_*, MICROSOFT_OAUTH_* or OKTA_OAUTH_* with BETTER_AUTH_SECRET and BETTER_AUTH_URL, or serve it somewhere only you reach.`,
+    );
+  }
+
+  const shared = reachable.filter((value) => reachOf(value) === "private");
+  if (shared.length > 0) {
+    console.warn(
+      `OPENBOT_SINGLE_USER admits every request as one administrator with no sign-in, and this deployment answers on an address beyond this machine: ${shared.join(", ")}. Anybody on that network is that administrator. Configure a sign-in provider before anybody else is on it.`,
+    );
+  }
+
+  return true;
+}
+
+type Reach = "loopback" | "private" | "public";
+
+function reachOf(raw: string): Reach {
+  let bare: string;
+  try {
+    bare = new URL(raw).hostname.toLowerCase();
+  } catch {
+    return "public";
+  }
+  bare = bare.replace(/^\\[|\\]$/g, "").replace(/\\.+$/, "");
+
+  if (
+    bare === "localhost" ||
+    bare === "::1" ||
+    bare === "0:0:0:0:0:0:0:1" ||
+    /^127\\./.test(bare)
+  ) {
+    return "loopback";
+  }
+
+  if (bare.includes(":")) {
+    return /^f[cd]/.test(bare) || /^fe[89ab]/.test(bare)
+      ? "private"
+      : "public";
+  }
+
+  const octets = bare.split(".");
+  if (octets.length === 4 && octets.every((part) => /^\\d{1,3}$/.test(part))) {
+    const [a, b] = octets.map(Number) as [number, number, number, number];
+    const privateV4 =
+      a === 10 ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      (a === 169 && b === 254) ||
+      (a === 100 && b >= 64 && b <= 127);
+    return privateV4 ? "private" : "public";
+  }
+
+  const privateName =
+    !bare.includes(".") ||
+    bare.endsWith(".local") ||
+    bare.endsWith(".internal") ||
+    bare.endsWith(".lan") ||
+    bare.endsWith(".home.arpa");
+  return privateName ? "private" : "public";
+}
+
 function url(environment: Environment, name: string): string | undefined {
   const value = optional(environment, name);
   if (!value) {
@@ -1037,7 +1121,7 @@ export function loadConfig(
     auditRetentionDays: auditRetentionDays(environment),
     oauth: { google },
     auth,
-    singleUser: singleUserEnabled(
+    singleUser: singleUserAllowed(
       environment,
       configuredAuthProviders(auth).length > 0,
     ),
