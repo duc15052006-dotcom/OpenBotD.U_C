@@ -187,7 +187,7 @@ function checkFinalRuntimeHardening(): void {
   }
   for (const evidence of [
     "serverExists(serverId: string)",
-    "await store.serverExists(serverId ?? \"\")",
+    'await store.serverExists(serverId ?? "")',
   ]) {
     if (!store.includes(evidence) && !routes.includes(evidence)) {
       fail(`plugins: MCP grant existence validation is missing ${evidence}`);
@@ -206,7 +206,7 @@ function checkFinalRuntimeHardening(): void {
       fail(`models: provider prefix is not preserved in ${path}`);
     }
     if (source.includes('return model if "/" in model')) {
-      fail(`models: slash model names can still bypass provider selection in ${path}`);
+      fail(\n        `models: slash model names can still bypass provider selection in ${path}`,\n      );
     }
   }
 }
