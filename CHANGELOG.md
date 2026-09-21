@@ -8,6 +8,14 @@ Newest first. `Unreleased` is what is on `main` and not yet tagged.
 
 ## Unreleased
 
+### Kubernetes Bot computers run as the image's unprivileged user
+
+Computer pods in both shared and sandbox modes now run as the pinned `pwuser` UID/GID instead of
+root. The chart applies an `fsGroup` to persistent volumes and sets the runtime home/Bun paths the
+direct computer command needs. At startup, the computer refuses to become healthy if its workspace,
+browser profile or quarantine directory is not writable, so an unsupported storage class cannot
+silently replace a persistent Chromium profile with a throwaway one.
+
 ### Large text attachments warn when the model may read only a prefix
 
 The composer now marks an accepted text/CSV/JSON/Markdown attachment with `may be cut` when its
