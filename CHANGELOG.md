@@ -8,6 +8,14 @@ Newest first. `Unreleased` is what is on `main` and not yet tagged.
 
 ## Unreleased
 
+### No sign-in cannot be combined with a public address
+
+`OPENBOT_SINGLE_USER=true` still explicitly enables the local one-administrator/no-sign-in mode,
+but it no longer permits that mode on an address the public internet can reach. Public values in
+`OPENBOT_PUBLIC_URL`, `OPENBOT_APP_URL` or `TRUSTED_ORIGINS` now fail closed at startup. Loopback
+is unchanged, while private LAN, Tailnet, VPN and local hostnames remain allowed with a warning.
+
+
 ### The Google Drive connector reaches files in shared drives
 
 Drive leaves shared drive items out of any `files.get` or `files.list` request that does not say it
