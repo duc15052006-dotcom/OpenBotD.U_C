@@ -206,7 +206,9 @@ function checkFinalRuntimeHardening(): void {
       fail(`models: provider prefix is not preserved in ${path}`);
     }
     if (source.includes('return model if "/" in model')) {
-      fail(\n        `models: slash model names can still bypass provider selection in ${path}`,\n      );
+      fail(
+        `models: slash model names can still bypass provider selection in ${path}`,
+      );
     }
   }
 }
