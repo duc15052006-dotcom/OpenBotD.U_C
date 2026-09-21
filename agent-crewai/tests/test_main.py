@@ -56,8 +56,8 @@ def run_input(messages):
         ("openai", "   ", "openai/gpt-5.5"),
         ("anthropic", "claude-3-5-sonnet-latest", "anthropic/claude-3-5-sonnet-latest"),
         ("custom-provider", "custom-model", "custom-provider/custom-model"),
-        ("   ", "azure/gpt-4o", "azure/gpt-4o"),
-        ("anthropic", "openai/gpt-4o", "openai/gpt-4o"),
+        ("   ", "azure/gpt-4o", "openai/azure/gpt-4o"),
+        ("anthropic", "openai/gpt-4o", "anthropic/openai/gpt-4o"),
     ],
 )
 def test_model_normalizes_blank_provider_and_model_before_defaults(
