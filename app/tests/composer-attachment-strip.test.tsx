@@ -122,7 +122,6 @@ test("an unnamed image going up falls back to the same word the finished one use
   expect(getByRole("img", { name: "Attachment, uploading" })).toBeTruthy();
 });
 
-
 test("a text file that fits shows no truncation warning", () => {
   const { queryByText } = render(
     <AttachmentStrip files={[notes]} images={[]} onRemove={() => {}} />,
