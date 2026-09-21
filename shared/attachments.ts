@@ -95,6 +95,15 @@ export const MAX_FILE_BYTES = 1024 * 1024;
 export const MAX_EXTRACTED_CHARACTERS = 120_000;
 
 /**
+ * Whether a file of this many bytes may reach the model truncated.
+ * UTF-8 decodes N bytes to at most N characters, so a file at or below
+ * MAX_EXTRACTED_CHARACTERS cannot be cut. Larger files may be.
+ */
+export function mayBeTruncatedForModel(sizeBytes: number): boolean {
+  return sizeBytes > MAX_EXTRACTED_CHARACTERS;
+}
+
+/**
  * `image/svg+xml` is deliberately absent.
  *
  * An SVG is an image and can also carry script. Served inline from this app's own origin, one
