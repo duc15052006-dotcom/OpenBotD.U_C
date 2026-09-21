@@ -505,6 +505,9 @@ be able to address the API server at all, and the default is the wrong way round
             (dict "name" "PORT" "value" "4100")
             (dict "name" "WORKSPACE_DIR" "value" "/workspace")
             (dict "name" "PROFILES_DIR" "value" "/profiles")
+            (dict "name" "QUARANTINE_DIR" "value" "/quarantine")
+            (dict "name" "HOME" "value" "/home/pwuser")
+            (dict "name" "BUN_INSTALL" "value" "/home/pwuser/.bun")
             (dict "name" "COMPUTER_TOKEN" "valueFrom" (dict "secretKeyRef" (dict
               "name" (default (include "openbot.secretName" .) .Values.computers.existingTokenSecret)
               "key" "computer-token"))))
@@ -519,6 +522,7 @@ be able to address the API server at all, and the default is the wrong way round
         "resources" .Values.computers.resources)))) -}}
 {{- $pod := index $spec "podTemplate" -}}
 {{- $podSpec := index $pod "spec" -}}
+{{- with .Values.computers.podSecurityContext }}{{- $_ := set $podSpec "securityContext" . }}{{- end }}
 {{- with .Values.computers.runtimeClassName }}{{- $_ := set $podSpec "runtimeClassName" . }}{{- end }}
 {{- with .Values.imagePullSecrets }}{{- $_ := set $podSpec "imagePullSecrets" . }}{{- end }}
 {{- with .Values.computers.nodeSelector }}{{- $_ := set $podSpec "nodeSelector" . }}{{- end }}
