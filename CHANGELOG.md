@@ -8,6 +8,13 @@ Newest first. `Unreleased` is what is on `main` and not yet tagged.
 
 ## Unreleased
 
+### The EKS cluster recipe blocks Bot pods from the node's IAM role
+
+The EKS example now sets `disableIMDSv1` and `disablePodIMDS` on its managed node group so a Bot's
+shell cannot reach EC2 instance metadata and obtain the node IAM role by default. The README also
+calls out the EBS CSI/IMDS trade-off and points deployments that need pod-level IMDS back to enforced
+NetworkPolicy rather than hiding the cost of the setting.
+
 ### Kubernetes Bot computers run as the image's unprivileged user
 
 Computer pods in both shared and sandbox modes now run as the pinned `pwuser` UID/GID instead of
