@@ -60,8 +60,8 @@ export const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
  * attachment. That is the outcome that constant exists to prevent.
  *
  * So the gap stays, and what it costs is stated here rather than left for somebody to derive by
- * dividing one constant by the other. What is NOT yet resolved is that the person who uploads the
- * file is not told — see `MAX_EXTRACTED_CHARACTERS`.
+ * dividing one constant by the other. The composer now warns when the byte size means model-side
+ * truncation is possible; the upload is still accepted because the readable prefix remains useful.
  */
 export const MAX_FILE_BYTES = 1024 * 1024;
 
@@ -73,7 +73,7 @@ export const MAX_FILE_BYTES = 1024 * 1024;
  * tokens, which every model this deployment targets can hold alongside a conversation. Text past
  * this point is cut and the part says so, rather than being silently dropped.
  *
- * THE PART SAYS SO TO THE MODEL. NOBODY SAYS SO TO THE PERSON WHO ATTACHED THE FILE.
+ * THE PART SAYS SO TO THE MODEL, AND THE COMPOSER WARNS THE PERSON BEFORE SEND.
  *
  * `extractDocumentText` (`server/src/channels/attachment-parts.ts`) appends
  * `[attachment truncated at 120000 characters]` to what it sends, so the model is never left
