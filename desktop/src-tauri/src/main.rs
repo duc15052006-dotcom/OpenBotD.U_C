@@ -4740,8 +4740,10 @@ mod tests {
         let root = temp_root("valid-existing-encryption-key");
         std::fs::create_dir_all(&root).unwrap();
         assert!(
-            require_existing_encryption_key(&root, &std::collections::BTreeMap::new(), || Ok(false))
-                .is_ok()
+            require_existing_encryption_key(&root, &std::collections::BTreeMap::new(), || Ok(
+                false
+            ))
+            .is_ok()
         );
         assert!(
             require_existing_encryption_key(&root, &std::collections::BTreeMap::new(), || Ok(true))
