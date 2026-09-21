@@ -18,7 +18,7 @@ TOKEN_HEADER = "x-openbot-agent-token"
 def _model_id() -> str:
     provider = (os.environ.get("BOT_PROVIDER") or "openai").strip()
     model = (os.environ.get("BOT_MODEL") or "gpt-4o-mini").strip()
-    return model if "/" in model else f"{provider}/{model}"
+    return f"{provider}/{model}"
 
 
 app = FastAPI()
