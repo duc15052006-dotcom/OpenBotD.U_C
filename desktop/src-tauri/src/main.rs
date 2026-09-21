@@ -5538,6 +5538,11 @@ fn main() {
         ["version","--format",_] => println!("1.44"),
         ["info","--format","{{.Host.ServiceIsRemote}}"] => println!("false"),
         ["compose","version"] => println!("Synthetic Compose"),
+        ["compose","config","--format","json"] => println!(
+            "{}",
+            r#"{"services":{"postgres":{"volumes":[{"type":"volume","source":"postgres-data","target":"/var/lib/postgresql/data"}]},"supervisor":{"environment":{"COMPUTER_NAMESPACE":"fixture"}}},"volumes":{"postgres-data":{"name":"openbot-postgres-data"}}}"#
+        ),
+        ["volume","ls","--format","{{.Name}}"] => (),
         ["compose","ps","--format",_] => (),
         ["compose","up",..] => {
             fs::write(cwd.join("fixture-containers-running"),&identity).unwrap();
