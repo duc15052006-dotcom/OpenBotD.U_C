@@ -172,6 +172,45 @@ function checkDesktopNativeBunExtraction(): void {
   }
 }
 
+function checkFinalRuntimeHardening(): void {
+  const mcp = read("server/src/plugins/mcp.ts");
+  const routes = read("server/src/plugins/routes.ts");
+  const store = read("server/src/plugins/store.ts");
+
+  for (const evidence of [
+    "structuredContent?: unknown",
+    '"structuredContent" in result ? result.structuredContent : undefined',
+  ]) {
+    if (!mcp.includes(evidence)) {
+      fail(`plugins: MCP structuredContent support is missing ${evidence}`);
+    }
+  }
+  for (const evidence of [
+    "serverExists(serverId: string)",
+    "await store.serverExists(serverId ?? \"\")",
+  ]) {
+    if (!store.includes(evidence) && !routes.includes(evidence)) {
+      fail(`plugins: MCP grant existence validation is missing ${evidence}`);
+    }
+  }
+
+  for (const path of [
+    "agent-adk/src/main.py",
+    "agent-agno/src/main.py",
+    "agent-crewai/src/main.py",
+    "agent-llamaindex/src/main.py",
+    "agent-strands/src/main.py",
+  ]) {
+    const source = read(path);
+    if (!source.includes('return f"{provider}/{model}"')) {
+      fail(`models: provider prefix is not preserved in ${path}`);
+    }
+    if (source.includes('return model if "/" in model')) {
+      fail(`models: slash model names can still bypass provider selection in ${path}`);
+    }
+  }
+}
+
 function checkComputerSandboxBoundary(): void {
   const compose = read("docker-compose.yml");
   const supervisor = read("supervisor/src/docker.ts");
@@ -2031,6 +2070,7 @@ function checkVersionSources(): void {
 
 checkDesktopBoundary();
 checkDesktopNativeBunExtraction();
+checkFinalRuntimeHardening();
 checkComputerSandboxBoundary();
 checkInteractiveComputerControls();
 checkReleaseWiring();
