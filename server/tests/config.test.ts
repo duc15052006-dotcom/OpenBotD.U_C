@@ -292,7 +292,61 @@ describe("deployment configuration", () => {
         "http://localhost:3010",
       ],
       initialAdminEmails: ["admin@openbot.test", "owner@openbot.test"],
+      allowedEmailDomains: [],
     });
+  });
+
+  test("normalizes configured sign-in domains", () => {
+    const config = loadConfig({
+      ...baseEnvironment,
+      SIGNIN_ALLOWED_EMAIL_DOMAINS: " @Example.COM. , ,  foo.TEST ",
+    });
+
+    expect(config.auth?.allowedEmailDomains).toEqual([
+      "example.com",
+      "foo.test",
+    ]);
+  });
+
+  test.each(["@", ".", "@."])(
+    "refuses a sign-in domain list that names no domain: %p",
+    (value) => {
+      expect(() =>
+        loadConfig({
+          ...baseEnvironment,
+          SIGNIN_ALLOWED_EMAIL_DOMAINS: value,
+        }),
+      ).toThrow("names no domain");
+    },
+  );
+
+  test.each(["common", "organizations", "consumers", "Common", "  COMMON  "])(
+    "refuses a domain list with Entra multi-tenant audience %p",
+    (tenantId) => {
+      expect(() =>
+        loadConfig({
+          ...withoutSignIn,
+          ...SESSION,
+          MICROSOFT_OAUTH_CLIENT_ID: "entra-client-id",
+          MICROSOFT_OAUTH_CLIENT_SECRET: "entra-client-secret",
+          MICROSOFT_OAUTH_TENANT_ID: tenantId,
+          SIGNIN_ALLOWED_EMAIL_DOMAINS: "example.com",
+        }),
+      ).toThrow("names no directory");
+    },
+  );
+
+  test("accepts a domain list with a named Entra directory", () => {
+    const config = loadConfig({
+      ...withoutSignIn,
+      ...SESSION,
+      MICROSOFT_OAUTH_CLIENT_ID: "entra-client-id",
+      MICROSOFT_OAUTH_CLIENT_SECRET: "entra-client-secret",
+      MICROSOFT_OAUTH_TENANT_ID: "8f2c1e40-0000-0000-0000-000000000000",
+      SIGNIN_ALLOWED_EMAIL_DOMAINS: "example.com",
+    });
+
+    expect(config.auth?.allowedEmailDomains).toEqual(["example.com"]);
   });
 
   /**
