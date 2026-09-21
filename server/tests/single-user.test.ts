@@ -11,6 +11,10 @@ import { singleUserEnabled } from "../src/auth/dev-actor";
  * outside. It now takes an explicit flag and refuses to start without one.
  *
  * The cases below are the four a deployment can actually be in.
+ *
+ * Reachability is checked separately by config.ts: the flag enables the mode, but a public address
+ * can still refuse it. NODE_ENV grants no permission here.
+ *
  */
 describe("running with no sign-in", () => {
   test("a configured provider always wins, whatever else is set", () => {
