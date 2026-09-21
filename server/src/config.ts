@@ -4,6 +4,7 @@
  * boot boundary.
  */
 import { singleUserEnabled } from "./auth/dev-actor";
+import { normalizeDomain } from "./auth/email-domain";
 import type { ActionPolicy } from "./computer/policy";
 import { parseActionPolicy } from "./computer/policy-store";
 
@@ -84,6 +85,11 @@ export type AuthConfig = {
   secret: string;
   trustedOrigins: string[];
   initialAdminEmails: string[];
+  /**
+   * Email domains this deployment admits, on top of whatever the provider decided.
+   * Empty means no opinion and preserves the current sign-in behaviour.
+   */
+  allowedEmailDomains: string[];
   google?: OAuthClient;
   /**
    * `tenantId` decides who may sign in at all, so it is not a detail. `common` admits any Microsoft
@@ -594,6 +600,20 @@ function commaSeparated(environment: Environment, name: string): string[] {
     .filter(Boolean);
 }
 
+/** Microsoft's multi-tenant audiences: none names one directory this deployment controls. */
+const MULTI_TENANT_AUDIENCES = new Set([
+  "common",
+  "organizations",
+  "consumers",
+]);
+
+function namesNoDirectory(tenantId: string | undefined): boolean {
+  return (
+    tenantId !== undefined &&
+    MULTI_TENANT_AUDIENCES.has(tenantId.trim().toLowerCase())
+  );
+}
+
 /**
  * Sign-in, if this deployment has an identity provider to sign people in with.
  *
@@ -651,6 +671,36 @@ function authConfig(
     );
   }
 
+  const namedDomains = commaSeparated(
+    environment,
+    "SIGNIN_ALLOWED_EMAIL_DOMAINS",
+  );
+  const allowedEmailDomains = namedDomains
+    .map(normalizeDomain)
+    .filter((domain): domain is string => domain !== undefined);
+
+  if (namedDomains.length > 0 && allowedEmailDomains.length === 0) {
+    throw new Error(
+      "SIGNIN_ALLOWED_EMAIL_DOMAINS is set but names no domain, so every sign-in would be refused. Write it as example.com,example.co.uk",
+    );
+  }
+
+  if (allowedEmailDomains.length > 0 && namesNoDirectory(microsoft?.tenantId)) {
+    throw new Error(
+      `SIGNIN_ALLOWED_EMAIL_DOMAINS names domains, but MICROSOFT_OAUTH_TENANT_ID is \`${microsoft?.tenantId}\`, which names no directory and admits accounts from any of them. Set your directory GUID before using the domain filter.`,
+    );
+  }
+
+  if (
+    isProduction(environment) &&
+    allowedEmailDomains.length === 0 &&
+    namesNoDirectory(microsoft?.tenantId)
+  ) {
+    console.warn(
+      "MICROSOFT_OAUTH_TENANT_ID is multi-tenant and SIGNIN_ALLOWED_EMAIL_DOMAINS names no domain. Set your directory GUID or explicitly constrain who may sign in.",
+    );
+  }
+
   return {
     baseUrl,
     secret,
@@ -663,6 +713,7 @@ function authConfig(
          */
         ["http://127.0.0.1:3010", "http://[::1]:3010", "http://localhost:3010"],
     initialAdminEmails,
+    allowedEmailDomains,
     ...(google ? { google } : {}),
     ...(microsoft ? { microsoft } : {}),
     ...(okta ? { okta } : {}),

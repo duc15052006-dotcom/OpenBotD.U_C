@@ -121,6 +121,10 @@ config:
   publicUrl: ""
   # Administrators by email address, comma-separated. Required unless singleUser is on.
   initialAdminEmails: ""
+  # Email domains admitted at sign-in, comma-separated. Empty keeps the provider's
+  # existing behaviour. Exact matches only: example.com does not include sub.example.com.
+  # This is an additional filter, not proof that a provider verified the address.
+  allowedEmailDomains: ""
   # Every request is one fixed administrator. Local trials only; the deployment refuses to start
   # with no identity provider unless this says somebody meant it.
   singleUser: false

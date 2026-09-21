@@ -8,6 +8,14 @@ Newest first. `Unreleased` is what is on `main` and not yet tagged.
 
 ## Unreleased
 
+### A deployment can restrict sign-in to named email domains
+
+`SIGNIN_ALLOWED_EMAIL_DOMAINS` adds an exact-match sign-in filter on top of the configured identity
+provider. The same rule is exposed as `config.allowedEmailDomains` in the Helm chart. Empty keeps the
+existing behaviour. Invalid lists fail at startup, and Entra multi-tenant audiences are refused when
+the filter is enabled because those audiences do not identify one directory the deployment controls.
+Refused sign-ins are recorded in the existing audit trail.
+
 ### No sign-in cannot be combined with a public address
 
 `OPENBOT_SINGLE_USER=true` still explicitly enables the local one-administrator/no-sign-in mode,
