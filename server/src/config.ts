@@ -406,7 +406,6 @@ function keyEncryptionKey(environment: Environment): string {
   return value;
 }
 
-
 /**
  * Whether this deployment may run with no sign-in at all.
  *
@@ -464,9 +463,7 @@ function reachOf(raw: string): Reach {
   }
 
   if (bare.includes(":")) {
-    return /^f[cd]/.test(bare) || /^fe[89ab]/.test(bare)
-      ? "private"
-      : "public";
+    return /^f[cd]/.test(bare) || /^fe[89ab]/.test(bare) ? "private" : "public";
   }
 
   const octets = bare.split(".");
