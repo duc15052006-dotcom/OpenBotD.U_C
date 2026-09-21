@@ -286,9 +286,8 @@ const workspace = createWorkspace(WORKSPACE_ROOT, {
  * here would put an entry in the map on the path that closes browsers, which is where the map is
  * meant to shrink.
  */
-const profiles = createProfiles(
-  PROFILES_ROOT,
-  (botId) => sessions.get(botId)?.viewer.releaseAll(COMPUTER_STOPPED),
+const profiles = createProfiles(PROFILES_ROOT, (botId) =>
+  sessions.get(botId)?.viewer.releaseAll(COMPUTER_STOPPED),
 );
 // Rooted in the same workspace the file tools use, so a command and a written file see one
 // directory rather than two.
