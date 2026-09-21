@@ -164,7 +164,7 @@ Two things are worth knowing before pointing a deployment at any gateway. Not ev
 
 | Variable                     | Meaning                                                                                |
 | ---------------------------- | -------------------------------------------------------------------------------------- |
-| `OPENBOT_SINGLE_USER`        | One fixed administrator and no sign-in. **Required** when no identity provider is configured, or the deployment refuses to start. Ignored when one is. |
+| `OPENBOT_SINGLE_USER`        | One fixed administrator and no sign-in. **Required** when no identity provider is configured, or the deployment refuses to start. Refused on a public address. Ignored when a provider is configured. |
 | `GOOGLE_OAUTH_CLIENT_ID`     | Google OAuth client id.                                                                |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | Google OAuth client secret.                                                            |
 | `MICROSOFT_OAUTH_CLIENT_ID`  | Microsoft Entra ID application id.                                                     |
@@ -185,6 +185,12 @@ nothing to sign anybody in and does not say that was deliberate refuses to start
 configure, because a public URL where every visitor is an administrator fails silently. `NODE_ENV`
 does not enter into it. `.env.example` ships the line switched on, so a clone runs with no
 configuration at all.
+
+**But not on a public address.** If `OPENBOT_PUBLIC_URL`, `OPENBOT_APP_URL` or any
+`TRUSTED_ORIGINS` entry names an address the public internet reaches, startup is refused and the
+address is named. Loopback is silent. A private address is allowed with a warning because home LAN,
+Tailnet, VPN and `.local` deployments are valid single-user uses; anybody on that network is that
+administrator. Unparseable addresses fail closed as public.
 
 **Any one provider turns sign-in on**, and several may be configured at once. Each provider's id and
 secret must be set together, Okta additionally needs its issuer, and any of them requires
