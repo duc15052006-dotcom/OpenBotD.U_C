@@ -22,7 +22,7 @@ def _model_id() -> str:
     """`provider/model`, which is how litellm addresses one and how OpenBot stores the choice."""
     provider = (os.environ.get("BOT_PROVIDER") or "openai").strip()
     model = (os.environ.get("BOT_MODEL") or "gpt-5.5").strip()
-    return model if "/" in model else f"{provider}/{model}"
+    return f"{provider}/{model}"
 
 
 agent = Agent(
