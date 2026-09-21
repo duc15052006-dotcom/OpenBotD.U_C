@@ -685,10 +685,7 @@ function authConfig(
     );
   }
 
-  if (
-    allowedEmailDomains.length > 0 &&
-    namesNoDirectory(microsoft?.tenantId)
-  ) {
+  if (allowedEmailDomains.length > 0 && namesNoDirectory(microsoft?.tenantId)) {
     throw new Error(
       `SIGNIN_ALLOWED_EMAIL_DOMAINS names domains, but MICROSOFT_OAUTH_TENANT_ID is \`${microsoft?.tenantId}\`, which names no directory and admits accounts from any of them. Set your directory GUID before using the domain filter.`,
     );
