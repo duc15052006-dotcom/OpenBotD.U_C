@@ -1183,17 +1183,22 @@ fn intelligence_key_for_start(
 fn require_existing_encryption_key(
     root: &Path,
     secrets: &std::collections::BTreeMap<String, String>,
+    existing_postgres_volume: impl FnOnce() -> Result<bool, Problem>,
 ) -> Result<(), Problem> {
+    if secrets
+        .get("KEY_ENCRYPTION_KEY")
+        .is_some_and(|value| openbot_env::usable_encryption_key(value))
+    {
+        return Ok(());
+    }
     let configured = openbot_desktop_lib::saved_intent::SavedIntent::read(root)
         .model
         .is_some()
         || openbot_env::already_set(&root.join(".env"), &["DATABASE_URL"])
             .contains_key("DATABASE_URL");
-    if configured
-        && !secrets
-            .get("KEY_ENCRYPTION_KEY")
-            .is_some_and(|value| openbot_env::usable_encryption_key(value))
-    {
+    // A reinstall can remove root-local markers while Compose keeps the named database volume.
+    // Only a verified fresh database may receive a newly minted encryption key.
+    if configured || existing_postgres_volume()? {
         return Err(Problem::plain(
             "This installation's saved encryption key is missing, invalid, or public. Restore its original private key from backup, or get help preserving its saved data. OpenBot will not replace the key automatically.",
         ));
@@ -1351,7 +1356,9 @@ async fn start_stack_inner<R: tauri::Runtime>(
             &root.join(".env"),
             &openbot_env::MINTED[..],
         )?;
-        require_existing_encryption_key(&root, &existing_secrets)?;
+        require_existing_encryption_key(&root, &existing_secrets, || {
+            stack::postgres_volume_exists(&found, &root, &existing_secrets)
+        })?;
 
         let settings = openbot_env::compose(
             &openbot_env::Intelligence {
@@ -4717,7 +4724,10 @@ mod tests {
                     })
                     .unwrap_or_default();
                 assert!(
-                    require_existing_encryption_key(&root, &secrets).is_err(),
+                    require_existing_encryption_key(&root, &secrets, || {
+                        panic!("configured roots already require their original key")
+                    })
+                    .is_err(),
                     "{marker}: {original:?}"
                 );
             }
@@ -4729,7 +4739,21 @@ mod tests {
     fn configured_root_without_original_key_is_rejected_but_fresh_root_is_allowed() {
         let root = temp_root("valid-existing-encryption-key");
         std::fs::create_dir_all(&root).unwrap();
-        assert!(require_existing_encryption_key(&root, &std::collections::BTreeMap::new()).is_ok());
+        assert!(
+            require_existing_encryption_key(&root, &std::collections::BTreeMap::new(), || Ok(false))
+                .is_ok()
+        );
+        assert!(
+            require_existing_encryption_key(&root, &std::collections::BTreeMap::new(), || Ok(true))
+                .is_err()
+        );
+        let unavailable = Problem::plain("selected engine unavailable");
+        assert_eq!(
+            require_existing_encryption_key(&root, &std::collections::BTreeMap::new(), || Err(
+                unavailable.clone()
+            )),
+            Err(unavailable)
+        );
         std::fs::write(
             root.join(".env"),
             "DATABASE_URL=postgres://synthetic-local\n",
@@ -4738,7 +4762,10 @@ mod tests {
         let original = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
         let secrets =
             std::collections::BTreeMap::from([("KEY_ENCRYPTION_KEY".into(), original.into())]);
-        assert!(require_existing_encryption_key(&root, &secrets).is_ok());
+        assert!(require_existing_encryption_key(&root, &secrets, || {
+            panic!("a valid original key needs no volume probe")
+        })
+        .is_ok());
         assert_eq!(secrets["KEY_ENCRYPTION_KEY"], original);
         std::fs::remove_dir_all(root).unwrap();
     }
