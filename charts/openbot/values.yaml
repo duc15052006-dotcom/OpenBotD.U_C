@@ -204,6 +204,20 @@ computers:
   # node configuration. A chart that assumed a RuntimeClass would fail to install without one.
   runtimeClassName: ""
 
+  # Who a Kubernetes computer pod runs as. The all-in-one image already creates pwuser at 1001;
+  # computer pods override the image's s6 entrypoint, so without this they run as root.
+  #
+  # fsGroup makes persistent volumes writable where the storage driver supports it. On hostPath-like
+  # storage that ignores fsGroup, the computer now refuses to start instead of silently using a
+  # throwaway browser profile. Set this value to null only when the cluster cannot support it and the
+  # operator has deliberately chosen to run the computer pod as root.
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1001
+    runAsGroup: 1001
+    fsGroup: 1001
+    fsGroupChangePolicy: OnRootMismatch
+
   # How many browsers one computer holds at once, and how long an untouched one is kept. Empty means
   # the process default, which is a handful and thirty minutes.
   maxBrowsers: ""

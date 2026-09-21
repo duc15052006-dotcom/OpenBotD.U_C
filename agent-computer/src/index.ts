@@ -1,3 +1,5 @@
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { serve } from "bun";
 import type { Page } from "playwright";
 import {
@@ -220,7 +222,35 @@ function botIdOf(request: Request, fallback?: string | null): string {
  * lives in workspace.ts.
  */
 const WORKSPACE_ROOT = process.env.WORKSPACE_DIR?.trim() || "/workspace";
+const PROFILES_ROOT = process.env.PROFILES_DIR?.trim() || "/profiles";
 const QUARANTINE_ROOT = process.env.QUARANTINE_DIR?.trim() || "/quarantine";
+
+/**
+ * Refuse to become healthy with a directory this process cannot persist to.
+ *
+ * Chromium can otherwise fall back to a throwaway profile and make a healthy pod look signed out;
+ * the workspace and quarantine paths are equally load-bearing in this fork.
+ */
+async function assertWritable(label: string, directory: string): Promise<void> {
+  const probe = join(directory, `.openbot-write-probe-${process.pid}`);
+  try {
+    await mkdir(directory, { recursive: true });
+    await writeFile(probe, "");
+    await rm(probe, { force: true });
+  } catch (error) {
+    console.error(
+      `${label} at ${directory} is not writable by uid ${process.getuid?.() ?? "unknown"}: ${String(error)}. ` +
+        "OpenBot refuses to start instead of silently losing browser/profile/workspace state. " +
+        "On Kubernetes, verify the storage class honors fsGroup or set computers.podSecurityContext to null.",
+    );
+    process.exit(1);
+  }
+}
+
+await assertWritable("The workspace", WORKSPACE_ROOT);
+await assertWritable("The browser profiles directory", PROFILES_ROOT);
+await assertWritable("The quarantine directory", QUARANTINE_ROOT);
+
 const WORKSPACE_MAX_BYTES = numberFromEnv(
   "COMPUTER_WORKSPACE_MAX_BYTES",
   4 * 1024 * 1024 * 1024,
@@ -256,9 +286,8 @@ const workspace = createWorkspace(WORKSPACE_ROOT, {
  * here would put an entry in the map on the path that closes browsers, which is where the map is
  * meant to shrink.
  */
-const profiles = createProfiles(
-  process.env.PROFILES_DIR?.trim() || "/profiles",
-  (botId) => sessions.get(botId)?.viewer.releaseAll(COMPUTER_STOPPED),
+const profiles = createProfiles(PROFILES_ROOT, (botId) =>
+  sessions.get(botId)?.viewer.releaseAll(COMPUTER_STOPPED),
 );
 // Rooted in the same workspace the file tools use, so a command and a written file see one
 // directory rather than two.
