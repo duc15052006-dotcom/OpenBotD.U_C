@@ -404,3 +404,36 @@ test("a file the browser called an image is drawn as a file once the server read
   expect(container.querySelector("img")).toBeNull();
   expect(container.textContent).toContain("notes.png");
 });
+
+
+test("warns on a large file the browser called an image and the server read as text", async () => {
+  serverSniffs("text/plain");
+  const view = render(
+    <Composer channelId="channel-1" compact onSubmit={() => {}} />,
+  );
+  const { container } = view;
+
+  drop(container.querySelector("form") as HTMLFormElement, [
+    new File(["x".repeat(120_001)], "notes.png", { type: "image/png" }),
+  ]);
+
+  await uploaded(view, "notes.png");
+
+  expect(container.textContent).toContain("may be cut");
+});
+
+test("does not warn on a small file the server read as text", async () => {
+  serverSniffs("text/plain");
+  const view = render(
+    <Composer channelId="channel-1" compact onSubmit={() => {}} />,
+  );
+  const { container } = view;
+
+  drop(container.querySelector("form") as HTMLFormElement, [
+    new File(["hello"], "notes.png", { type: "image/png" }),
+  ]);
+
+  await uploaded(view, "notes.png");
+
+  expect(container.textContent).not.toContain("may be cut");
+});
