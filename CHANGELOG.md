@@ -8,6 +8,13 @@ Newest first. `Unreleased` is what is on `main` and not yet tagged.
 
 ## Unreleased
 
+### Large text attachments warn when the model may read only a prefix
+
+The composer now marks an accepted text/CSV/JSON/Markdown attachment with `may be cut` when its
+byte size exceeds the model-side 120,000-character extraction budget. The file is still uploaded
+whole and remains usable; the warning makes the bounded read visible before send instead of leaving
+the person to assume the model saw the entire file.
+
 ### A deployment can restrict sign-in to named email domains
 
 `SIGNIN_ALLOWED_EMAIL_DOMAINS` adds an exact-match sign-in filter on top of the configured identity
