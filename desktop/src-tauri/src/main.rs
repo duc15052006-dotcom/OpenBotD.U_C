@@ -5540,7 +5540,7 @@ fn main() {
         ["compose","version"] => println!("Synthetic Compose"),
         ["compose","config","--format","json"] => println!(
             "{}",
-            r#"{"services":{"postgres":{"volumes":[{"type":"volume","source":"postgres-data","target":"/var/lib/postgresql/data"}]},"supervisor":{"environment":{"COMPUTER_NAMESPACE":"fixture"}}},"volumes":{"postgres-data":{"name":"openbot-postgres-data"}}}"#
+            r##"{"services":{"postgres":{"volumes":[{"type":"volume","source":"postgres-data","target":"/var/lib/postgresql/data"}]},"supervisor":{"environment":{"COMPUTER_NAMESPACE":"fixture"}}},"volumes":{"postgres-data":{"name":"openbot-postgres-data"}}}"##
         ),
         ["volume","ls","--format","{{.Name}}"] => (),
         ["compose","ps","--format",_] => (),
