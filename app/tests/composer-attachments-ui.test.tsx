@@ -405,7 +405,6 @@ test("a file the browser called an image is drawn as a file once the server read
   expect(container.textContent).toContain("notes.png");
 });
 
-
 test("warns on a large file the browser called an image and the server read as text", async () => {
   serverSniffs("text/plain");
   const view = render(
