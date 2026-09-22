@@ -1310,7 +1310,7 @@ test("leftover database recovery requires confirmation and keeps setup ready to 
       command: "reset_leftover_database",
       args: {
         root: "/tmp/openbot-app-test",
-        volume: "fixture-postgres-data",
+        volume: "fixture_postgres-data",
         confirmed: true,
       },
     },
