@@ -8,6 +8,15 @@ Newest first. `Unreleased` is what is on `main` and not yet tagged.
 
 ## Unreleased
 
+### Desktop remembers working local ports instead of failing on a reserved one
+
+Desktop installations now persist the host ports they actually use and reuse them while they remain
+available. If a default or previously saved port is occupied, excluded by Windows, or otherwise
+cannot be bound on loopback, OpenBot chooses a distinct bindable local port instead of stopping at
+startup. Existing containers owned by the same Compose project may keep their published ports, while
+foreign listeners are never adopted. A picked Bot harness keeps its image's internal port but may use
+a different host port, and container tool callbacks follow the selected API port.
+
 ### Desktop startup repairs stale Bun and finds Docker credential helpers
 
 If a Bun executable is already on PATH but is not the pinned runtime OpenBot supports, Desktop now
