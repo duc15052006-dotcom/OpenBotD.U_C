@@ -188,6 +188,16 @@ pub fn postgres_volume_exists(
     root: &Path,
     secrets: &Secrets,
 ) -> Result<bool, Problem> {
+    let configuration = postgres_configuration(engine, root, secrets)?;
+    let volume = postgres_volume_name(&configuration)?;
+    named_volume_exists(engine, root, &volume)
+}
+
+fn postgres_configuration(
+    engine: &Address,
+    root: &Path,
+    secrets: &Secrets,
+) -> Result<Vec<u8>, Problem> {
     let configuration = compose_command(engine, root, secrets)
         .args(["config", "--format", "json"])
         .output()
@@ -200,7 +210,10 @@ pub fn postgres_volume_exists(
             configuration.status
         )));
     }
-    let volume = postgres_volume_name(&configuration.stdout)?;
+    Ok(configuration.stdout)
+}
+
+fn named_volume_exists(engine: &Address, root: &Path, volume: &str) -> Result<bool, Problem> {
     let inventory = engine
         .command()
         .current_dir(root)
@@ -225,13 +238,140 @@ fn postgres_volume_problem(detail: impl Into<String>) -> Problem {
     )
 }
 
+/// A surviving database is recoverable only when Compose and the engine agree it is owned.
+pub fn leftover_database_volume(
+    engine: &Address,
+    root: &Path,
+    secrets: &Secrets,
+) -> Result<Option<String>, Problem> {
+    let configuration = postgres_configuration(engine, root, secrets)?;
+    let config: serde_json::Value = serde_json::from_slice(&configuration)
+        .map_err(|_| postgres_volume_problem("Compose config did not return valid JSON."))?;
+    let Some((source, definition)) = postgres_data_volume(&config) else {
+        return Ok(None);
+    };
+    let Some(project) = config["name"].as_str().filter(|name| !name.is_empty()) else {
+        return Ok(None);
+    };
+    let Some(name) = definition["name"].as_str() else {
+        return Ok(None);
+    };
+    // Compose's explicit names and external volumes can refer to somebody else's database.
+    // Permit only ordinary project-scoped, local storage, even if a custom volume has labels.
+    if name != format!("{project}_{source}")
+        || !name.bytes().enumerate().all(|(index, byte)| {
+            byte.is_ascii_alphanumeric() || (index > 0 && b"_.-".contains(&byte))
+        })
+        || !matches!(
+            definition.get("external"),
+            None | Some(serde_json::Value::Bool(false))
+        )
+        || definition["driver"]
+            .as_str()
+            .is_some_and(|driver| driver != "local")
+        || !empty_volume_options(&definition["driver_opts"])
+        || config["services"].as_object().is_some_and(|services| {
+            services.iter().any(|(service, configuration)| {
+                service != "postgres"
+                    && configuration["volumes"].as_array().is_some_and(|mounts| {
+                        mounts.iter().any(|mount| {
+                            mount["source"].as_str().is_some_and(|other_source| {
+                                other_source == source
+                                    || config["volumes"][other_source]["name"].as_str()
+                                        == Some(name)
+                            })
+                        })
+                    })
+            })
+        })
+    {
+        return Ok(None);
+    }
+    if !named_volume_exists(engine, root, name)? {
+        return Ok(None);
+    }
+    let inspect = engine
+        .command()
+        .current_dir(root)
+        .args(["volume", "inspect", name])
+        .output()
+        .map_err(|error| {
+            postgres_volume_problem(format!("Could not inspect the database volume: {error}"))
+        })?;
+    if !inspect.status.success() {
+        return Err(postgres_volume_problem(format!("Database volume inspection exited with {}. Output omitted because it can contain credentials.", inspect.status)));
+    }
+    let inspected: serde_json::Value = serde_json::from_slice(&inspect.stdout).map_err(|_| {
+        postgres_volume_problem("Database volume inspection did not return valid JSON.")
+    })?;
+    let Some(volumes) = inspected.as_array().filter(|volumes| volumes.len() == 1) else {
+        return Ok(None);
+    };
+    let volume = &volumes[0];
+    // Podman accepts unique name prefixes. Exact inventory and inspect matches keep the command
+    // tied to the full name the person confirmed, never a similarly named backup.
+    Ok((volume["Name"].as_str() == Some(name)
+        && volume["Driver"].as_str() == Some("local")
+        && empty_volume_options(&volume["Options"])
+        && volume["Labels"]["com.docker.compose.project"].as_str() == Some(project)
+        && volume["Labels"]["com.docker.compose.volume"].as_str() == Some(source))
+    .then(|| name.to_owned()))
+}
+
+pub fn reset_leftover_database(
+    engine: &Address,
+    root: &Path,
+    secrets: &Secrets,
+    confirmed_volume: &str,
+) -> Result<(), Problem> {
+    if leftover_database_volume(engine, root, secrets)?.as_deref() != Some(confirmed_volume) {
+        return Err(Problem::plain("The leftover database no longer matches the volume you confirmed, or OpenBot could not verify that it owns the volume. Nothing was removed. Try Start again."));
+    }
+    // Never force this operation: the engine must refuse any container attachment, including a
+    // stopped container or one created after inspection. Do not stop containers to make it pass.
+    let removed = engine
+        .command()
+        .current_dir(root)
+        .args(["volume", "rm", confirmed_volume])
+        .output()
+        .map_err(|error| {
+            Problem::with(
+                "OpenBot could not reset the leftover database. Nothing else was removed.",
+                format!("Could not run volume removal: {error}"),
+            )
+        })?;
+    if !removed.status.success() {
+        return Err(Problem::with("OpenBot could not reset the leftover database. It may still be attached to a container. Nothing else was removed; stop the installation using it before trying again.", format!("Volume removal exited with {}. Output omitted because it can contain credentials.", removed.status)));
+    }
+    Ok(())
+}
+
+fn empty_volume_options(options: &serde_json::Value) -> bool {
+    options.is_null()
+        || options
+            .as_object()
+            .is_some_and(|options| options.is_empty())
+}
+
 fn postgres_volume_name(configuration: &[u8]) -> Result<String, Problem> {
     let config: serde_json::Value = serde_json::from_slice(configuration)
         .map_err(|_| postgres_volume_problem("Compose config did not return valid JSON."))?;
+    postgres_data_volume(&config)
+        .and_then(|(_, definition)| definition["name"].as_str())
+        .filter(|name| !name.trim().is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            postgres_volume_problem("Compose did not resolve a named volume for Postgres data.")
+        })
+}
+
+fn postgres_data_volume(config: &serde_json::Value) -> Option<(&str, &serde_json::Value)> {
     let postgres = &config["services"]["postgres"];
     let data = postgres["environment"]["PGDATA"]
         .as_str()
         .unwrap_or("/var/lib/postgresql/data");
+    // A PGDATA subdirectory still belongs to its containing mount. Prefer the closest mount
+    // so a nested override cannot make us inspect an unrelated volume.
     let mount = postgres["volumes"].as_array().and_then(|mounts| {
         mounts
             .iter()
@@ -243,14 +383,161 @@ fn postgres_volume_name(configuration: &[u8]) -> Result<String, Problem> {
             })
             .max_by_key(|mount| mount["target"].as_str().unwrap().len())
     });
-    let volume = mount
+    mount
         .filter(|mount| mount["type"].as_str() == Some("volume"))
         .and_then(|mount| mount["source"].as_str())
-        .and_then(|source| config["volumes"][source]["name"].as_str())
-        .filter(|name| !name.trim().is_empty());
-    volume.map(str::to_owned).ok_or_else(|| {
-        postgres_volume_problem("Compose did not resolve a named volume for Postgres data.")
-    })
+        .and_then(|source| {
+            config["volumes"]
+                .get(source)
+                .map(|definition| (source, definition))
+        })
+}
+
+const MACOS_PODMAN_PORTS_FILE: &str = ".openbot-macos-podman.yml";
+const MACOS_PODMAN_PORTS: &str = include_str!("macos-podman-ports.yml");
+const HARNESS_PORT_FILE: &str = ".openbot-harness-port.yml";
+
+fn harness_port_overlay(root: &Path, ipv4_only: bool) -> Result<Option<String>, Problem> {
+    let values = crate::env::read_already_set(
+        &root.join(".env"),
+        &["PICKED_HARNESS_HOST_PORT", "PICKED_HARNESS_PORT"],
+    )
+    .map_err(|error| {
+        Problem::with(
+            "OpenBot could not read the Bot's local port.",
+            error.to_string(),
+        )
+    })?;
+    let Some(host) = values.get("PICKED_HARNESS_HOST_PORT") else {
+        return Ok(None);
+    };
+    let parse = |value: &str| {
+        value
+            .parse::<u16>()
+            .ok()
+            .filter(|port| *port != 0)
+            .ok_or_else(|| {
+                Problem::plain("The Bot's local port setting is invalid. Try Start again.")
+            })
+    };
+    let host = parse(host)?;
+    let target = parse(
+        values
+            .get("PICKED_HARNESS_PORT")
+            .map(String::as_str)
+            .unwrap_or("4202"),
+    )?;
+    if host == target {
+        return Ok(None);
+    }
+    let mut overlay = format!("services:\n  agent-harness:\n    ports: !override\n      - \"127.0.0.1:{host}:{target}\"\n");
+    if !ipv4_only {
+        overlay.push_str(&format!("      - \"[::1]:{host}:{target}\"\n"));
+    }
+    Ok(Some(overlay))
+}
+
+/// Only service creation needs the Mac Podman port overlay. In particular, `run migrate` can
+/// create its Postgres dependency, so it must use the same configuration as `up`.
+fn compose_start_command(
+    engine: &Address,
+    root: &Path,
+    secrets: &Secrets,
+    os: &str,
+) -> Result<Command, Problem> {
+    let mut command = compose_command(engine, root, secrets);
+    let macos_podman = os == "macos" && engine.engine == crate::engine::Engine::Podman;
+    let harness_ports = harness_port_overlay(root, macos_podman)?;
+    if !macos_podman && harness_ports.is_none() {
+        return Ok(command);
+    }
+
+    // Let Compose read/interpolate .env and COMPOSE_ENV_FILES itself. Adding -f directly would
+    // otherwise discard both implicit override files and COMPOSE_FILE from that environment.
+    // This output can contain credentials: retain only file-selection settings, never log it.
+    let environment = compose_command(engine, root, secrets)
+        .args(["config", "--environment"])
+        .output()
+        .map_err(|error| {
+            Problem::with(
+                "OpenBot could not read the deployment's Compose settings.",
+                error.to_string(),
+            )
+        })?;
+    if !environment.status.success() {
+        return Err(Problem::with(
+            "OpenBot could not read the deployment's Compose settings.",
+            command_said(&environment.stderr),
+        ));
+    }
+    let environment = String::from_utf8(environment.stdout)
+        .map_err(|_| Problem::plain("Compose returned unreadable deployment settings."))?;
+    let files = compose_files(root, &environment)?;
+    for file in files {
+        command.arg("-f").arg(file);
+    }
+    for (file, contents) in [
+        (
+            MACOS_PODMAN_PORTS_FILE,
+            macos_podman.then_some(MACOS_PODMAN_PORTS),
+        ),
+        (HARNESS_PORT_FILE, harness_ports.as_deref()),
+    ] {
+        if let Some(contents) = contents {
+            let overlay = root.join(file);
+            if std::fs::read(&overlay).ok().as_deref() != Some(contents.as_bytes()) {
+                std::fs::write(&overlay, contents).map_err(|error| {
+                    Problem::with(
+                        "OpenBot could not prepare its local port settings.",
+                        error.to_string(),
+                    )
+                })?;
+            }
+            command.arg("-f").arg(file);
+        }
+    }
+    Ok(command)
+}
+
+fn compose_files(root: &Path, environment: &str) -> Result<Vec<String>, Problem> {
+    let setting = |key: &str| {
+        environment.lines().find_map(|line| {
+            let (name, value) = line.split_once('=')?;
+            (name == key).then_some(value)
+        })
+    };
+    if let Some(files) = setting("COMPOSE_FILE") {
+        let separator = setting("COMPOSE_PATH_SEPARATOR")
+            .filter(|value| !value.is_empty())
+            .unwrap_or(if cfg!(windows) { ";" } else { ":" });
+        return Ok(files.split(separator).map(str::to_owned).collect());
+    }
+
+    // Compose-go's default discovery order. A valid installed deployment contains its base
+    // file in this directory, so there is no need to search outside the selected installation.
+    let first = |names: &[&str]| {
+        names
+            .iter()
+            .find(|name| root.join(name).exists())
+            .map(|name| (*name).to_owned())
+    };
+    let base = first(&[
+        "compose.yaml",
+        "compose.yml",
+        "docker-compose.yml",
+        "docker-compose.yaml",
+    ])
+    .ok_or_else(|| Problem::plain("The selected installation has no Compose file."))?;
+    let mut files = vec![base];
+    if let Some(existing) = first(&[
+        "compose.override.yml",
+        "compose.override.yaml",
+        "docker-compose.override.yml",
+        "docker-compose.override.yaml",
+    ]) {
+        files.push(existing);
+    }
+    Ok(files)
 }
 
 /// Resolve only image references, using public installation overrides before credentials exist.
