@@ -563,16 +563,7 @@ export function App() {
     return (
       <main>
         <Welcome onStart={() => setStep("harness")} />
-        {!running && displayedFailure?.database_reset && (
-        <DatabaseReset
-          key={`${root}:${displayedFailure.database_reset}`}
-          busy={busy}
-          volume={displayedFailure.database_reset}
-          onReset={resetLeftoverDatabase}
-        />
-      )}
-
-      {displayedFailure && <Failure problem={displayedFailure} />}
+        {displayedFailure && <Failure problem={displayedFailure} />}
       </main>
     );
   }
@@ -917,6 +908,15 @@ export function App() {
       )}
 
       <SetupProgress steps={steps} />
+
+      {!running && displayedFailure?.database_reset && (
+        <DatabaseReset
+          key={`${root}:${displayedFailure.database_reset}`}
+          busy={busy}
+          volume={displayedFailure.database_reset}
+          onReset={resetLeftoverDatabase}
+        />
+      )}
 
       {displayedFailure && <Failure problem={displayedFailure} />}
 
