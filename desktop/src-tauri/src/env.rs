@@ -686,6 +686,15 @@ pub fn compose(
         "SERVER_INTERNAL_URL".into(),
         format!("http://127.0.0.1:{}", ports.server),
     );
+    // Framework/harness containers call tools back through the host API, so this must follow a
+    // dynamically chosen server port rather than docker-compose.yml's development fallback.
+    env.insert(
+        "OPENBOT_TOOL_URL".into(),
+        format!(
+            "http://host.docker.internal:{}/api/agent-tools/call",
+            ports.server
+        ),
+    );
 
     env.extend(ports.settings());
 
