@@ -1284,7 +1284,7 @@ test("leftover database recovery requires confirmation and keeps setup ready to 
     "https://model.example/v1",
     "synthetic-key",
   );
-  await userEvent.click(view.getByRole("button", { name: "Continue" }));
+  await continueSetup(view);
   await userEvent.click(view.getByRole("button", { name: "Start OpenBot" }));
   const resets = () =>
     invokeCalls.filter((call) => call.command === "reset_leftover_database");
@@ -1354,7 +1354,7 @@ test("database recovery failure is shown without restarting services", async () 
     "https://model.example/v1",
     "synthetic-key",
   );
-  await userEvent.click(view.getByRole("button", { name: "Continue" }));
+  await continueSetup(view);
   await userEvent.click(view.getByRole("button", { name: "Start OpenBot" }));
   await userEvent.click(
     await view.findByRole("button", { name: "Reset leftover database" }),
