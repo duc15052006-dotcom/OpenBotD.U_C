@@ -1306,7 +1306,7 @@ async fn start_stack_inner<R: tauri::Runtime>(
         )
     })?;
 
-    let (logs, bun, mut secrets) = {
+    let (logs, bun, mut secrets, ports) = {
         let _startup = attempt.lock_current()?;
 
         // Belt and braces: a fetch that reported success and left something out is still not a
@@ -1360,6 +1360,35 @@ async fn start_stack_inner<R: tauri::Runtime>(
             stack::postgres_volume_exists(&found, &root, &existing_secrets)
         })?;
 
+        // Reclaim this deployment's verified host processes before probing ports. A stale server
+        // from our own previous failed Start must not force this deployment onto a new port.
+        let previous_ports = openbot_env::Ports::read(&root).map_err(|error| {
+            Problem::with("OpenBot could not read its local ports.", error.to_string())
+        })?;
+        let reclaimed =
+            cleanup_before_start(&app, &attempt, &root, stack::stop_processes_under)?;
+        if reclaimed > 0 {
+            stack::wait_for_ports_to_clear(
+                &[previous_ports.server, previous_ports.app],
+                std::time::Duration::from_secs(5),
+            );
+        }
+
+        // Existing containers from this exact Compose project may keep their published ports.
+        // Foreign listeners and Windows excluded/reserved ports get distinct bindable fallbacks.
+        let ours = stack::ports_we_already_publish(&found, &root);
+        let ports = previous_ports
+            .available(
+                &ours,
+                picked.as_ref().and_then(|picked| picked.installed_port()),
+            )
+            .map_err(|error| {
+                Problem::with(
+                    "OpenBot could not find available local ports. Try Start again.",
+                    error.to_string(),
+                )
+            })?;
+
         let settings = openbot_env::compose(
             &openbot_env::Intelligence {
                 api_url,
@@ -1370,7 +1399,7 @@ async fn start_stack_inner<R: tauri::Runtime>(
                 credential: credential.clone(),
             },
             &status,
-            &openbot_env::Ports::default(),
+            &ports,
             &deployment::image_variables(&root)?,
             picked.as_ref(),
             // What a previous start of this deployment already minted. Without it every Start writes a
@@ -1408,6 +1437,12 @@ async fn start_stack_inner<R: tauri::Runtime>(
             &purge,
             &credential,
         )?;
+        secrets.extend(ports.settings());
+        for key in ["PICKED_HARNESS_PORT", "OPENBOT_TOOL_URL"] {
+            if let Some(value) = settings.get(key) {
+                secrets.insert(key.into(), value.clone());
+            }
+        }
         {
             let mut pending = shell.pending_intelligence_key.lock().unwrap();
             if pending.as_ref().is_some_and(|pending| pending.root == root) {
@@ -1421,33 +1456,6 @@ async fn start_stack_inner<R: tauri::Runtime>(
         // Installation already verified these images. Start only raises the local containers;
         // its no-pull policy sends missing assets back to the installation step.
         report(&app, "services", true, "starting installed containers");
-        /*
-         * The harness's port, before the containers rather than after.
-         *
-         * The check below covers the host processes, and it runs too late for this: a port already held
-         * makes `compose up` fail inside the daemon, and what reaches the person is
-         * "Bind for 0.0.0.0:4202 failed: port is already allocated". Every harness has a fixed port of
-         * its own, so this is not a rare case — anything else using it, including a previous run's
-         * container, produces that sentence.
-         */
-        /*
-         * Our own containers are not somebody else on the port.
-         *
-         * A start that failed after the containers went up left them running, and the next press of
-         * Start refused because of them, naming a port the person never chose and cannot find. See
-         * `ports_we_already_publish`. `compose up` reuses what is already there, so the only thing this
-         * check is for is a stranger on the port.
-         */
-        let ours = stack::ports_we_already_publish(&found, &root);
-        if let Some(port) = picked.as_ref().and_then(|picked| picked.installed_port()) {
-            if let Some(problem) =
-                stack::port_already_taken_except(&[("Bot you picked", port)], &ours)
-            {
-                report(&app, "ports", false, problem.clone());
-                return Err(problem.into());
-            }
-        }
-
         // Only an installed harness needs the local service; a BYO endpoint is already running elsewhere.
         let installed_harness = picked
             .as_ref()
@@ -1482,27 +1490,8 @@ async fn start_stack_inner<R: tauri::Runtime>(
             report(&app, "services", false, detail);
         })?;
 
-        /*
-         * Reclaim this deployment's own host processes before deciding the ports are taken.
-         *
-         * Same failure as the containers above, by a different route: a start that got as far as
-         * spawning the server and then stopped left it running, and the next attempt refused because
-         * port 3001 was held. By its own server. These are found by working directory, so anything this
-         * stops belongs to this deployment and to no other.
-         */
-        let reclaimed = cleanup_before_start(&app, &attempt, &root, stack::stop_processes_under)?;
-
-        // Before spawning: if these are still held, whatever answers later is not ours.
-        let ports = openbot_env::Ports::default();
-        if reclaimed > 0 {
-            // A kill is not instant and the check is. Without this the socket of a process this run
-            // just stopped reads as somebody else's, and the refusal names a process that no longer
-            // exists. See `wait_for_ports_to_clear`.
-            stack::wait_for_ports_to_clear(
-                &[ports.server, ports.app],
-                std::time::Duration::from_secs(5),
-            );
-        }
+        // Probes are released before Compose starts, so a foreign process can still race us.
+        // Keep this final host-port check immediately before the host processes are spawned.
         if let Some(problem) =
             stack::port_already_taken(&[("API server", ports.server), ("app", ports.app)])
         {
@@ -1511,7 +1500,7 @@ async fn start_stack_inner<R: tauri::Runtime>(
         }
 
         let logs = root.join(".logs");
-        (logs, bun, secrets)
+        (logs, bun, secrets, ports)
     };
 
     // Never persisted or passed to Compose. Only the server process receives this credential;
@@ -1534,8 +1523,8 @@ async fn start_stack_inner<R: tauri::Runtime>(
                 started,
                 &logs_for_wait,
                 &stack::Ready {
-                    api: openbot_env::Ports::default().server,
-                    app: openbot_env::Ports::default().app,
+                    api: ports.server,
+                    app: ports.app,
                 },
                 std::time::Duration::from_secs(180),
             )
@@ -1554,7 +1543,7 @@ async fn start_stack_inner<R: tauri::Runtime>(
         .map(|owned| owned.address.clone())
         .ok_or_else(|| Problem::plain("The local container runtime is unavailable."))?;
     let config = host_access::HostAccessConfig::new(
-        format!("http://127.0.0.1:{}", openbot_env::Ports::default().server),
+        format!("http://127.0.0.1:{}", ports.server),
         host_token,
         address,
         deployment::reference(&root, "agent-computer")?,
@@ -2325,7 +2314,8 @@ where
 /// same way on every operating system, which is the whole reason both are asked.
 #[tauri::command]
 fn show_openbot<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
-    show_openbot_on(app, &openbot_env::Ports::default())
+    let ports = ports_for_shell(&app)?;
+    show_openbot_on(app, &ports)
 }
 
 /// Successful first-run handoff: enter the product with the New coworker dialog already open.
@@ -2334,11 +2324,16 @@ fn show_openbot<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), Strin
 /// desktop command cannot be repurposed as a general navigator after the WebView enters the app.
 #[tauri::command]
 fn show_agent_creator<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
-    show_openbot_route_on(
-        app,
-        &openbot_env::Ports::default(),
-        Some(("/agents", "new=true")),
-    )
+    let ports = ports_for_shell(&app)?;
+    show_openbot_route_on(app, &ports, Some(("/agents", "new=true")))
+}
+
+fn ports_for_shell<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<openbot_env::Ports, String> {
+    let root = cleanup_root(&app.state::<Shell>(), &stack::default_root());
+    openbot_env::Ports::read(&root)
+        .map_err(|error| format!("OpenBot could not read its local ports: {error}"))
 }
 
 fn show_openbot_on<R: tauri::Runtime>(
@@ -2542,7 +2537,7 @@ fn already_running<R: tauri::Runtime>(app: tauri::AppHandle<R>, root: String) ->
     let shell = app.state::<Shell>();
     let _startup = shell.startup.lock().unwrap();
     !recovery_required_or_pending_quit_notice(&shell, &root)
-        && already_running_at(&root, &openbot_env::Ports::default())
+        && openbot_env::Ports::read(&root).is_ok_and(|ports| already_running_at(&root, &ports))
 }
 
 fn already_running_at(root: &Path, ports: &openbot_env::Ports) -> bool {
@@ -3238,7 +3233,16 @@ where
 /// Used by the tray and by a second launch, both of which happen at moments when the caller has no
 /// idea which of the two the person should be looking at.
 fn show_whichever_applies(app: &tauri::AppHandle) {
-    restore_window_on(app, &openbot_env::Ports::default());
+    match ports_for_shell(app) {
+        Ok(ports) => restore_window_on(app, &ports),
+        Err(error) => {
+            *app.state::<Shell>().last_failure.lock().unwrap() =
+                Some(Problem::plain(error));
+            if let Err(error) = show_setup_and_focus(app.clone()) {
+                eprintln!("{error}");
+            }
+        }
+    }
 }
 
 fn restore_window_on<R: tauri::Runtime>(app: &tauri::AppHandle<R>, ports: &openbot_env::Ports) {
