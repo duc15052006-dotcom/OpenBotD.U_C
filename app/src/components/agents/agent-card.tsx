@@ -1,4 +1,8 @@
-import { IconDotsVertical, IconMessageCircle, IconSettings } from "@tabler/icons-react";
+import {
+  IconDotsVertical,
+  IconMessageCircle,
+  IconSettings,
+} from "@tabler/icons-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import Avatar from "boring-avatars";
 import {
