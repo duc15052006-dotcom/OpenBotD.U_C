@@ -57,6 +57,8 @@ struct Shell {
     last_failure: Mutex<Option<openbot_desktop_lib::problem::Problem>>,
     /// Reading the notification must not make a partially running deployment adoptable again.
     recovery_required: Mutex<Option<RecoveryRequired>>,
+    /// An explicit reset remains bound to the engine that found the leftover database.
+    leftover_database: Mutex<Option<LeftoverDatabase>>,
     selected_root: Mutex<Option<PathBuf>>,
     root: Mutex<Option<PathBuf>>,
     /// Containers may outlive a failed Start before any host root is published.
@@ -95,6 +97,12 @@ struct Shell {
 /// it in one record lets shutdown carry further deployment identity without changing host state.
 struct ContainerDeployment {
     root: PathBuf,
+    address: engine::Address,
+}
+
+struct LeftoverDatabase {
+    root: PathBuf,
+    volume: String,
     address: engine::Address,
 }
 
@@ -405,6 +413,7 @@ async fn prepare_installation(
                 ));
             }
             remember_selected_root(&shell, &root);
+        *shell.leftover_database.lock().unwrap() = None;
         }
         let address = tauri::async_runtime::block_on(engine_ready(&app))?.pin()?;
         attempt.require_current()?;
@@ -1206,6 +1215,148 @@ fn require_existing_encryption_key(
     Ok(())
 }
 
+fn require_existing_encryption_key_with_recovery(
+    root: &Path,
+    secrets: &stack::Secrets,
+    existing_postgres_volume: impl FnOnce() -> Result<bool, Problem>,
+    resettable_volume: impl FnOnce() -> Result<Option<String>, Problem>,
+) -> Result<(), Problem> {
+    let mut volume_exists = false;
+    require_existing_encryption_key(root, secrets, || {
+        volume_exists = existing_postgres_volume()?;
+        Ok(volume_exists)
+    })
+    .map_err(|mut problem| {
+        // A failed probe is not proof of an existing volume. Configured roots never reach here.
+        if volume_exists {
+            let recovery = fresh_root_without_encryption_key(root, secrets).and_then(|fresh| {
+                if fresh {
+                    resettable_volume()
+                } else {
+                    Ok(None)
+                }
+            });
+            match recovery {
+                Ok(volume) => {
+                    if volume.is_some() {
+                        problem.said = "OpenBot found a database from a previous installation, but its encryption key is unavailable. Restore the original key to keep its saved data, or reset the leftover database to start fresh.".into();
+                    }
+                    problem.database_reset = volume;
+                }
+                Err(verification) => {
+                    problem.detail = Some(match verification.detail {
+                        Some(detail) => format!("{}\n{detail}", verification.said),
+                        None => verification.said,
+                    });
+                }
+            }
+        }
+        problem
+    })
+}
+
+/// Destructive recovery needs positive evidence that root metadata is readable and unconfigured.
+/// The ordinary startup guard keeps its existing behavior when metadata is unknown.
+fn fresh_root_without_encryption_key(
+    root: &Path,
+    secrets: &stack::Secrets,
+) -> Result<bool, Problem> {
+    if secrets
+        .get("KEY_ENCRYPTION_KEY")
+        .is_some_and(|key| openbot_env::usable_encryption_key(key))
+    {
+        return Ok(false);
+    }
+    let unknown = || {
+        Problem::plain("OpenBot could not verify that this is an unconfigured installation. Its leftover database cannot be reset here.")
+    };
+    let settings = openbot_env::read_already_set(&root.join(".env"), &["DATABASE_URL"])
+        .map_err(|_| unknown())?;
+    if settings.contains_key("DATABASE_URL") {
+        return Ok(false);
+    }
+    use openbot_desktop_lib::saved_intent::{SavedIntent, FILE};
+    match std::fs::read(root.join(FILE)) {
+        Ok(bytes) => {
+            let record: serde_json::Value =
+                serde_json::from_slice(&bytes).map_err(|_| unknown())?;
+            if record["version"].as_u64() != Some(1) {
+                return Err(unknown());
+            }
+            let intent: SavedIntent = serde_json::from_value(record).map_err(|_| unknown())?;
+            Ok(intent.model.is_none())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
+        Err(_) => Err(unknown()),
+    }
+}
+
+fn reset_leftover_database_with(
+    shell: &Shell,
+    root: &Path,
+    volume: &str,
+    confirmed: bool,
+    read_secrets: impl FnOnce() -> Result<stack::Secrets, Problem>,
+    reset: impl FnOnce(&engine::Address, &stack::Secrets) -> Result<(), Problem>,
+) -> Result<(), Problem> {
+    if !confirmed {
+        return Err(Problem::plain("Confirm that you want to permanently delete the leftover database before resetting it."));
+    }
+    let attempt = StartAttempt::begin(shell)?;
+    let _startup = attempt.lock_current()?;
+    if shell.containers.lock().unwrap().is_some()
+        || shell.root.lock().unwrap().is_some()
+        || !shell.children.lock().unwrap().is_empty()
+    {
+        return Err(Problem::plain("OpenBot still owns running services. Choose Stop OpenBot before resetting a leftover database."));
+    }
+    if shell
+        .selected_root
+        .lock()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|selected| selected != root)
+    {
+        return Err(Problem::plain("The selected installation changed. Try Start again before resetting its leftover database."));
+    }
+    let address = shell.leftover_database.lock().unwrap().as_ref()
+        .filter(|offer| offer.root == root && offer.volume == volume)
+        .map(|offer| offer.address.clone())
+        .ok_or_else(|| Problem::plain("The leftover database reset offer is no longer current. Try Start again before confirming a reset."))?;
+    let secrets = read_secrets()?;
+    if !fresh_root_without_encryption_key(root, &secrets)? {
+        return Err(Problem::plain("This installation is already configured or has its original encryption key. Its database cannot be reset here."));
+    }
+    reset(&address, &secrets)?;
+    *shell.leftover_database.lock().unwrap() = None;
+    Ok(())
+}
+
+#[tauri::command]
+async fn reset_leftover_database<R: tauri::Runtime>(
+    root: String,
+    volume: String,
+    confirmed: bool,
+    app: tauri::AppHandle<R>,
+) -> Result<(), Problem> {
+    let root = stack::root_from(&root);
+    let shell = app.state::<Shell>();
+    reset_leftover_database_with(
+        &shell,
+        &root,
+        &volume,
+        confirmed,
+        || {
+            openbot_desktop_lib::vault::already_given_no_ui(
+                &root,
+                &root.join(".env"),
+                &openbot_env::MINTED[..],
+            )
+        },
+        |address, secrets| stack::reset_leftover_database(address, &root, secrets, &volume),
+    )
+}
+
 /// Write the `.env`, raise the containers, migrate, then start the three host processes.
 #[tauri::command]
 async fn start_stack<R: tauri::Runtime>(
@@ -1356,8 +1507,21 @@ async fn start_stack_inner<R: tauri::Runtime>(
             &root.join(".env"),
             &openbot_env::MINTED[..],
         )?;
-        require_existing_encryption_key(&root, &existing_secrets, || {
-            stack::postgres_volume_exists(&found, &root, &existing_secrets)
+        require_existing_encryption_key_with_recovery(
+            &root,
+            &existing_secrets,
+            || stack::postgres_volume_exists(&found, &root, &existing_secrets),
+            || stack::leftover_database_volume(&found, &root, &existing_secrets),
+        )
+        .inspect_err(|problem| {
+            *shell.leftover_database.lock().unwrap() = problem
+                .database_reset
+                .as_ref()
+                .map(|volume| LeftoverDatabase {
+                    root: root.clone(),
+                    volume: volume.clone(),
+                    address: found.clone(),
+                });
         })?;
 
         let settings = openbot_env::compose(
@@ -3486,6 +3650,7 @@ fn main() {
             prepare_engine,
             prepare_installation,
             start_stack,
+            reset_leftover_database,
             stop_stack,
             show_openbot,
             show_agent_creator,
