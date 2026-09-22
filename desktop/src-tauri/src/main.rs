@@ -4938,6 +4938,286 @@ mod tests {
     }
 
     #[test]
+    fn leftover_database_recovery_is_offered_only_for_a_proven_fresh_root() {
+        let root = temp_root("leftover-database-offer");
+        std::fs::create_dir_all(&root).unwrap();
+        let error = require_existing_encryption_key_with_recovery(
+            &root,
+            &stack::Secrets::new(),
+            || Ok(true),
+            || Ok(Some("openbot_postgres-data".into())),
+        )
+        .unwrap_err();
+        assert_eq!(
+            serde_json::to_value(error).unwrap()["database_reset"],
+            "openbot_postgres-data"
+        );
+        for (file, content) in [
+            (".env", "DATABASE_URL=postgres://fixture\n"),
+            (
+                openbot_desktop_lib::saved_intent::FILE,
+                r#"{"version":1,"categories":[],"model":"open-ai-api-key"}"#,
+            ),
+            (
+                openbot_desktop_lib::saved_intent::FILE,
+                "invalid-settings-secret",
+            ),
+            (
+                openbot_desktop_lib::saved_intent::FILE,
+                r#"{"version":99,"categories":[],"model":null}"#,
+            ),
+        ] {
+            std::fs::write(root.join(file), content).unwrap();
+            let error = require_existing_encryption_key_with_recovery(
+                &root,
+                &stack::Secrets::new(),
+                || Ok(true),
+                || panic!("unknown or configured roots must not offer deletion"),
+            )
+            .unwrap_err();
+            assert!(serde_json::to_value(error)
+                .unwrap()
+                .get("database_reset")
+                .is_none());
+            std::fs::remove_file(root.join(file)).unwrap();
+        }
+        let secrets = stack::Secrets::from([(
+            "KEY_ENCRYPTION_KEY".into(),
+            "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=".into(),
+        )]);
+        assert!(require_existing_encryption_key_with_recovery(
+            &root,
+            &secrets,
+            || panic!("original key needs no probe"),
+            || panic!("original key needs no reset")
+        )
+        .is_ok());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn leftover_database_reset_rechecks_confirmation_configuration_key_and_ownership() {
+        let root = temp_root("leftover-database-command");
+        std::fs::create_dir_all(&root).unwrap();
+        let shell = Shell::default();
+        let offer = || {
+            *shell.leftover_database.lock().unwrap() = Some(LeftoverDatabase {
+                root: root.clone(),
+                volume: "openbot_postgres-data".into(),
+                address: engine::Address::new(
+                    engine::Engine::Podman,
+                    Some("original-machine".into()),
+                ),
+            });
+        };
+        offer();
+        assert!(reset_leftover_database_with(
+            &shell,
+            &root,
+            "openbot_postgres-data",
+            false,
+            || panic!("unconfirmed must not access credentials"),
+            |_, _| panic!("unconfirmed must not delete")
+        )
+        .is_err());
+        assert!(reset_leftover_database_with(
+            &shell,
+            &root,
+            "openbot_postgres-data",
+            true,
+            || Ok(stack::Secrets::new()),
+            |_, _| Ok(())
+        )
+        .is_ok());
+        offer();
+        for (file, content) in [
+            (".env", "DATABASE_URL=postgres://fixture\n"),
+            (
+                openbot_desktop_lib::saved_intent::FILE,
+                r#"{"version":1,"categories":[],"model":"open-ai-api-key"}"#,
+            ),
+            (
+                openbot_desktop_lib::saved_intent::FILE,
+                "invalid-settings-secret",
+            ),
+        ] {
+            std::fs::write(root.join(file), content).unwrap();
+            assert!(reset_leftover_database_with(
+                &shell,
+                &root,
+                "openbot_postgres-data",
+                true,
+                || Ok(stack::Secrets::new()),
+                |_, _| panic!("configured or unknown root must not delete")
+            )
+            .is_err());
+            std::fs::remove_file(root.join(file)).unwrap();
+        }
+        std::fs::create_dir(root.join(".env")).unwrap();
+        assert!(reset_leftover_database_with(
+            &shell,
+            &root,
+            "openbot_postgres-data",
+            true,
+            || Ok(stack::Secrets::new()),
+            |_, _| panic!("unreadable settings must not delete")
+        )
+        .is_err());
+        std::fs::remove_dir(root.join(".env")).unwrap();
+        let secrets = stack::Secrets::from([(
+            "KEY_ENCRYPTION_KEY".into(),
+            "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=".into(),
+        )]);
+        assert!(reset_leftover_database_with(
+            &shell,
+            &root,
+            "openbot_postgres-data",
+            true,
+            || Ok(secrets),
+            |_, _| panic!("restored key must prevent deletion")
+        )
+        .is_err());
+        *shell.root.lock().unwrap() = Some(root.clone());
+        assert!(reset_leftover_database_with(
+            &shell,
+            &root,
+            "openbot_postgres-data",
+            true,
+            || panic!("owned hosts must refuse before credential access"),
+            |_, _| panic!("owned hosts must prevent deletion")
+        )
+        .is_err());
+        *shell.root.lock().unwrap() = None;
+        *shell.containers.lock().unwrap() = Some(ContainerDeployment {
+            root: root.clone(),
+            address: engine::Address::new(engine::Engine::Podman, Some("fixture".into())),
+        });
+        assert!(reset_leftover_database_with(
+            &shell,
+            &root,
+            "openbot_postgres-data",
+            true,
+            || panic!("owned containers must refuse"),
+            |_, _| panic!("owned containers must prevent deletion")
+        )
+        .is_err());
+        *shell.containers.lock().unwrap() = None;
+        let attempt = StartAttempt::begin(&shell).unwrap();
+        assert!(reset_leftover_database_with(
+            &shell,
+            &root,
+            "openbot_postgres-data",
+            true,
+            || panic!("concurrent startup must refuse"),
+            |_, _| panic!("concurrent startup must prevent deletion")
+        )
+        .is_err());
+        drop(attempt);
+        assert!(reset_leftover_database_with(
+            &shell,
+            &root,
+            "openbot_postgres-data",
+            true,
+            || Ok(stack::Secrets::new()),
+            |_, _| {
+                assert!(
+                    shell.startup.try_lock().is_err(),
+                    "deletion must retain the startup lock"
+                );
+                assert!(
+                    StartAttempt::begin(&shell).is_err(),
+                    "startup must remain excluded during deletion"
+                );
+                Ok(())
+            }
+        )
+        .is_ok());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn leftover_database_reset_keeps_offered_runtime_and_rejects_stale_offers() {
+        if crate::test_support::isolated_process(
+            "tests::leftover_database_reset_keeps_offered_runtime_and_rejects_stale_offers",
+        ) {
+            return;
+        }
+        let root = temp_root("leftover-database-affinity");
+        std::fs::create_dir_all(&root).unwrap();
+        let shell = Shell::default();
+        let original =
+            engine::Address::new(engine::Engine::Podman, Some("original-machine".into()));
+        let volume = "openbot_postgres-data";
+        assert!(reset_leftover_database_with(
+            &shell,
+            &root,
+            volume,
+            true,
+            || panic!("a missing offer must refuse before reading credentials"),
+            |_, _| panic!("a missing offer must not remove anything")
+        )
+        .is_err());
+        *shell.leftover_database.lock().unwrap() = Some(LeftoverDatabase {
+            root: root.clone(),
+            volume: volume.into(),
+            address: original.clone(),
+        });
+        for (selected_root, selected_volume) in [
+            (&root, "other-volume"),
+            (&root.join("another-root"), volume),
+        ] {
+            assert!(reset_leftover_database_with(
+                &shell,
+                selected_root,
+                selected_volume,
+                true,
+                || panic!("a mismatched offer must refuse before reading credentials"),
+                |_, _| panic!("a mismatched offer must not remove anything")
+            )
+            .is_err());
+        }
+        // Ambient choices may change while the confirmation is open. Both a new Docker endpoint
+        // and a new Podman default remain irrelevant to the already pinned offer.
+        std::env::set_var("DOCKER_HOST", "unix:///another-engine.sock");
+        std::env::set_var("CONTAINER_CONNECTION", "replacement-machine");
+        let unavailable = Problem::plain("the originally offered engine is unavailable");
+        assert_eq!(
+            reset_leftover_database_with(
+                &shell,
+                &root,
+                volume,
+                true,
+                || Ok(stack::Secrets::new()),
+                |address, _| {
+                    assert_eq!(address, &original);
+                    Err(unavailable.clone())
+                }
+            ),
+            Err(unavailable)
+        );
+        reset_leftover_database_with(
+            &shell,
+            &root,
+            volume,
+            true,
+            || Ok(stack::Secrets::new()),
+            |address, _| {
+                assert_eq!(address, &original);
+                let command = address.command();
+                let arguments: Vec<_> = command.get_args().collect();
+                assert_eq!(arguments, ["--connection", "original-machine"]);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(
+            shell.leftover_database.lock().unwrap().is_none(),
+            "successful reset consumes the offer"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn saved_api_key_selection_without_a_saved_key_is_rejected_before_starting_services() {
         for (provider, expected) in [
             (
