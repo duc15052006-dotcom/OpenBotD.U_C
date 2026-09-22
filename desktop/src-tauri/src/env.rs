@@ -2040,6 +2040,40 @@ mod model_tests {
     }
 
     #[test]
+    fn picked_harness_keeps_internal_port_but_uses_selected_host_port() {
+        let ports = Ports {
+            server: 33001,
+            harness: Some(34206),
+            ..Ports::default()
+        };
+        let env = compose(
+            &intelligence(),
+            &Model::default(),
+            &engine(),
+            &ports,
+            &pinned(),
+            Some(&PickedHarness::Installed {
+                image: "openbot-agent-langgraph-agui".into(),
+                port: 4206,
+                name: "LangGraph".into(),
+                mastra: false,
+                remote_agent_id: String::new(),
+                run_path: "/ag-ui".into(),
+            }),
+            &BTreeMap::new(),
+        );
+
+        assert_eq!(env["PICKED_HARNESS_PORT"], "4206");
+        assert_eq!(env["PICKED_HARNESS_HOST_PORT"], "34206");
+        assert_eq!(env["PICKED_HARNESS_URL"], "http://127.0.0.1:34206/ag-ui");
+        assert_eq!(
+            env["OPENBOT_TOOL_URL"],
+            "http://host.docker.internal:33001/api/agent-tools/call"
+        );
+        assert_eq!(env["SERVER_INTERNAL_URL"], "http://127.0.0.1:33001");
+    }
+
+    #[test]
     fn a_byo_harness_writes_only_the_remote_ag_ui_address_and_kind() {
         let env = compose(
             &intelligence(),
