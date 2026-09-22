@@ -105,9 +105,7 @@ function AgentsScreen() {
               {mine.map((agent, index) => {
                 return (
                   <StaggerItem index={index} key={agent.id}>
-                    <Link to="/agents" search={{ agent: agent.id }}>
-                      <AgentCard agent={agent} />
-                    </Link>
+                    <AgentCard agent={agent} />
                   </StaggerItem>
                 );
               })}
@@ -155,9 +153,7 @@ function AgentsScreen() {
               {explore.map((agent, index) => {
                 return (
                   <StaggerItem index={index} key={agent.id}>
-                    <Link to="/agents" search={{ agent: agent.id }}>
-                      <AgentCard agent={agent} />
-                    </Link>
+                    <AgentCard agent={agent} />
                   </StaggerItem>
                 );
               })}
