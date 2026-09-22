@@ -319,8 +319,8 @@ services:
       # Loopback, and on the image's own port on both sides. The server is a host process, so it
       # reaches this the same way it reaches agent-bot: over the published port, not the compose
       # network.
-      - "127.0.0.1:${PICKED_HARNESS_PORT:-4202}:${PICKED_HARNESS_PORT:-4202}"
-      - "[::1]:${PICKED_HARNESS_PORT:-4202}:${PICKED_HARNESS_PORT:-4202}"
+      - "127.0.0.1:${PICKED_HARNESS_HOST_PORT:-${PICKED_HARNESS_PORT:-4202}}:${PICKED_HARNESS_PORT:-4202}"
+      - "[::1]:${PICKED_HARNESS_HOST_PORT:-${PICKED_HARNESS_PORT:-4202}}:${PICKED_HARNESS_PORT:-4202}"
     environment:
       # Every harness refuses without this; it is what makes the endpoint the server's alone.
       MANAGED_AGENT_TOKEN: ${MANAGED_AGENT_TOKEN:-}
