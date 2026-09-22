@@ -3011,6 +3011,188 @@ mod tests {
         }
     }
 
+    fn leftover_database_fixture(root: &Path) -> serde_json::Value {
+        let mut config = postgres_config_fixture("openbot_postgres-data");
+        config["name"] = "openbot".into();
+        std::fs::write(root.join(".fixture-config"), config.to_string()).unwrap();
+        std::fs::write(
+            root.join(".fixture-volumes"),
+            "unrelated\nopenbot_postgres-data\n",
+        )
+        .unwrap();
+        std::fs::write(root.join(".fixture-inspect"), serde_json::json!([{
+            "Name": "openbot_postgres-data", "Driver": "local", "Options": {},
+            "Labels": {"com.docker.compose.project":"openbot", "com.docker.compose.volume":"postgres-data"}
+        }]).to_string()).unwrap();
+        config
+    }
+
+    #[test]
+    fn leftover_database_reset_uses_only_confirmed_compose_owned_volume() {
+        if crate::test_support::isolated_process(
+            "stack::tests::leftover_database_reset_uses_only_confirmed_compose_owned_volume",
+        ) {
+            return;
+        }
+        let path = PathFixture::with_fake_engine("postgres-volume");
+        for address in computer_stop_addresses(&path) {
+            let root = path.bin.join(format!("{}-reset", address.engine.binary()));
+            std::fs::create_dir(&root).unwrap();
+            let record = root.join("commands.log");
+            std::env::set_var("OPENBOT_TEST_ENGINE_RECORD", &record);
+            leftover_database_fixture(&root);
+            assert_eq!(
+                leftover_database_volume(&address, &root, &Secrets::new()).unwrap(),
+                Some("openbot_postgres-data".into())
+            );
+            assert!(
+                reset_leftover_database(&address, &root, &Secrets::new(), "unrelated").is_err()
+            );
+            assert!(!std::fs::read_to_string(&record)
+                .unwrap()
+                .contains("volume rm"));
+            reset_leftover_database(&address, &root, &Secrets::new(), "openbot_postgres-data")
+                .unwrap();
+            assert_eq!(
+                std::fs::read_to_string(root.join(".fixture-volumes")).unwrap(),
+                "unrelated\n"
+            );
+            let log = std::fs::read_to_string(&record).unwrap();
+            let removals: Vec<_> = log
+                .lines()
+                .filter(|line| line.contains("volume rm"))
+                .collect();
+            assert_eq!(removals.len(), 1);
+            assert!(removals[0].ends_with("volume rm openbot_postgres-data"));
+            assert!(!log.contains("--force") && !log.contains("prune") && !log.contains("down"));
+            if address.engine == crate::engine::Engine::Podman {
+                assert!(log.lines().all(|line| line
+                    .split_once('\t')
+                    .unwrap()
+                    .1
+                    .starts_with("--connection fixture-machine ")));
+            }
+        }
+    }
+
+    #[test]
+    fn leftover_database_reset_refuses_shared_unowned_changed_or_attached_volumes() {
+        if crate::test_support::isolated_process(
+            "stack::tests::leftover_database_reset_refuses_shared_unowned_changed_or_attached_volumes",
+        ) { return; }
+        let path = PathFixture::with_fake_engine("postgres-volume");
+        let address = computer_stop_addresses(&path)[1].clone();
+        let root = path.bin.join("reset-refusals");
+        std::fs::create_dir(&root).unwrap();
+        let record = root.join("commands.log");
+        std::env::set_var("OPENBOT_TEST_ENGINE_RECORD", &record);
+        for scenario in [
+            "external",
+            "custom-name",
+            "driver",
+            "driver-options",
+            "shared-service",
+            "shared-alias",
+            "foreign-label",
+            "missing-label",
+            "prefix-inspect",
+            "missing",
+            "config-failure",
+            "inventory-failure",
+            "inspect-failure",
+            "attached",
+        ] {
+            let mut config = leftover_database_fixture(&root);
+            std::fs::write(&record, "").unwrap();
+            let marker = match scenario {
+                "external" => {
+                    config["volumes"]["postgres-data"]["external"] = true.into();
+                    None
+                }
+                "custom-name" => {
+                    config["volumes"]["postgres-data"]["name"] = "shared-database".into();
+                    None
+                }
+                "driver" => {
+                    config["volumes"]["postgres-data"]["driver"] = "nfs".into();
+                    None
+                }
+                "driver-options" => {
+                    config["volumes"]["postgres-data"]["driver_opts"] =
+                        serde_json::json!({"device":"/shared"});
+                    None
+                }
+                "shared-service" => {
+                    config["services"]["other"] = config["services"]["postgres"].clone();
+                    None
+                }
+                "shared-alias" => {
+                    config["services"]["other"] = config["services"]["postgres"].clone();
+                    config["services"]["other"]["volumes"][0]["source"] = "backup-alias".into();
+                    config["volumes"]["backup-alias"] =
+                        serde_json::json!({"name": "openbot_postgres-data"});
+                    None
+                }
+                "foreign-label" | "missing-label" | "prefix-inspect" => {
+                    let mut inspect: serde_json::Value = serde_json::from_str(
+                        &std::fs::read_to_string(root.join(".fixture-inspect")).unwrap(),
+                    )
+                    .unwrap();
+                    if scenario == "foreign-label" {
+                        inspect[0]["Labels"]["com.docker.compose.project"] =
+                            "another-project".into();
+                    }
+                    if scenario == "missing-label" {
+                        inspect[0]["Labels"] = serde_json::json!({});
+                    }
+                    if scenario == "prefix-inspect" {
+                        inspect[0]["Name"] = "openbot_postgres-data-backup".into();
+                    }
+                    std::fs::write(root.join(".fixture-inspect"), inspect.to_string()).unwrap();
+                    None
+                }
+                "missing" => {
+                    std::fs::write(root.join(".fixture-volumes"), "unrelated\n").unwrap();
+                    None
+                }
+                "config-failure" => Some(".fixture-config-failure"),
+                "inventory-failure" => Some(".fixture-volume-failure"),
+                "inspect-failure" => Some(".fixture-inspect-failure"),
+                "attached" => Some(".fixture-attached"),
+                _ => unreachable!(),
+            };
+            std::fs::write(root.join(".fixture-config"), config.to_string()).unwrap();
+            if let Some(marker) = marker {
+                std::fs::write(root.join(marker), "").unwrap();
+            }
+            let error =
+                reset_leftover_database(&address, &root, &Secrets::new(), "openbot_postgres-data")
+                    .expect_err(scenario);
+            assert!(
+                !format!("{error:?}").contains("synthetic-secret"),
+                "{scenario}"
+            );
+            let log = std::fs::read_to_string(&record).unwrap();
+            assert_eq!(
+                log.contains("volume rm"),
+                scenario == "attached",
+                "{scenario}: {log}"
+            );
+            assert!(!log.contains("--force"));
+            assert!(std::fs::read_to_string(root.join(".fixture-volumes"))
+                .unwrap()
+                .contains("unrelated"));
+            if scenario == "attached" {
+                assert!(std::fs::read_to_string(root.join(".fixture-volumes"))
+                    .unwrap()
+                    .contains("openbot_postgres-data"));
+            }
+            if let Some(marker) = marker {
+                std::fs::remove_file(root.join(marker)).unwrap();
+            }
+        }
+    }
+
     #[test]
     fn desktop_approval_transport_credential_reaches_only_the_server() {
         let secrets = Secrets::from([
@@ -4341,6 +4523,31 @@ fn main() {
         writeln!(file, "{}\t{}", cwd.display(), joined).unwrap();
     }
     let scenario = std::env::var("OPENBOT_FAKE_ENGINE_SCENARIO").unwrap();
+    if scenario == "postgres-volume" {
+        let actual = if args.first().map(String::as_str) == Some("--connection") { &args[2..] } else { &args[..] };
+        let (file, failure) = if actual == ["compose", "config", "--format", "json"] {
+            (".fixture-config", ".fixture-config-failure")
+        } else if actual == ["volume", "ls", "--format", "{{.Name}}"] {
+            (".fixture-volumes", ".fixture-volume-failure")
+        } else if actual == ["volume", "inspect", "openbot_postgres-data"] {
+            (".fixture-inspect", ".fixture-inspect-failure")
+        } else if actual == ["volume", "rm", "openbot_postgres-data"] {
+            if std::path::Path::new(".fixture-attached").exists() {
+                eprintln!("synthetic-secret attached container");
+                std::process::exit(2);
+            }
+            let inventory = std::fs::read_to_string(".fixture-volumes").unwrap();
+            let remaining: String = inventory.lines().filter(|name| *name != "openbot_postgres-data").map(|name| format!("{name}\n")).collect();
+            std::fs::write(".fixture-volumes", remaining).unwrap();
+            return;
+        } else { panic!("unexpected volume probe command: {actual:?}"); };
+        if std::path::Path::new(failure).exists() {
+            eprintln!("synthetic-secret-must-not-appear-in-diagnostics");
+            std::process::exit(17);
+        }
+        print!("{}", std::fs::read_to_string(file).unwrap());
+        return;
+    }
     if scenario == "computer-stop" {
         let root = std::path::PathBuf::from(std::env::var("OPENBOT_TEST_ENGINE_RECORD").unwrap()).with_extension("");
         let race = root.join(".fixture-race").exists();
