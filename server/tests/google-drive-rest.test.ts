@@ -360,8 +360,6 @@ describe("reading a file asks Drive what it is first", () => {
     // One call: the metadata lookup. No download followed it.
     expect(calls).toHaveLength(1);
   });
-
-
 });
 
 /*
