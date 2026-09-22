@@ -27,7 +27,9 @@ export function DatabaseReset({
 
   return (
     <section className="blocker" aria-labelledby="database-reset-title">
-      <h2 id="database-reset-title">Delete the previous installation’s data?</h2>
+      <h2 id="database-reset-title">
+        Delete the previous installation’s data?
+      </h2>
       <p>
         This permanently deletes the local OpenBot database, including saved
         chats, Bots, and settings. Only continue if you want a fresh
@@ -43,7 +45,11 @@ export function DatabaseReset({
         >
           Keep saved data
         </button>
-        <button type="button" disabled={busy} onClick={() => void onReset(volume)}>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void onReset(volume)}
+        >
           {busy ? "Deleting saved data…" : "Delete saved data"}
         </button>
       </div>
