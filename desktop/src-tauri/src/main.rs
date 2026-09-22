@@ -413,7 +413,7 @@ async fn prepare_installation(
                 ));
             }
             remember_selected_root(&shell, &root);
-        *shell.leftover_database.lock().unwrap() = None;
+            *shell.leftover_database.lock().unwrap() = None;
         }
         let address = tauri::async_runtime::block_on(engine_ready(&app))?.pin()?;
         attempt.require_current()?;
@@ -1401,6 +1401,7 @@ async fn start_stack_inner<R: tauri::Runtime>(
         }
         // A rejected concurrent Start must not replace the accepted attempt's selection.
         remember_selected_root(&shell, &root);
+        *shell.leftover_database.lock().unwrap() = None;
     }
     /*
      * Resolved from the catalogue rather than taken from the window.
@@ -1514,14 +1515,15 @@ async fn start_stack_inner<R: tauri::Runtime>(
             || stack::leftover_database_volume(&found, &root, &existing_secrets),
         )
         .inspect_err(|problem| {
-            *shell.leftover_database.lock().unwrap() = problem
-                .database_reset
-                .as_ref()
-                .map(|volume| LeftoverDatabase {
-                    root: root.clone(),
-                    volume: volume.clone(),
-                    address: found.clone(),
-                });
+            *shell.leftover_database.lock().unwrap() =
+                problem
+                    .database_reset
+                    .as_ref()
+                    .map(|volume| LeftoverDatabase {
+                        root: root.clone(),
+                        volume: volume.clone(),
+                        address: found.clone(),
+                    });
         })?;
 
         let settings = openbot_env::compose(
