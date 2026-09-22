@@ -344,7 +344,6 @@ fn extract_bun(archive: &Path, target: &Path, entry: &str) -> Result<(), Problem
     Ok(())
 }
 
-#[cfg(any(windows, target_os = "macos", test))]
 fn verify_bun(binary: &Path) -> Result<(), Problem> {
     let output = crate::quiet::command(binary)
         .arg("--version")
