@@ -179,6 +179,80 @@ fn compose_command(engine: &Address, root: &Path, secrets: &Secrets) -> Command 
     command
 }
 
+/// Check the selected deployment for an existing Postgres data volume before minting a new
+/// encryption key. Compose is the source of truth for project names, explicit volume names and
+/// overrides; its resolved configuration is never copied into diagnostics because it may contain
+/// interpolated credentials.
+pub fn postgres_volume_exists(
+    engine: &Address,
+    root: &Path,
+    secrets: &Secrets,
+) -> Result<bool, Problem> {
+    let configuration = compose_command(engine, root, secrets)
+        .args(["config", "--format", "json"])
+        .output()
+        .map_err(|error| {
+            postgres_volume_problem(format!("Could not run Compose config: {error}"))
+        })?;
+    if !configuration.status.success() {
+        return Err(postgres_volume_problem(format!(
+            "Compose config exited with {}. Output omitted because it can contain credentials.",
+            configuration.status
+        )));
+    }
+    let volume = postgres_volume_name(&configuration.stdout)?;
+    let inventory = engine
+        .command()
+        .current_dir(root)
+        .args(["volume", "ls", "--format", "{{.Name}}"])
+        .output()
+        .map_err(|error| postgres_volume_problem(format!("Could not list volumes: {error}")))?;
+    if !inventory.status.success() {
+        return Err(postgres_volume_problem(format!(
+            "Volume inventory exited with {}.",
+            inventory.status
+        )));
+    }
+    let names = std::str::from_utf8(&inventory.stdout)
+        .map_err(|_| postgres_volume_problem("Volume inventory was not valid UTF-8."))?;
+    Ok(names.lines().any(|name| name.trim() == volume))
+}
+
+fn postgres_volume_problem(detail: impl Into<String>) -> Problem {
+    Problem::with(
+        "OpenBot could not verify whether this installation has saved database data. No encryption key was created. Check the selected container engine and Compose configuration, then try again.",
+        detail,
+    )
+}
+
+fn postgres_volume_name(configuration: &[u8]) -> Result<String, Problem> {
+    let config: serde_json::Value = serde_json::from_slice(configuration)
+        .map_err(|_| postgres_volume_problem("Compose config did not return valid JSON."))?;
+    let postgres = &config["services"]["postgres"];
+    let data = postgres["environment"]["PGDATA"]
+        .as_str()
+        .unwrap_or("/var/lib/postgresql/data");
+    let mount = postgres["volumes"].as_array().and_then(|mounts| {
+        mounts
+            .iter()
+            .filter(|mount| {
+                mount["target"].as_str().is_some_and(|target| {
+                    data == target
+                        || data.starts_with(&format!("{}/", target.trim_end_matches('/')))
+                })
+            })
+            .max_by_key(|mount| mount["target"].as_str().unwrap().len())
+    });
+    let volume = mount
+        .filter(|mount| mount["type"].as_str() == Some("volume"))
+        .and_then(|mount| mount["source"].as_str())
+        .and_then(|source| config["volumes"][source]["name"].as_str())
+        .filter(|name| !name.trim().is_empty());
+    volume.map(str::to_owned).ok_or_else(|| {
+        postgres_volume_problem("Compose did not resolve a named volume for Postgres data.")
+    })
+}
+
 /// Resolve only image references, using public installation overrides before credentials exist.
 pub fn installation_images(
     engine: &Address,
@@ -2600,6 +2674,55 @@ fn dirs_home() -> PathBuf {
 mod tests {
     use super::*;
     use crate::test_support::temp_root;
+
+    fn postgres_config_fixture(name: &str) -> serde_json::Value {
+        serde_json::json!({
+            "services": {"postgres": {"volumes": [{
+                "type": "volume", "source": "postgres-data", "target": "/var/lib/postgresql/data"
+            }]}},
+            "volumes": {"postgres-data": {"name": name}}
+        })
+    }
+
+    #[test]
+    fn postgres_volume_uses_resolved_name_and_closest_pgdata_mount() {
+        let mut config = postgres_config_fixture("outer-volume");
+        config["services"]["postgres"]["environment"] =
+            serde_json::json!({"PGDATA": "/var/lib/postgresql/data/nested"});
+        config["services"]["postgres"]["volumes"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "type": "volume",
+                "source": "inner",
+                "target": "/var/lib/postgresql/data/nested"
+            }));
+        config["volumes"]["inner"] = serde_json::json!({"name": "actual-data-volume"});
+        assert_eq!(
+            postgres_volume_name(config.to_string().as_bytes()).unwrap(),
+            "actual-data-volume"
+        );
+    }
+
+    #[test]
+    fn postgres_volume_refuses_unresolved_or_non_volume_storage_without_disclosing_config() {
+        let mut config = postgres_config_fixture("selected-volume");
+        config["services"]["postgres"]["environment"] =
+            serde_json::json!({"SECRET": "synthetic-secret-must-not-appear-in-diagnostics"});
+        config["services"]["postgres"]["volumes"][0]["type"] = "bind".into();
+        let mut missing_name = postgres_config_fixture("selected-volume");
+        missing_name["volumes"] = serde_json::json!({});
+        for content in [
+            config.to_string(),
+            missing_name.to_string(),
+            "{}".into(),
+            "invalid-json-secret".into(),
+        ] {
+            let error = postgres_volume_name(content.as_bytes()).unwrap_err();
+            assert!(error.said.contains("No encryption key was created"));
+            assert!(!format!("{error:?}").contains("synthetic-secret"));
+        }
+    }
 
     #[test]
     fn desktop_approval_transport_credential_reaches_only_the_server() {

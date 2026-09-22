@@ -8,6 +8,15 @@ Newest first. `Unreleased` is what is on `main` and not yet tagged.
 
 ## Unreleased
 
+### Desktop refuses to replace the key of a retained database
+
+A reinstall can remove the deployment folder's local markers while Docker or Podman keeps the
+Postgres volume. Desktop startup now resolves the selected Compose project's actual Postgres volume
+before minting a new `KEY_ENCRYPTION_KEY`. If that volume still exists and the original key is
+missing, startup stops and asks for the original key instead of creating a replacement that would
+make previously encrypted credentials unreadable. The resolved Compose configuration is never
+included in diagnostics because it may contain interpolated secrets.
+
 ### The EKS cluster recipe blocks Bot pods from the node's IAM role
 
 The EKS example now sets `disableIMDSv1` and `disablePodIMDS` on its managed node group so a Bot's
