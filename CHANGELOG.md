@@ -8,6 +8,14 @@ Newest first. `Unreleased` is what is on `main` and not yet tagged.
 
 ## Unreleased
 
+### Google Drive shortcuts open the file they point at
+
+The Drive connector now follows a Google Drive shortcut once when reading file content, then reads
+the shortcut's target using its real type. Shortcuts to Docs, Sheets, Slides and text files can now
+be read normally, broken shortcuts fail clearly, and shortcuts to unsupported binary files remain
+blocked instead of being decoded as text.
+
+
 ### Desktop startup repairs stale Bun and finds Docker credential helpers
 
 If a Bun executable is already on PATH but is not the pinned runtime OpenBot supports, Desktop now
