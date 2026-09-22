@@ -25,6 +25,16 @@ missing, startup stops and asks for the original key instead of creating a repla
 make previously encrypted credentials unreadable. The resolved Compose configuration is never
 included in diagnostics because it may contain interpolated secrets.
 
+### Desktop can explicitly reset a verified leftover database
+
+When a previous installation's Postgres volume survives but its encryption key is unavailable,
+Desktop still refuses to replace that key automatically. A person who does not need the saved data
+can now choose a separate destructive recovery path, confirm that the local database will be
+permanently deleted, and retry setup fresh. Before removal, OpenBot re-verifies the exact Compose
+project, local driver, volume labels, current installation root and original container-engine
+connection. External, custom-named, shared, foreign, changed or attached volumes are refused, and
+the reset never uses force, prune or stack teardown.
+
 ### The EKS cluster recipe blocks Bot pods from the node's IAM role
 
 The EKS example now sets `disableIMDSv1` and `disablePodIMDS` on its managed node group so a Bot's
