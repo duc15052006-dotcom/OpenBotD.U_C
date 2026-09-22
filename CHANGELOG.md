@@ -8,6 +8,14 @@ Newest first. `Unreleased` is what is on `main` and not yet tagged.
 
 ## Unreleased
 
+### Desktop startup repairs stale Bun and finds Docker credential helpers
+
+If a Bun executable is already on PATH but is not the pinned runtime OpenBot supports, Desktop now
+leaves that user installation untouched and uses OpenBot's verified runtime instead. When Docker is
+resolved from its installed location but the GUI process PATH cannot see the credential helper beside
+it, child Docker commands now include Docker's own directory without changing the person's Docker
+credential configuration or OpenBot's managed Compose-provider precedence.
+
 ### Desktop refuses to replace the key of a retained database
 
 A reinstall can remove the deployment folder's local markers while Docker or Podman keeps the
