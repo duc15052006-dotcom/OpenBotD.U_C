@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Ask } from "./Ask";
+import { DatabaseReset } from "./DatabaseReset";
 import {
   DEFAULT_HARNESS,
   type HarnessChoice,
@@ -453,6 +454,24 @@ export function App() {
     }
   }
 
+  async function resetLeftoverDatabase(volume: string) {
+    setBusy(true);
+    try {
+      await invoke("reset_leftover_database", {
+        root: root.trim(),
+        volume,
+        confirmed: true,
+      });
+      setFailure(null);
+      setRecoveryFailure(null);
+      setSteps([]);
+    } catch (error) {
+      setFailure(asProblem(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function modelCanStart() {
     if (!model) return false;
     if (!model.saved) return true;
@@ -544,7 +563,16 @@ export function App() {
     return (
       <main>
         <Welcome onStart={() => setStep("harness")} />
-        {displayedFailure && <Failure problem={displayedFailure} />}
+        {!running && displayedFailure?.database_reset && (
+        <DatabaseReset
+          key={`${root}:${displayedFailure.database_reset}`}
+          busy={busy}
+          volume={displayedFailure.database_reset}
+          onReset={resetLeftoverDatabase}
+        />
+      )}
+
+      {displayedFailure && <Failure problem={displayedFailure} />}
       </main>
     );
   }
