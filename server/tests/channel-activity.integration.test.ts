@@ -185,9 +185,9 @@ describe("reading a person's channels", () => {
     const agentId = await createAgent(owner);
     await createChannel(owner, [agentId]);
 
-    await expect(
-      store.list(owner, { cursor: "not-a-cursor" }),
-    ).rejects.toThrow("cursor must be a valid channel page cursor");
+    await expect(store.list(owner, { cursor: "not-a-cursor" })).rejects.toThrow(
+      "cursor must be a valid channel page cursor",
+    );
   });
 
   test("somebody with no channels gets an empty page and no cursor", async () => {
