@@ -180,14 +180,14 @@ describe("reading a person's channels", () => {
     expect(page.channels.length).toBeLessThanOrEqual(200);
   });
 
-  test("a nonsense cursor reads as the first page", async () => {
+  test("a nonsense cursor is a caller error, not the first page", async () => {
     const owner = await createUser();
     const agentId = await createAgent(owner);
     await createChannel(owner, [agentId]);
 
-    const page = await store.list(owner, { cursor: "not-a-cursor" });
-
-    expect(page.channels).toHaveLength(1);
+    await expect(
+      store.list(owner, { cursor: "not-a-cursor" }),
+    ).rejects.toThrow("cursor must be a valid channel page cursor");
   });
 
   test("somebody with no channels gets an empty page and no cursor", async () => {
