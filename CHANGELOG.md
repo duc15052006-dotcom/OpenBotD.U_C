@@ -8,6 +8,12 @@ Newest first. `Unreleased` is what is on `main` and not yet tagged.
 
 ## Unreleased
 
+### MCP resource links keep their destination
+
+MCP tools that return a `resource_link` now preserve its name, URI and description in the text
+handed to the model. Previously the result was reduced to `[resource_link]`, so a search could
+return a page or file without giving the model the destination needed to open it.
+
 ### Google Drive shortcuts open the file they point at
 
 The Drive connector now follows a Google Drive shortcut once when reading file content, then reads

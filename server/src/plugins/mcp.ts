@@ -55,9 +55,24 @@ export function resultText(
   let joined = parts
     .map((part) => {
       if (!part || typeof part !== "object") return "[unknown]";
-      const item = part as { type?: string; text?: string };
+      const item = part as {
+        type?: string;
+        text?: string;
+        uri?: unknown;
+        name?: unknown;
+        description?: unknown;
+      };
       if (item.type === "text" && typeof item.text === "string") {
         return item.text;
+      }
+      // A resource_link is a pointer rather than the resource itself. Preserve the fields a model
+      // needs to identify and open it; naming the type alone drops the actual destination.
+      if (item.type === "resource_link") {
+        const shown = [item.name, item.uri, item.description].filter(
+          (value): value is string =>
+            typeof value === "string" && value.trim() !== "",
+        );
+        if (shown.length > 0) return shown.join("\n");
       }
       // A non-text part is named rather than dropped. A model told "[image]" can say the tool
       // returned an image; a model handed nothing concludes the tool returned nothing.
