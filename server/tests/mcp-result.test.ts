@@ -88,6 +88,50 @@ describe("a result with something in it", () => {
     expect(resultText([{}]).text).toBe("[unknown]");
   });
 
+  test("reads a resource_link's name, uri and description", () => {
+    expect(
+      resultText([
+        {
+          type: "resource_link",
+          uri: "notion://page/q3-budget",
+          name: "Q3 budget",
+          description: "The approved numbers for the quarter",
+          mimeType: "text/html",
+        },
+      ]).text,
+    ).toBe(
+      "Q3 budget\nnotion://page/q3-budget\nThe approved numbers for the quarter",
+    );
+  });
+
+  test("a resource_link with only a uri preserves that uri", () => {
+    expect(
+      resultText([{ type: "resource_link", uri: "file:///notes.md" }]).text,
+    ).toBe("file:///notes.md");
+  });
+
+  test("a resource_link with no usable fields is still named", () => {
+    expect(resultText([{ type: "resource_link" }]).text).toBe(
+      "[resource_link]",
+    );
+    expect(
+      resultText([{ type: "resource_link", uri: "   ", name: "" }]).text,
+    ).toBe("[resource_link]");
+  });
+
+  test("joins a resource_link beside a text part", () => {
+    expect(
+      resultText([
+        { type: "text", text: "matching pages:" },
+        {
+          type: "resource_link",
+          uri: "https://example.com/policy",
+          name: "Expense policy",
+        },
+      ]).text,
+    ).toBe("matching pages:\nExpense policy\nhttps://example.com/policy");
+  });
+
   test("names a null or non-object part rather than throwing", () => {
     // Content arrives from a vendor's server; a null entry must not throw.
     expect(resultText([null]).text).toBe("[unknown]");
