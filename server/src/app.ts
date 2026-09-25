@@ -63,7 +63,12 @@ import { createHostAccessRoutes } from "./host-access/routes";
 import { createIntelligenceClient } from "./intelligence-client";
 import { parsePageLimit } from "./paging";
 import type { OnboardingStore } from "./people/onboarding";
-import { MAX_PAGE, type PeopleStore } from "./people/store";
+import {
+  MAX_PAGE,
+  PeopleCursorError,
+  decodeCursor as decodePeopleCursor,
+  type PeopleStore,
+} from "./people/store";
 import type { ComposioBroker } from "./plugins/broker";
 import { createPluginRoutes } from "./plugins/routes";
 import {
@@ -660,17 +665,34 @@ export function createApp(
       );
     }
 
-    return context.json(
-      await peopleStore.list({
-        ...(url.searchParams.get("search")
-          ? { search: url.searchParams.get("search") as string }
-          : {}),
-        ...(url.searchParams.get("cursor")
-          ? { cursor: url.searchParams.get("cursor") as string }
-          : {}),
-        ...(parsed.limit !== undefined ? { limit: parsed.limit } : {}),
-      }),
-    );
+    const rawCursor = url.searchParams.get("cursor");
+    if (rawCursor !== null) {
+      try {
+        decodePeopleCursor(rawCursor);
+      } catch (error) {
+        if (error instanceof PeopleCursorError) {
+          return context.json({ error: error.message }, 400);
+        }
+        throw error;
+      }
+    }
+
+    try {
+      return context.json(
+        await peopleStore.list({
+          ...(url.searchParams.get("search")
+            ? { search: url.searchParams.get("search") as string }
+            : {}),
+          ...(rawCursor ? { cursor: rawCursor } : {}),
+          ...(parsed.limit !== undefined ? { limit: parsed.limit } : {}),
+        }),
+      );
+    } catch (error) {
+      if (error instanceof PeopleCursorError) {
+        return context.json({ error: error.message }, 400);
+      }
+      throw error;
+    }
   });
 
   app.post("/api/admin/people/:userId/role", requireUser, async (context) => {
