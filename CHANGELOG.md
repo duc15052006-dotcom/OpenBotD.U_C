@@ -8,6 +8,14 @@ Newest first. `Unreleased` is what is on `main` and not yet tagged.
 
 ## Unreleased
 
+### The built-in Bot validates a trimmed model name at startup
+
+Direct container or service configuration may include surrounding whitespace in `BOT_MODEL`.
+OpenBot now trims that value before applying its chat-completions compatibility guard, so a padded
+unsupported model cannot start healthy and then fail on its first tool call. A blank value uses the
+normal default model.
+
+
 ### Skill selection keeps capabilities named across multiple JSON replies
 
 When a model wraps its skill choice in prose or sends a revised JSON object, OpenBot reads each
