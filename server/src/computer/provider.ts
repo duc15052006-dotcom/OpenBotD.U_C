@@ -194,6 +194,27 @@ export function createSharedComputerProvider(
       return options.baseUrl;
     },
 
+    /**
+     * Which run of this Bot's browser is current, asked from the shared computer itself.
+     *
+     * The shared process outlives a Bot reset, so its container identity cannot distinguish the
+     * browser before the reset from the browser after it. Unknown stays undefined so an older
+     * computer that does not expose /run keeps the pre-session-fencing behaviour instead of taking
+     * every ref down.
+     */
+    async sessionOf(botId: string): Promise<string | undefined> {
+      try {
+        const body = (await call("/run", "GET", botId)) as {
+          run?: unknown;
+        } | null;
+        return typeof body?.run === "string" && body.run.length > 0
+          ? body.run
+          : undefined;
+      } catch {
+        return undefined;
+      }
+    },
+
     async status(botId: string): Promise<ComputerStatus> {
       try {
         await call("/health", "GET", botId);
