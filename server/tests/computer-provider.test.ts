@@ -123,9 +123,7 @@ describe("shared computer provider", () => {
     });
 
     expect(await provider.sessionOf?.("sales")).toBe("run-42");
-    expect(requests).toEqual([
-      { botId: "sales", token: "computer-secret" },
-    ]);
+    expect(requests).toEqual([{ botId: "sales", token: "computer-secret" }]);
   });
 
   test("treats a shared computer without /run as an unknown run", async () => {
