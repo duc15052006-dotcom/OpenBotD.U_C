@@ -91,6 +91,15 @@ jobs:
         working-directory: ${{ matrix.package }}
       - run: bun run typecheck
         working-directory: ${{ matrix.package }}
+      # The shared-computer run id is a runtime property, not a type property. This regression drives
+      # the real agent-computer HTTP process without launching Chromium and proves reset rotates the
+      # per-Bot run that the server uses to fence stale snapshots.
+      - name: Shared computer run/reset regression
+        if: matrix.package == 'agent-computer'
+        env:
+          OPENBOT_LIVE_SCREEN: "1"
+        run: bun test tests/reset-run.test.ts
+        working-directory: agent-computer
 
   chart:
     name: chart (${{ matrix.target }})

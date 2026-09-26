@@ -148,6 +148,8 @@ type BotSession = {
   control: Control;
   /** This Bot's snapshot generation. See the note above on staleness. */
   snapshotId: number;
+  /** Which run of this Bot's browser produced that generation. */
+  run: string;
   /** The page this Bot was last handed, so a change of page can retire its refs. */
   livePage?: Page;
   /**
@@ -192,6 +194,7 @@ function sessionFor(botId: string): BotSession {
   const created: BotSession = {
     control: createControl(),
     snapshotId: 0,
+    run: crypto.randomUUID(),
     viewer: createViewerSlot(),
   };
   sessions.set(botId, created);
@@ -857,6 +860,20 @@ serve<StreamData>({
     }
 
     /**
+     * Which run of this Bot's browser the caller is looking at.
+     *
+     * Snapshot generations only order pages within one browser run. This process serves multiple
+     * Bots and survives individual resets, so the run has to be per Bot and has to change when that
+     * Bot's browser session is replaced.
+     *
+     * Read-only and deliberately not gated as an acting request: the server asks this before it can
+     * safely resolve a ref, including while a person may hold the wheel.
+     */
+    if (url.pathname === "/run" && request.method === "GET") {
+      return json({ run: session.run });
+    }
+
+    /**
      * The computers this process holds. The shape is a list because the admin surface is a
      * list, and because a Bot that has a profile has a computer whether or not a browser is running
      * for it this second.
@@ -909,6 +926,9 @@ serve<StreamData>({
       await profiles.reset(botId);
       // Reset releases control because any previous browser session and pending secret request are gone.
       session.control.release();
+      // The browser this session described is gone. A fresh run prevents an in-flight snapshot from
+      // the wiped browser from being accepted as though it belonged to the replacement.
+      session.run = crypto.randomUUID();
       return json({ reset: true, botId });
     }
 
