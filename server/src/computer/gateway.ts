@@ -423,8 +423,19 @@ export function createComputerGateway(
    * on the store.
    */
   async function snapshot(botId: string): Promise<SnapshotResult> {
+    const base = await locate(botId);
+    /*
+     * Ask which run this is before the page is drawn rather than after it.
+     *
+     * `locate` comes first because providers that own a lifecycle use it to ensure/refresh the
+     * computer. But `sessionOf` must come before `/snapshot`: if a reset or replacement lands
+     * while the snapshot is in flight, asking afterwards could stamp the dead page with the fresh
+     * browser's run. Asked first, a replacement in that window leaves the stale page carrying the
+     * run that has already ended, so it cannot resolve and the next snapshot safely supersedes it.
+     */
+    const run = await sessionOf(botId);
     const result = await transport.call<SnapshotResult>(
-      await locate(botId),
+      base,
       botId,
       "/snapshot",
       { method: "POST" },
@@ -435,8 +446,7 @@ export function createComputerGateway(
       elements: new Map(
         result.elements.map((element) => [element.ref, element]),
       ),
-      // Read after `locate`, which is the `/ensure` that reports it.
-      ...(await sessionOf(botId)),
+      ...run,
     });
     return result;
   }
