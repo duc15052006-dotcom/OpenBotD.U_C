@@ -33,6 +33,31 @@ describe("a result with nothing in it", () => {
   test("is not reported as truncated", () => {
     expect(resultText([]).truncated).toBe(false);
   });
+
+  test("reads structuredContent when the content list was empty", () => {
+    const { text, truncated } = resultText([], {
+      title: "Expense policy",
+      meals: "under $75 need no receipt",
+    });
+    expect(truncated).toBe(false);
+    expect(text).toContain("Expense policy");
+    expect(text).toContain("under $75 need no receipt");
+    expect(text.toLowerCase()).not.toContain("no content");
+  });
+
+  test("does not replace a text part with structuredContent", () => {
+    const { text } = resultText(
+      [{ type: "text", text: "the prose the server chose" }],
+      { title: "ignored" },
+    );
+    expect(text).toBe("the prose the server chose");
+    expect(text).not.toContain("ignored");
+  });
+
+  test("empty content and empty structuredContent still say nothing was found", () => {
+    expect(resultText([], null).text).toBe(resultText([]).text);
+    expect(resultText([], undefined).text).toBe(resultText([]).text);
+  });
 });
 
 describe("a result with something in it", () => {
@@ -61,6 +86,50 @@ describe("a result with something in it", () => {
     // the tool returned nothing, which is a different and false statement.
     expect(resultText([{ type: "image", data: "..." }]).text).toBe("[image]");
     expect(resultText([{}]).text).toBe("[unknown]");
+  });
+
+  test("reads a resource_link's name, uri and description", () => {
+    expect(
+      resultText([
+        {
+          type: "resource_link",
+          uri: "notion://page/q3-budget",
+          name: "Q3 budget",
+          description: "The approved numbers for the quarter",
+          mimeType: "text/html",
+        },
+      ]).text,
+    ).toBe(
+      "Q3 budget\nnotion://page/q3-budget\nThe approved numbers for the quarter",
+    );
+  });
+
+  test("a resource_link with only a uri preserves that uri", () => {
+    expect(
+      resultText([{ type: "resource_link", uri: "file:///notes.md" }]).text,
+    ).toBe("file:///notes.md");
+  });
+
+  test("a resource_link with no usable fields is still named", () => {
+    expect(resultText([{ type: "resource_link" }]).text).toBe(
+      "[resource_link]",
+    );
+    expect(
+      resultText([{ type: "resource_link", uri: "   ", name: "" }]).text,
+    ).toBe("[resource_link]");
+  });
+
+  test("joins a resource_link beside a text part", () => {
+    expect(
+      resultText([
+        { type: "text", text: "matching pages:" },
+        {
+          type: "resource_link",
+          uri: "https://example.com/policy",
+          name: "Expense policy",
+        },
+      ]).text,
+    ).toBe("matching pages:\nExpense policy\nhttps://example.com/policy");
   });
 
   test("names a null or non-object part rather than throwing", () => {

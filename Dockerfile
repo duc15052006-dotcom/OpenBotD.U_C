@@ -36,8 +36,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && ln -s bun /usr/local/bin/bunx \
   && bunx --bun "playwright@${PLAYWRIGHT_VERSION}" install --with-deps chromium \
   && rm -rf /root/.cache /tmp/* /var/lib/apt/lists/* \
-  && useradd --create-home --shell /bin/bash pwuser \
-  && useradd --create-home --shell /usr/sbin/nologin apiuser
+  && useradd --uid 1001 --create-home --shell /bin/bash pwuser \
+  && useradd --uid 1002 --create-home --shell /usr/sbin/nologin apiuser
 
 
 FROM base AS deps
@@ -227,8 +227,8 @@ ENV AGENT_COMPUTER_URL=http://127.0.0.1:4100
 # The two directories the browser writes are its workspace and its profile, the second being what
 # keeps a Bot signed in between turns. Owned here, because a non-root process cannot create them at
 # the root of the filesystem and the failure surfaces as EACCES on the first navigation.
-RUN mkdir -p /workspace /profiles \
-  && chown -R pwuser:pwuser /workspace /profiles /app
+RUN mkdir -p /workspace /profiles /quarantine \
+  && chown -R pwuser:pwuser /workspace /profiles /quarantine /app
 
 # Where the embedded database answers, when there is one. Overridden by whatever you set, so an
 # external database needs no special case: set DATABASE_URL and EMBEDDED_POSTGRES stays off.

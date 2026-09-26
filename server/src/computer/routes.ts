@@ -110,6 +110,80 @@ export function createComputerRoutes(
     }
   });
 
+  routes.get("/:botId/quarantine", async (context) => {
+    try {
+      return context.json(
+        await gateway.listQuarantine(context.req.param("botId")),
+      );
+    } catch (error) {
+      return context.json(errorBody(error), statusFor(error));
+    }
+  });
+
+  routes.post("/:botId/quarantine/scan", async (context) => {
+    const body = (await context.req.json().catch(() => null)) as {
+      id?: unknown;
+    } | null;
+    if (typeof body?.id !== "string" || !body.id) {
+      return context.json(
+        { error: "A quarantine download id is required." },
+        400,
+      );
+    }
+    const record = context.var.actor;
+    try {
+      return context.json(
+        await gateway.scanQuarantine(
+          context.req.param("botId"),
+          {
+            id: record.id,
+            ...(record.email === DEV_ACTOR_EMAIL ? {} : { userId: record.id }),
+          },
+          body.id,
+        ),
+      );
+    } catch (error) {
+      return context.json(errorBody(error), statusFor(error));
+    }
+  });
+
+  routes.post("/:botId/quarantine/approve", async (context) => {
+    const botId = context.req.param("botId");
+    const body = (await context.req.json().catch(() => null)) as {
+      id?: unknown;
+      botId?: unknown;
+      confirm?: unknown;
+    } | null;
+    if (
+      typeof body?.id !== "string" ||
+      body.confirm !== "APPROVE" ||
+      body.botId !== botId
+    ) {
+      return context.json(
+        {
+          error:
+            "Approval requires APPROVE confirmation, the exact Bot id, and the quarantine download id.",
+        },
+        400,
+      );
+    }
+    const record = context.var.actor;
+    try {
+      return context.json(
+        await gateway.approveQuarantine(
+          botId,
+          {
+            id: record.id,
+            ...(record.email === DEV_ACTOR_EMAIL ? {} : { userId: record.id }),
+          },
+          body.id,
+        ),
+      );
+    } catch (error) {
+      return context.json(errorBody(error), statusFor(error));
+    }
+  });
+
   /**
    * Whether the same page is on both, ignoring the two ways one page spells itself.
    *
@@ -390,6 +464,28 @@ export function createComputerRoutes(
     }
   });
 
+  /**
+   * Emergency stop for every Computer in this deployment.
+   *
+   * Admin-only and intentionally non-destructive: it stops runtime activity but keeps profiles,
+   * workspaces and quarantined files so a later Start can resume them.
+   */
+  routes.post("/stop-all", requireUser, async (context) => {
+    const denied = requireAdmin(context);
+    if (denied) return denied;
+
+    const record = context.var.actor;
+    const actor: ActionActor = {
+      id: record.id,
+      ...(record.email === DEV_ACTOR_EMAIL ? {} : { userId: record.id }),
+    };
+    try {
+      return context.json(await gateway.stopAllComputers(actor));
+    } catch (error) {
+      return context.json(errorBody(error), statusFor(error));
+    }
+  });
+
   routes.get("/:botId/computers", async (context) => {
     // The session guard and the question of whether this person may act as the Bot in the path are
     // both applied by the middleware above. Neither is the question here: the answer is the whole
@@ -404,14 +500,64 @@ export function createComputerRoutes(
     }
   });
 
+  /** Start or wake the browser, keeping the saved profile. */
+  routes.post("/:botId/computers/start", (context) =>
+    act(context, (botId, actor) => gateway.startComputer(botId, actor)),
+  );
+
+  /** Restart the browser without deleting its saved profile or logins. */
+  routes.post("/:botId/computers/restart", (context) =>
+    act(context, (botId, actor) => gateway.restartComputer(botId, actor)),
+  );
+
   /** Stop the browser, keep the logins. */
   routes.post("/:botId/computers/stop", (context) =>
     act(context, (botId, actor) => gateway.stopComputer(botId, actor)),
   );
 
-  /** Delete the profile. Every login goes with it, which is the point and also the danger. */
+  routes.post("/:botId/computers/snapshot", (context) =>
+    act(context, (botId, actor, body) => {
+      if (body?.confirm !== "SNAPSHOT" || body?.botId !== botId) {
+        return {
+          error:
+            "Snapshot requires explicit confirmation for this Bot. Confirm SNAPSHOT and the exact Bot id.",
+        };
+      }
+      return gateway.createComputerSnapshot(botId, actor);
+    }),
+  );
+
+  routes.post("/:botId/computers/restore", (context) =>
+    act(context, (botId, actor, body) => {
+      if (body?.confirm !== "RESTORE" || body?.botId !== botId) {
+        return {
+          error:
+            "Restore requires explicit confirmation for this Bot. Confirm RESTORE and the exact Bot id.",
+        };
+      }
+      return gateway.restoreComputerSnapshot(botId, actor);
+    }),
+  );
+
+  /**
+   * Delete the Computer's persistent profile and workspace. Every login and saved file goes with
+   * it, which is the point and also the danger.
+   *
+   * The UI already asks for confirmation, but the API is the boundary: a stale client, script, or
+   * accidental POST must not be able to wipe a different Bot just because it reached the route.
+   * Require both a destructive-action word and the exact Bot id in the body. This is not a secret;
+   * it is an explicit acknowledgement bound to the resource being destroyed.
+   */
   routes.post("/:botId/computers/reset", (context) =>
-    act(context, (botId, actor) => gateway.resetComputer(botId, actor)),
+    act(context, (botId, actor, body) => {
+      if (body?.confirm !== "RESET" || body?.botId !== botId) {
+        return {
+          error:
+            "Reset requires explicit confirmation for this Bot. Confirm RESET and the exact Bot id.",
+        };
+      }
+      return gateway.resetComputer(botId, actor);
+    }),
   );
 
   routes.post("/:botId/control/take", (context) =>

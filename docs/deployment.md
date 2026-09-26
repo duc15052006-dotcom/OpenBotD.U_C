@@ -137,6 +137,12 @@ because a public URL where every visitor is an administrator fails silently: it 
 Configure Google, Microsoft or Okta, or set `OPENBOT_SINGLE_USER=true` to say you meant an open
 deployment. `NODE_ENV` does not affect this.
 
+That flag does not cover a public address. `OPENBOT_SINGLE_USER=true` together with an
+`OPENBOT_PUBLIC_URL`, `OPENBOT_APP_URL` or `TRUSTED_ORIGINS` entry the public internet reaches
+refuses to start, because every visitor would otherwise be the administrator. Private LAN, Tailnet,
+VPN and `.local` addresses remain allowed with a warning. Put a sign-in provider in front of any
+public deployment.
+
 **Put TLS in front of it.** Not only for the cookies. A page served from `http://<address>` is not a
 secure context, which removes a set of browser APIs that are present on `http://localhost` and so
 never missing on a laptop. The app does not depend on any of them, but sign-in cookies still want

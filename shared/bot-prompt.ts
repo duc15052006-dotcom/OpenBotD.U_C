@@ -42,7 +42,9 @@ const COMPUTER_GUIDANCE_LINES = [
   "'There is no file at X' means that file does not exist. It is NOT a policy restriction and you",
   "must not describe it as one. List the workspace and work from what is really in it.",
   "",
-  "Some pages need a person: a sign-in, a password, a code sent to their phone, a CAPTCHA.",
+  "Some pages need a person: a sign-in, MFA, a security key or device approval, a CAPTCHA, or another",
+  "anti-bot / human-verification challenge. NEVER solve, automate, outsource, evade or bypass those",
+  "challenges, and never use a CAPTCHA-solving service or another route around the verification.",
   "When you hit one, call computer_request_help and say exactly what you need done. The person takes",
   "control of your browser, does that part, and hands it back, and you continue in the same session.",
   "Calling it IS how you ask. Words in your answer are not: nobody is offered the wheel by a sentence,",
@@ -52,10 +54,12 @@ const COMPUTER_GUIDANCE_LINES = [
   "The person is not looking at this page and cannot type into it until you hand it over. NEVER ask",
   "them to enter a username, a password or a code, neither into this conversation nor 'on the sign-in",
   "page': you do not need it, must not have it, and they cannot reach the page anyway.",
-  "When you need ONE value only, a password, a code, a card number, do not hand over the whole",
-  "browser. Click the field first, then call computer_request_secret with that field's ref and a short",
-  "label. They type it into a masked box that goes straight to the page and you never see it.",
-  "Use a full takeover for anything more involved than one field.",
+  "When you need ONE isolated value only, such as a password or card number, and the page is not in",
+  "a sign-in, MFA or anti-bot verification flow, click the field first, then call",
+  "computer_request_secret with that field's ref and a short label. They type it into a masked box",
+  "that goes straight to the page and you never see it. A security challenge is not an isolated",
+  "value even when it shows one code field: hand over the browser instead.",
+  "Use a full takeover for anything more involved than one ordinary field.",
   "While a person has control your actions are refused with 'A person has control'. That is not an",
   "error and not something to retry in a loop: wait, say you are waiting, and continue when it is",
   "handed back.",
@@ -137,6 +141,84 @@ export const PROVENANCE_GUIDANCE = PROVENANCE_GUIDANCE_LINES.reduce<string[]>(
   },
   [""],
 ).join("\n\n");
+
+/**
+ * How a Bot turns natural-language recurring work into a durable Routine.
+ *
+ * The scheduler already owns the hard guarantees (minimum interval, ownership, failure cut-off).
+ * This guidance is only the conversational half: recognise standing work, refuse to invent missing
+ * clock details, and read the stored schedule back in words a person can verify.
+ */
+const ROUTINE_GUIDANCE_LINES = [
+  "When routine tools are available, treat requests to do something later, repeatedly, on a schedule, or as a recurring check as standing work rather than as a promise you will remember.",
+  "Use create_routine to create it. Use list_routines before changing, pausing, resuming or deleting an existing routine so you act on the stored id rather than guessing.",
+  "",
+  "Never invent a clock time, cadence or timezone the person did not give you. If one of those is required and is not available in the conversation context, ask one precise question for the missing detail.",
+  "A phrase such as 'every morning' names a part of the day, not an exact clock time. Ask what time they mean rather than silently choosing one.",
+  "When the person gave a local clock time, use their IANA timezone when it is known. If it is not known, ask rather than defaulting that local time to UTC.",
+  "",
+  "After create_routine or update_routine succeeds, confirm the schedule in ordinary words using the tool result: what will happen, the timezone, where the result will appear, and when it runs next when that is available.",
+  "Do not make the person read cron syntax unless they explicitly ask for it.",
+  "If routine tools are not available, say you cannot make that work persist in the background from this conversation. Never claim that you will keep watching or run later when no durable routine was actually created.",
+];
+
+export const ROUTINE_GUIDANCE = ROUTINE_GUIDANCE_LINES.reduce<string[]>(
+  (paragraphs, line) => {
+    if (line === "") {
+      paragraphs.push("");
+      return paragraphs;
+    }
+    const last = paragraphs.length - 1;
+    paragraphs[last] = paragraphs[last] ? `${paragraphs[last]} ${line}` : line;
+    return paragraphs;
+  },
+  [""],
+).join("\n\n");
+
+/**
+ * How a Bot carries out a long, multi-step creative workflow without turning it into a hard-coded
+ * pipeline.
+ *
+ * NOTE 21-2 is deliberately guidance rather than a new workflow engine. The person gives a goal and
+ * the Bot remains responsible for planning, choosing its available browser/tools and adapting to
+ * what actually happens. When the person supplies an explicit service sequence, however, that
+ * sequence is part of the task and must not be silently replaced by a different one.
+ */
+const AUTONOMOUS_WORKFLOW_GUIDANCE_LINES = [
+  "For substantial multi-step work, operate from the person's goal rather than waiting for them to prescribe every click. Make a concise plan, use the tools and Computer you actually have, observe real results, and adapt the next step when the service state changes. Do not turn this guidance into a fixed pipeline for unrelated tasks.",
+  "When the person gives an explicit workflow or names the services to use, preserve that workflow unless a real blocker makes a change necessary. Do not silently substitute a different service, account, custom chatbot, model, or order of operations.",
+  "When workflow tools are available and the work has multiple dependent stages, may span turns, or needs to sleep and resume later, create a durable workflow before starting the first stage. Put the real stage instructions and dependencies into create_workflow, then use the workflow step tools to checkpoint progress instead of relying on memory or chat history alone.",
+  "Use wait_workflow_step whenever an external generation, queue or provider job is still pending and a later check is needed. Do not keep a model turn alive just to poll. When a step finishes, complete_workflow_step so dependent work can become ready and continue autonomously.",
+  "If workflow tools are not available, do not pretend a durable workflow exists or promise autonomous continuation. Work only for the current turn or use another durable mechanism that is actually available, and say plainly when the remaining work cannot continue by itself.",
+  "",
+  "For multi-scene image or video work, each project and scene is an isolated unit of state. Keep a stable projectId and sceneId and bind that scene's script slice, prompt, source/reference inputs, generated reference image and generated output to the same projectId + sceneId. Never mix, borrow, recycle or overwrite another scene's prompt, reference image or output merely because the files look similar.",
+  "Checkpoint long work in your persistent workspace when it may span turns. Use paths or records that name the projectId and sceneId, record the current stage and the artifact identities you actually observed, and never put passwords, session cookies, API keys or other secrets into the checkpoint.",
+  "",
+  "An approved prompt is an execution input, not something to grade. Do not spend model turns scoring, critiquing, rewriting or repeatedly 'improving' prompt quality. Submit the exact approved prompt and reference assets for that scene unless the service refuses them, the inputs are technically unusable, or the person explicitly changes them. If a real blocker forces a change, say what blocked the exact input before changing it.",
+  "Verify execution state, not creative taste: confirm the intended service/account is open, the correct projectId + sceneId inputs were submitted, generation really started, it completed or failed, and the resulting artifact belongs to that same scene. Do not turn execution verification into another prompt-review loop.",
+  "",
+  "When the person's selected NOTE 21-2 workflow uses their linked custom chatbots, keep the roles separate: use the script-writing chatbot for the script; give the script plus the person's project images/product context to the prompt-writing chatbot; for each scene use that scene's prompt and references with the selected ChatGPT/custom GPT to produce that scene's reference image; then send only that scene's reference image and exact scene prompt to Flow for generation. Advance scene by scene from observed results, never by assuming the previous website action succeeded.",
+  "Use the exact custom-chatbot links/accounts the person supplied when they are available through the Computer. Never ask for passwords, MFA codes or session tokens in chat; sign-in, MFA, security keys, device approval and CAPTCHA remain human-handoff steps under the Computer rules.",
+  "",
+  "A website showing 'generating', 'queued' or an equivalent in-progress state is not a reason to resubmit the scene or burn model turns in a refresh-and-reason loop. Preserve the scene state and leave the browser session intact. Continue only after a real later trigger lets you observe progress again: a person's next turn, a durable scheduled/event mechanism that was actually created, or another genuine run. Never claim you will automatically wake, monitor in the background or receive a completion event when no such durable mechanism exists.",
+  "Treat model/provider budgets as finite. Avoid duplicate generations, repeated speculative reasoning and unnecessary re-reading of unchanged state. Plan an ordinary reasoning/wake cycle around roughly 1,000–5,000 model tokens and an ordinary 3–5-scene video around roughly 15,000–40,000 total model tokens. Retries or blocked services can raise a difficult job toward roughly 50,000–100,000 tokens, but that is a warning range, not a target. Treat 1,000,000 model tokens per Bot per day as a hard planning ceiling: when usage accounting is available, do not intentionally plan work beyond it; if the remaining work would exceed the person's stated or known limit, stop and ask how they want to proceed rather than silently overspending.",
+];
+
+export const AUTONOMOUS_WORKFLOW_GUIDANCE =
+  AUTONOMOUS_WORKFLOW_GUIDANCE_LINES.reduce<string[]>(
+    (paragraphs, line) => {
+      if (line === "") {
+        paragraphs.push("");
+        return paragraphs;
+      }
+      const last = paragraphs.length - 1;
+      paragraphs[last] = paragraphs[last]
+        ? `${paragraphs[last]} ${line}`
+        : line;
+      return paragraphs;
+    },
+    [""],
+  ).join("\n\n");
 
 /**
  * What a tool call is given when its answer never came.

@@ -1,3 +1,5 @@
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { serve } from "bun";
 import type { Page } from "playwright";
 import {
@@ -22,6 +24,16 @@ import {
   TAKE_CONTROL_FIRST,
 } from "./control";
 import { identity } from "./identity";
+import { collectComputerMetrics } from "./metrics";
+import {
+  approveQuarantinedDownload,
+  approvedQuarantineFile,
+  deleteQuarantinedDownload,
+  listQuarantinedDownloads,
+  markQuarantinedDownloadReleased,
+  QuarantineStateError,
+  scanQuarantinedDownload,
+} from "./download-quarantine";
 import { createProfiles, numberFromEnv, VIEWPORT } from "./profiles";
 import {
   parseExecTimeout,
@@ -35,6 +47,7 @@ import { createViewerSlot, type ViewerSlot } from "./viewer";
 import { startVirtualDisplay } from "./virtual-display";
 import {
   createWorkspace,
+  DEFAULT_WORKSPACE_LIMITS,
   WorkspaceFileError,
   WorkspacePathError,
 } from "./workspace";
@@ -135,6 +148,8 @@ type BotSession = {
   control: Control;
   /** This Bot's snapshot generation. See the note above on staleness. */
   snapshotId: number;
+  /** Which run of this Bot's browser produced that generation. */
+  run: string;
   /** The page this Bot was last handed, so a change of page can retire its refs. */
   livePage?: Page;
   /**
@@ -179,6 +194,7 @@ function sessionFor(botId: string): BotSession {
   const created: BotSession = {
     control: createControl(),
     snapshotId: 0,
+    run: crypto.randomUUID(),
     viewer: createViewerSlot(),
   };
   sessions.set(botId, created);
@@ -208,9 +224,45 @@ function botIdOf(request: Request, fallback?: string | null): string {
  * would only add a syscall to every call. Everything about why confinement is harder than it looks
  * lives in workspace.ts.
  */
-const workspace = createWorkspace(
-  process.env.WORKSPACE_DIR?.trim() || "/workspace",
+const WORKSPACE_ROOT = process.env.WORKSPACE_DIR?.trim() || "/workspace";
+const PROFILES_ROOT = process.env.PROFILES_DIR?.trim() || "/profiles";
+const QUARANTINE_ROOT = process.env.QUARANTINE_DIR?.trim() || "/quarantine";
+
+/**
+ * Refuse to become healthy with a directory this process cannot persist to.
+ *
+ * Chromium can otherwise fall back to a throwaway profile and make a healthy pod look signed out;
+ * the workspace and quarantine paths are equally load-bearing in this fork.
+ */
+async function assertWritable(label: string, directory: string): Promise<void> {
+  const probe = join(directory, `.openbot-write-probe-${process.pid}`);
+  try {
+    await mkdir(directory, { recursive: true });
+    await writeFile(probe, "");
+    await rm(probe, { force: true });
+  } catch (error) {
+    console.error(
+      `${label} at ${directory} is not writable by uid ${process.getuid?.() ?? "unknown"}: ${String(error)}. ` +
+        "OpenBot refuses to start instead of silently losing browser/profile/workspace state. " +
+        "On Kubernetes, verify the storage class honors fsGroup or set computers.podSecurityContext to null.",
+    );
+    process.exit(1);
+  }
+}
+
+await assertWritable("The workspace", WORKSPACE_ROOT);
+await assertWritable("The browser profiles directory", PROFILES_ROOT);
+await assertWritable("The quarantine directory", QUARANTINE_ROOT);
+
+const WORKSPACE_MAX_BYTES = numberFromEnv(
+  "COMPUTER_WORKSPACE_MAX_BYTES",
+  4 * 1024 * 1024 * 1024,
+  { min: 1 },
 );
+const workspace = createWorkspace(WORKSPACE_ROOT, {
+  ...DEFAULT_WORKSPACE_LIMITS,
+  totalBytes: WORKSPACE_MAX_BYTES,
+});
 
 /**
  * Who has the wheel, as a state machine in its own module.
@@ -237,13 +289,12 @@ const workspace = createWorkspace(
  * here would put an entry in the map on the path that closes browsers, which is where the map is
  * meant to shrink.
  */
-const profiles = createProfiles(
-  process.env.PROFILES_DIR?.trim() || "/profiles",
-  (botId) => sessions.get(botId)?.viewer.releaseAll(COMPUTER_STOPPED),
+const profiles = createProfiles(PROFILES_ROOT, (botId) =>
+  sessions.get(botId)?.viewer.releaseAll(COMPUTER_STOPPED),
 );
 // Rooted in the same workspace the file tools use, so a command and a written file see one
 // directory rather than two.
-const shell = createShell(process.env.WORKSPACE_DIR?.trim() || "/workspace");
+const shell = createShell(WORKSPACE_ROOT);
 
 /**
  * The id normally arrives as a header on every request. This is the fallback for a caller that has no
@@ -809,12 +860,45 @@ serve<StreamData>({
     }
 
     /**
+     * Which run of this Bot's browser the caller is looking at.
+     *
+     * Snapshot generations only order pages within one browser run. This process serves multiple
+     * Bots and survives individual resets, so the run has to be per Bot and has to change when that
+     * Bot's browser session is replaced.
+     *
+     * Read-only and deliberately not gated as an acting request: the server asks this before it can
+     * safely resolve a ref, including while a person may hold the wheel.
+     */
+    if (url.pathname === "/run" && request.method === "GET") {
+      return json({ run: session.run });
+    }
+
+    /**
      * The computers this process holds. The shape is a list because the admin surface is a
      * list, and because a Bot that has a profile has a computer whether or not a browser is running
      * for it this second.
      */
     if (url.pathname === "/computers" && request.method === "GET") {
       return json({ computers: profiles.summary(await profiles.known()) });
+    }
+
+    /**
+     * Resource usage of this computer container.
+     *
+     * Authenticated like every other computer detail. It does not start a browser; the API server
+     * only asks it for computers the provider already reports as running.
+     */
+    if (url.pathname === "/metrics" && request.method === "GET") {
+      return json({
+        metrics: {
+          ...(await collectComputerMetrics(
+            WORKSPACE_ROOT,
+            100,
+            WORKSPACE_MAX_BYTES,
+          )),
+          browserRunning: profiles.isLive(botId),
+        },
+      });
     }
 
     /**
@@ -842,6 +926,9 @@ serve<StreamData>({
       await profiles.reset(botId);
       // Reset releases control because any previous browser session and pending secret request are gone.
       session.control.release();
+      // The browser this session described is gone. A fresh run prevents an in-flight snapshot from
+      // the wiped browser from being accepted as though it belonged to the replacement.
+      session.run = crypto.randomUUID();
       return json({ reset: true, botId });
     }
 
@@ -909,6 +996,184 @@ serve<StreamData>({
               error instanceof Error ? error.message : "Screenshot failed.",
           },
           502,
+        );
+      }
+    }
+
+    /**
+     * Untrusted browser downloads for this Bot only.
+     *
+     * Listing and scanning never move a file out of quarantine. Approval is a separate, explicit
+     * transition and still does not copy, open or execute the file; the native export path will be
+     * responsible for choosing a host destination and marking the final release.
+     */
+    if (url.pathname === "/quarantine" && request.method === "GET") {
+      try {
+        return json({
+          downloads: await listQuarantinedDownloads(QUARANTINE_ROOT, botId),
+        });
+      } catch (error) {
+        return json(
+          { error: describe(error, "The quarantine could not be listed.") },
+          error instanceof QuarantineStateError ? 409 : 500,
+        );
+      }
+    }
+
+    if (url.pathname === "/quarantine/scan" && request.method === "POST") {
+      const body = (await request.json().catch(() => null)) as {
+        id?: unknown;
+      } | null;
+      if (typeof body?.id !== "string" || !body.id) {
+        return json({ error: "A quarantine download id is required." }, 400);
+      }
+      try {
+        return json(
+          await scanQuarantinedDownload(QUARANTINE_ROOT, botId, body.id),
+        );
+      } catch (error) {
+        return json(
+          {
+            error: describe(
+              error,
+              "The quarantined file could not be scanned.",
+            ),
+          },
+          error instanceof QuarantineStateError ? 409 : 500,
+        );
+      }
+    }
+
+    if (url.pathname === "/quarantine/approve" && request.method === "POST") {
+      const body = (await request.json().catch(() => null)) as {
+        id?: unknown;
+        botId?: unknown;
+        confirm?: unknown;
+      } | null;
+      if (
+        typeof body?.id !== "string" ||
+        body.confirm !== "APPROVE" ||
+        body.botId !== botId
+      ) {
+        return json(
+          {
+            error:
+              "Approval requires APPROVE confirmation, the exact Bot id, and the quarantine download id.",
+          },
+          400,
+        );
+      }
+      try {
+        return json(
+          await approveQuarantinedDownload(QUARANTINE_ROOT, botId, body.id),
+        );
+      } catch (error) {
+        return json(
+          {
+            error: describe(
+              error,
+              "The quarantined file could not be approved.",
+            ),
+          },
+          error instanceof QuarantineStateError ? 409 : 500,
+        );
+      }
+    }
+
+    /**
+     * Internal byte stream used only by the authenticated native desktop export worker.
+     *
+     * The API server never exposes this response to the web UI/model. The helper checks that the
+     * exact bytes are still approved and still match the SHA-256 ClamAV scanned before opening them.
+     */
+    if (
+      url.pathname === "/quarantine/export-internal" &&
+      request.method === "POST"
+    ) {
+      const body = (await request.json().catch(() => null)) as {
+        id?: unknown;
+      } | null;
+      if (typeof body?.id !== "string" || !body.id) {
+        return json({ error: "A quarantine download id is required." }, 400);
+      }
+      try {
+        const exportable = await approvedQuarantineFile(
+          QUARANTINE_ROOT,
+          botId,
+          body.id,
+        );
+        return new Response(Bun.file(exportable.file), {
+          headers: {
+            "content-type": "application/octet-stream",
+            "content-length": String(exportable.record.sizeBytes),
+            "x-openbot-sha256": exportable.record.sha256,
+          },
+        });
+      } catch (error) {
+        return json(
+          {
+            error: describe(
+              error,
+              "The quarantined file is not approved for export.",
+            ),
+          },
+          error instanceof QuarantineStateError ? 409 : 500,
+        );
+      }
+    }
+
+    if (url.pathname === "/quarantine/released" && request.method === "POST") {
+      const body = (await request.json().catch(() => null)) as {
+        id?: unknown;
+      } | null;
+      if (typeof body?.id !== "string" || !body.id) {
+        return json({ error: "A quarantine download id is required." }, 400);
+      }
+      try {
+        return json(
+          await markQuarantinedDownloadReleased(
+            QUARANTINE_ROOT,
+            botId,
+            body.id,
+          ),
+        );
+      } catch (error) {
+        return json(
+          {
+            error: describe(
+              error,
+              "The quarantined file could not be marked released.",
+            ),
+          },
+          error instanceof QuarantineStateError ? 409 : 500,
+        );
+      }
+    }
+
+    if (url.pathname === "/quarantine/delete" && request.method === "POST") {
+      const body = (await request.json().catch(() => null)) as {
+        id?: unknown;
+      } | null;
+      if (typeof body?.id !== "string" || !body.id) {
+        return json({ error: "A quarantine download id is required." }, 400);
+      }
+      try {
+        return json({
+          deleted: await deleteQuarantinedDownload(
+            QUARANTINE_ROOT,
+            botId,
+            body.id,
+          ),
+        });
+      } catch (error) {
+        return json(
+          {
+            error: describe(
+              error,
+              "The quarantined file could not be deleted.",
+            ),
+          },
+          error instanceof QuarantineStateError ? 409 : 500,
         );
       }
     }

@@ -16,7 +16,7 @@ export type { RoutineStore } from "./store";
  * The routines page: what a person's standing instructions are, and a switch to stop one.
  *
  * THERE IS DELIBERATELY NO CREATE AND NO EDIT ENDPOINT HERE. Making a routine and changing one are
- * conversational — the four `RoutineTools` a Bot calls mid-chat, in `plugins/builtin-routines.ts` —
+ * conversational — the five `RoutineTools` a Bot calls mid-chat, in `plugins/builtin-routines.ts` —
  * because the hard part of both is turning a sentence into a cron expression and a channel, which
  * is exactly what a conversation is for. This surface answers a narrower question: what is standing,
  * and does it stay standing. So it shows and it stops; it does not compose.
@@ -99,6 +99,7 @@ type RoutineDto = {
   /** Which Bot carries it out, so a Bot's own screen can show only its routines. */
   agentId: string;
   schedule: string;
+  scheduleKind: RoutineSummary["scheduleKind"];
   timezone: string;
   instruction: string;
   channel: { id: string; name: string | null; gone: boolean };
@@ -127,6 +128,7 @@ function routineDto(routine: RoutineSummary): RoutineDto {
     id: routine.id,
     agentId: routine.agentId,
     schedule: routine.schedule,
+    scheduleKind: routine.scheduleKind,
     timezone: routine.timezone,
     instruction: routine.instruction,
     channel: {

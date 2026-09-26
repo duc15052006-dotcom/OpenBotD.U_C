@@ -28,6 +28,7 @@ export const COMPUTER_TOOLS = [
   "computer_read_file",
   "computer_write_file",
   "computer_list_files",
+  "computer_run_command",
 ] as const;
 
 /**
@@ -55,6 +56,7 @@ export const COMPUTER_ACTING_TOOLS = [
   "computer_read_file",
   "computer_write_file",
   "computer_list_files",
+  "computer_run_command",
 ] as const;
 
 export type ComputerActingToolName = (typeof COMPUTER_ACTING_TOOLS)[number];
@@ -301,6 +303,7 @@ export type SecretRequest = { label: string; ref: string; snapshotId: number };
 export type ComputerProfile = {
   botId: string;
   running: boolean;
+  lifecycle: ComputerLifecycleState;
   startedAt: string | null;
   /**
    * The host its traffic leaves through, or null for direct.
@@ -339,6 +342,16 @@ export type HumanInputResult = {
   url: string;
 };
 
+/** Fleet lifecycle shown to a person without changing the provider's lower-level health states. */
+export const COMPUTER_LIFECYCLE_STATES = [
+  "running",
+  "idle",
+  "sleeping",
+  "stopped",
+] as const;
+
+export type ComputerLifecycleState = (typeof COMPUTER_LIFECYCLE_STATES)[number];
+
 /** Lifecycle states a Bot's computer can be in, as the UI must render them. */
 export const COMPUTER_STATES = [
   "absent",
@@ -354,4 +367,58 @@ export type ComputerStatus = {
   state: ComputerState;
   /** Set when state is "unreachable", in words a person can act on. */
   reason?: string;
+};
+
+/** Resource usage reported by a running computer container. */
+export type ComputerResourceMetrics = {
+  capturedAt: string;
+  cpuPercent: number;
+  memoryUsedBytes: number;
+  memoryLimitBytes: number | null;
+  diskUsedBytes: number;
+  diskTotalBytes: number;
+  /** Whether Chromium is resident. Absent on older Computer images. */
+  browserRunning?: boolean;
+};
+
+/** Malware-scanning lifecycle for an untrusted browser download. */
+export type QuarantineStatus =
+  | "pending"
+  | "clean"
+  | "blocked"
+  | "scan_failed"
+  | "approved"
+  | "released";
+
+export type QuarantineScan = {
+  status: "clean" | "blocked" | "scan_failed";
+  scanner: "clamav";
+  detail: string;
+  scannedAt: string;
+};
+
+export type QuarantineRecord = {
+  version: 2;
+  status: QuarantineStatus;
+  id: string;
+  botId: string;
+  originalName: string;
+  sourceUrl: string;
+  savedAt: string;
+  sizeBytes: number;
+  /** SHA-256 identity of the quarantined bytes. No filesystem path is exposed. */
+  sha256: string;
+  /** The exact SHA-256 ClamAV scanned; approval/export must still match it. */
+  scannedSha256?: string;
+  scan?: QuarantineScan;
+  approvedAt?: string;
+  releasedAt?: string;
+};
+
+export type QuarantineListResult = {
+  downloads: QuarantineRecord[];
+};
+
+export type QuarantineDeleteResult = {
+  deleted: boolean;
 };

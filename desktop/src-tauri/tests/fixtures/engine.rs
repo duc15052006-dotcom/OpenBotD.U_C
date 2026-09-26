@@ -35,6 +35,19 @@ fn main() {
         println!("fixture");
         return;
     }
+    // Desktop Start now verifies that a retained Postgres volume is absent before minting a new
+    // encryption key. Most engine fixtures model a genuinely fresh installation, so resolve the
+    // same named volume Compose would use and report an empty engine inventory.
+    if joined == "compose config --format json" {
+        println!(
+            "{}",
+            r#"{"services":{"postgres":{"volumes":[{"type":"volume","source":"postgres-data","target":"/var/lib/postgresql/data"}]}},"volumes":{"postgres-data":{"name":"openbot-postgres-data"}}}"#
+        );
+        return;
+    }
+    if joined == "volume ls --format {{.Name}}" {
+        return;
+    }
     if let Some(path) = std::env::var_os("OPENBOT_TEST_ENGINE_RECORD") {
         let cwd = std::fs::canonicalize(std::env::current_dir().unwrap()).unwrap();
         let mut log = std::fs::OpenOptions::new()

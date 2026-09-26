@@ -7,15 +7,40 @@ import {
   CopilotRuntime,
 } from "@copilotkit/runtime/v2";
 import { createCopilotHonoHandler } from "@copilotkit/runtime/v2/hono";
-import type { Observable } from "rxjs";
-import { defer, finalize, from, fromEvent, switchMap, takeUntil } from "rxjs";
+import {
+  catchError,
+  concat,
+  defer,
+  EMPTY,
+  finalize,
+  from,
+  fromEvent,
+  mergeMap,
+  type Observable,
+  of,
+  switchMap,
+  takeUntil,
+  throwError,
+} from "rxjs";
 import { z } from "zod";
 import {
+  AUTONOMOUS_WORKFLOW_GUIDANCE,
   COMPUTER_GUIDANCE,
   PROVENANCE_GUIDANCE,
 } from "../../shared/bot-prompt";
+import { builtInModelConfiguration } from "./agents/built-in-model";
+import {
+  agentInstructionsGuidance,
+  storedAgentInstructionsFromOverride,
+} from "./agents/instructions";
+import {
+  type AgentKnowledgeDocument,
+  agentKnowledgeGuidance,
+  storedAgentKnowledgeFromOverride,
+} from "./agents/knowledge";
 import { sanitizeSeededHistory } from "./agents/history-sanitize";
 import type { AgentActor } from "./agents/profile-types";
+import type { RuntimeAgentModel } from "./agents/runtime-model";
 import type { AuditInitiator } from "./audit";
 import {
   attachmentIdsIn,
@@ -59,6 +84,10 @@ type RegisteredBuiltInAgent = {
   name: string;
   type: "built_in";
   systemPrompt: string;
+  /** Deployment-owned instructions that refine this Agent's package/base role. */
+  instructions?: string;
+  /** Bounded reference documents configured for this Agent. */
+  knowledge?: AgentKnowledgeDocument[];
 };
 
 type RegisteredRemoteAgentFacts = {
@@ -129,13 +158,19 @@ export type AgentStandingProfile = {
  */
 export function standingRoleMessage(
   profile: AgentStandingProfile,
+  instructions?: string | null,
+  knowledge?: readonly AgentKnowledgeDocument[] | null,
 ): StandingRoleMessage {
+  const agentInstructions = agentInstructionsGuidance(instructions);
+  const knowledgeGuidance = agentKnowledgeGuidance(knowledge);
   return {
     id: `standing-role:${profile.id}`,
     role: "system",
     content: [
       `You are ${profile.name}, ${profile.title}.`,
       profile.roleDescription,
+      ...(agentInstructions ? [agentInstructions] : []),
+      ...(knowledgeGuidance ? [knowledgeGuidance] : []),
       "This standing role applies in every channel. Treat channel messages as task-specific instructions within it.",
       /*
        * Here rather than in the package, because for a remote Bot the standing role is the only
@@ -145,14 +180,40 @@ export function standingRoleMessage(
        * "Investigate policies, transaction monitoring, and control evidence."
        */
       PROVENANCE_GUIDANCE,
+      AUTONOMOUS_WORKFLOW_GUIDANCE,
     ].join("\n\n"),
   };
 }
 
 export type RuntimeModel = {
-  provider: "openai";
+  provider: "openai" | "anthropic";
   defaultModel: string;
 };
+
+/** Resolve the model and credential for one built-in Bot immediately before it is constructed. */
+export type ResolveAgentModel = (agentId: string) => Promise<RuntimeAgentModel>;
+
+/** Build an AI SDK model for an OpenAI-compatible endpoint after outbound policy is attached. */
+export type CompatibleModelFactory = NonNullable<
+  Parameters<typeof builtInModelConfiguration>[1]
+>;
+
+/** Optional desktop environment values may be present but blank; SDKs treat them as URLs. */
+export function normalizeModelBaseUrls(
+  environment: Record<string, string | undefined> = process.env,
+): void {
+  for (const key of ["OPENAI_BASE_URL", "ANTHROPIC_BASE_URL"]) {
+    const value = environment[key]?.trim();
+    if (!value) {
+      delete environment[key];
+    } else if (key === "ANTHROPIC_BASE_URL") {
+      const base = value.replace(/\/+$/, "");
+      environment[key] = /\/v\d+$/.test(base) ? base : `${base}/v1`;
+    } else {
+      environment[key] = value;
+    }
+  }
+}
 
 export function runtimeModelForEnvironment(
   packageModel: RuntimeModel,
@@ -160,15 +221,27 @@ export function runtimeModelForEnvironment(
 ): RuntimeModel {
   const selectedModel = environment.BOT_MODEL?.trim();
   const selectedProvider = environment.BOT_PROVIDER?.trim().toLowerCase();
-  const compatibleEndpoint =
-    (!selectedProvider || selectedProvider === "openai") &&
-    !!environment.OPENAI_BASE_URL?.trim();
+  const provider =
+    selectedProvider === "anthropic"
+      ? "anthropic"
+      : selectedProvider === "openai" || selectedProvider === ""
+        ? "openai"
+        : packageModel.provider;
+  const defaultModel =
+    provider === packageModel.provider
+      ? packageModel.defaultModel
+      : provider === "anthropic"
+        ? "claude-sonnet-4-5"
+        : "gpt-5.6-terra";
+  const selectedModelApplies =
+    provider === "anthropic" ||
+    ((!selectedProvider || selectedProvider === "openai") &&
+      !!environment.OPENAI_BASE_URL?.trim());
+
   return {
-    provider: packageModel.provider,
+    provider,
     defaultModel:
-      compatibleEndpoint && selectedModel
-        ? selectedModel
-        : packageModel.defaultModel,
+      selectedModelApplies && selectedModel ? selectedModel : defaultModel,
   };
 }
 
@@ -177,6 +250,8 @@ type RuntimeAgentRow = {
   name: string;
   type: "built_in" | "remote_ag_ui" | "remote_mastra";
   configuration: unknown;
+  /** Deployment-owned mutable namespaces such as model, computer, instructions, and knowledge. */
+  override?: unknown;
   title: string;
   roleDescription: string;
 };
@@ -188,6 +263,8 @@ export function registeredAgentFromRow(
     return null;
   }
   const configuration = row.configuration;
+  const instructions = storedAgentInstructionsFromOverride(row.override);
+  const knowledge = storedAgentKnowledgeFromOverride(row.override);
   if (row.type === "built_in") {
     const systemPrompt = configuration?.systemPrompt;
     const trimmedSystemPrompt =
@@ -198,6 +275,8 @@ export function registeredAgentFromRow(
           name: row.name,
           type: "built_in",
           systemPrompt: trimmedSystemPrompt,
+          ...(instructions ? { instructions } : {}),
+          ...(knowledge.length > 0 ? { knowledge } : {}),
         }
       : null;
   }
@@ -220,7 +299,7 @@ export function registeredAgentFromRow(
         ...(typeof remoteAgentId === "string" && remoteAgentId.length > 0
           ? { remoteAgentId }
           : {}),
-        standingMessage: standingRoleMessage(row),
+        standingMessage: standingRoleMessage(row, instructions, knowledge),
       }
     : null;
 }
@@ -311,38 +390,55 @@ export function builtInAgentConfiguration(
    * none, which is most people on most days and costs the prompt nothing.
    */
   standingInstructions?: string | null,
+  /** Per-Agent model settings. Absent preserves the deployment-wide model path. */
+  agentModel?: RuntimeAgentModel,
+  compatibleModel?: CompatibleModelFactory,
 ): BuiltInAgentConfiguration {
-  if (!apiKey) {
+  const selectedModel = agentModel ?? {
+    provider: model.provider,
+    defaultModel: model.defaultModel,
+    apiKey,
+  };
+  const modelConfiguration = builtInModelConfiguration(
+    selectedModel,
+    compatibleModel,
+  );
+  if (!modelConfiguration) {
     return {
       type: "custom",
       // biome-ignore lint/correctness/useYield: this agent must fail when iteration starts.
       factory: async function* () {
         throw new Error(
-          `Model credential is not configured for ${agent.name}. Add the package credential or set OPENAI_API_KEY.`,
+          agentModel
+            ? `Model credential is not configured for ${agent.name}. Configure an API key for its selected provider.`
+            : `Model credential is not configured for ${agent.name}. Add the package credential or set ${model.provider === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY"}.`,
         );
       },
     };
   }
 
+  const agentInstructions = agentInstructionsGuidance(agent.instructions);
+  const knowledgeGuidance = agentKnowledgeGuidance(agent.knowledge);
   const standing = standingInstructionsGuidance(standingInstructions);
 
   return {
-    model: `${model.provider}/${model.defaultModel}`,
+    ...modelConfiguration,
     /*
-     * The package's role, then the person's own standing instructions, then what this Bot actually
-     * holds, then the computer.
+     * Order is deliberate: immutable package role; deployment-owned per-Agent instructions; the
+     * person's standing preferences; bounded Agent reference knowledge; provenance; granted tools;
+     * then computer guidance.
      *
-     * The grants go BEFORE the computer prose on purpose. That prose is long and emphatic about the
-     * browser and mentions connectors nowhere, so a Bot that read it last reached for the browser
-     * even when it held a tool for the exact system being asked about.
-     *
-     * The person's instructions go straight after the role and before all of it, because they are
-     * the other half of the same question — who you are and who you are working for — and because
-     * their precedence sentence only means anything next to the role it defers to.
+     * Knowledge follows the instruction layers and labels itself untrusted data, so prose inside an
+     * uploaded document cannot become a competing instruction merely by being later in the prompt.
+     * Grants go BEFORE the computer prose because the latter is long and emphatic about the browser:
+     * a Bot that reads it last should still prefer a granted tool for the exact system being asked
+     * about.
      */
     prompt: [
       agent.systemPrompt,
+      ...(agentInstructions ? [agentInstructions] : []),
       ...(standing ? [standing] : []),
+      ...(knowledgeGuidance ? [knowledgeGuidance] : []),
       /*
        * Unconditional, unlike the two below it.
        *
@@ -351,12 +447,17 @@ export function builtInAgentConfiguration(
        * it says comes from its own knowledge, and saying so is the only honest move available.
        */
       PROVENANCE_GUIDANCE,
+      /*
+       * Shared execution discipline for long autonomous work. It is conditional in its own wording:
+       * ordinary tasks remain ordinary tasks, while multi-scene workflows get stable state and exact
+       * prompt execution regardless of which tools happen to be granted on this turn.
+       */
+      AUTONOMOUS_WORKFLOW_GUIDANCE,
       ...(grantedToolGuidance(tools, connectedVendors)
         ? [grantedToolGuidance(tools, connectedVendors)]
         : []),
       ...(computerGuidance ? [computerGuidance] : []),
     ].join("\n\n"),
-    apiKey,
     /*
      * A run stops after one step unless told otherwise, which for a Bot with tools means it calls
      * one and never speaks: the tool executes, the result arrives, and the run ends before the model
@@ -433,6 +534,9 @@ export async function buildAgents(
    * `loadAttachment` for the positional reason it gives. Absent means nothing is recorded.
    */
   markAttachmentsSent?: MarkAttachmentsSent,
+  /** Per-Agent runtime model resolver. Absent preserves the deployment-wide model and key. */
+  resolveAgentModel?: ResolveAgentModel,
+  compatibleModel?: CompatibleModelFactory,
 ): Promise<Record<string, AbstractAgent>> {
   let vendors: readonly string[] = [];
   try {
@@ -489,6 +593,10 @@ export async function buildAgents(
           initiator,
           loadAttachment,
           markAttachmentsSent,
+          agent.type === "built_in"
+            ? await resolveAgentModel?.(agent.id)
+            : undefined,
+          compatibleModel,
         ),
       ]),
     ),
@@ -747,6 +855,8 @@ async function buildAgent(
   loadAttachment?: LoadAttachment,
   /** How this run records that those files were sent. See {@link buildAgents}. */
   markAttachmentsSent?: MarkAttachmentsSent,
+  agentModel?: RuntimeAgentModel,
+  compatibleModel?: CompatibleModelFactory,
 ): Promise<AbstractAgent> {
   if (agent.type === "unavailable") {
     return new UnavailableAgent(agent);
@@ -862,20 +972,50 @@ async function buildAgent(
    * the message is known. The guidance it is given is generated from the tools passed here, which is
    * what keeps a narrowed run from being told it holds something it was not offered.
    */
-  const withTools = (tools: GrantedTool[]) =>
-    new BuiltInAgentWithSaneHistory(
-      builtInAgentConfiguration(
-        agent,
-        model,
-        apiKey,
-        tools,
-        computerGuidance,
-        connectedVendors,
-        standingInstructions,
-      ),
-      loadAttachment,
-      markAttachmentsSent,
+  const withTools = (tools: GrantedTool[]) => {
+    const configured = (runtimeModel?: RuntimeAgentModel) =>
+      new BuiltInAgentWithSaneHistory(
+        builtInAgentConfiguration(
+          agent,
+          model,
+          apiKey,
+          tools,
+          computerGuidance,
+          connectedVendors,
+          standingInstructions,
+          runtimeModel,
+          compatibleModel,
+        ),
+        loadAttachment,
+        markAttachmentsSent,
+      );
+
+    const primary = configured(agentModel);
+    if (!agentModel?.fallback) return primary;
+
+    const fallback = configured({
+      ...agentModel.fallback,
+      ...(agentModel.temperature === undefined
+        ? {}
+        : { temperature: agentModel.temperature }),
+      ...(agentModel.maxTokens === undefined
+        ? {}
+        : { maxTokens: agentModel.maxTokens }),
+    });
+    return new FallbackAgent(
+      { agentId: agent.id, description: agent.name },
+      primary,
+      fallback,
+      {
+        provider: agentModel.provider,
+        model: agentModel.defaultModel,
+      },
+      {
+        provider: agentModel.fallback.provider,
+        model: agentModel.fallback.defaultModel,
+      },
     );
+  };
 
   const whole = withTools(granted);
   if (!narrowing && !handoff) return whole;
@@ -1513,6 +1653,110 @@ class BuiltInAgentWithSaneHistory extends BuiltInAgent {
   }
 }
 
+class AgentRunEventError extends Error {
+  constructor(readonly event: BaseEvent) {
+    super((event as { message?: string }).message ?? "the model run failed");
+    this.name = "AgentRunEventError";
+  }
+}
+
+/**
+ * Retry one built-in run on its configured fallback without duplicating visible work.
+ *
+ * A provider failure is represented by RUN_ERROR followed by an observable error. RUN_STARTED is
+ * lifecycle only, so this wrapper owns one start event and hides the starts from both attempts. Once
+ * any other non-terminal event has escaped (text, reasoning, a tool call, or state), retrying would
+ * duplicate output or repeat a side effect; at that point the original failure is passed through.
+ * Raw observable errors are not retried either: attachment loading, history conversion and local
+ * callbacks fail that way and changing providers cannot repair them.
+ */
+export class FallbackAgent extends AbstractAgent {
+  private active?: AbstractAgent;
+
+  constructor(
+    private identity: { agentId: string; description: string },
+    private primary: AbstractAgent,
+    private fallback: AbstractAgent,
+    private primaryTarget: { provider: string; model: string },
+    private fallbackTarget: { provider: string; model: string },
+  ) {
+    super(identity);
+  }
+
+  run(input: RunAgentInput): Observable<BaseEvent> {
+    return defer(() => {
+      let committed = false;
+      const attempt = (agent: AbstractAgent) => {
+        this.active = agent;
+        return defer(() => agent.run(input)).pipe(
+          mergeMap((event) => {
+            if (event.type === "RUN_STARTED") return EMPTY;
+            if (event.type === "RUN_ERROR") {
+              return throwError(() => new AgentRunEventError(event));
+            }
+            if (event.type !== "RUN_FINISHED") committed = true;
+            return of(event);
+          }),
+        );
+      };
+      const failed = (error: unknown) =>
+        error instanceof AgentRunEventError
+          ? concat(
+              of(error.event),
+              throwError(() => error),
+            )
+          : throwError(() => error);
+
+      return concat(
+        of({
+          type: "RUN_STARTED",
+          threadId: input.threadId,
+          runId: input.runId,
+        } as BaseEvent),
+        attempt(this.primary).pipe(
+          catchError((error: unknown) => {
+            if (!(error instanceof AgentRunEventError) || committed) {
+              return failed(error);
+            }
+            console.warn({
+              event: "agent_model_fallback",
+              agentId: this.agentId,
+              primary: this.primaryTarget,
+              fallback: this.fallbackTarget,
+              timestamp: new Date().toISOString(),
+            });
+            return attempt(this.fallback).pipe(catchError(failed));
+          }),
+        ),
+      ).pipe(
+        finalize(() => {
+          this.active = undefined;
+        }),
+      );
+    });
+  }
+
+  getCapabilities() {
+    return this.primary.getCapabilities?.() ?? Promise.resolve({});
+  }
+
+  clone(): FallbackAgent {
+    const cloned = super.clone() as FallbackAgent;
+    cloned.identity = this.identity;
+    cloned.primary = this.primary.clone();
+    cloned.fallback = this.fallback.clone();
+    cloned.primaryTarget = this.primaryTarget;
+    cloned.fallbackTarget = this.fallbackTarget;
+    cloned.active = undefined;
+    return cloned;
+  }
+
+  abortRun(): void {
+    this.active?.abortRun();
+    super.abortRun();
+  }
+}
+
 /**
  * An agent whose tools are decided when the run starts, because that is the first moment anybody
  * knows what the run is about, and who is asking on whose behalf.
@@ -1679,6 +1923,8 @@ export async function resolveRuntimeAgents(
    * same positional reason. Absent means nothing is recorded.
    */
   markAttachmentsSent?: MarkAttachmentsSent,
+  resolveAgentModel?: ResolveAgentModel,
+  compatibleModel?: CompatibleModelFactory,
 ): Promise<Record<string, AbstractAgent>> {
   const all = await loadAgents();
   if (all.length === 0) {
@@ -1694,9 +1940,10 @@ export async function resolveRuntimeAgents(
   // what that means, exactly as it would have from a roster that did not contain it.
   if (registered.length === 0) return {};
 
-  const apiKey = registered.some((agent) => agent.type === "built_in")
-    ? await resolveModelApiKey()
-    : null;
+  const apiKey =
+    !resolveAgentModel && registered.some((agent) => agent.type === "built_in")
+      ? await resolveModelApiKey()
+      : null;
   return buildAgents(
     registered,
     model,
@@ -1713,6 +1960,8 @@ export async function resolveRuntimeAgents(
     initiator,
     loadAttachment,
     markAttachmentsSent,
+    resolveAgentModel,
+    compatibleModel,
   );
 }
 
@@ -1816,6 +2065,8 @@ export function createRequestAgents(
    * nothing is recorded.
    */
   markAttachmentsSentForActor?: (actorId: string) => MarkAttachmentsSent,
+  resolveAgentModel?: ResolveAgentModel,
+  compatibleModel?: CompatibleModelFactory,
 ) {
   return async ({ request }: { request: Request }) => {
     const actor = await identifyActor(request);
@@ -1839,6 +2090,8 @@ export function createRequestAgents(
       undefined,
       loadAttachmentForActor?.(actor.id),
       markAttachmentsSentForActor?.(actor.id),
+      resolveAgentModel,
+      compatibleModel,
     );
   };
 }
@@ -1990,6 +2243,8 @@ export function mountCopilotRuntime(
    * write is scoped to rows that person uploaded. Appended last. Absent means nothing is recorded.
    */
   markAttachmentsSentForActor?: (actorId: string) => MarkAttachmentsSent,
+  resolveAgentModel?: ResolveAgentModel,
+  compatibleModel?: CompatibleModelFactory,
 ) {
   const { intelligence } = config.runtime;
 
@@ -2037,6 +2292,8 @@ export function mountCopilotRuntime(
       input.initiator,
       loadAttachmentForActor?.(actor.id),
       markAttachmentsSentForActor?.(actor.id),
+      resolveAgentModel,
+      compatibleModel,
     );
     return agents[input.botId] ?? null;
   };
@@ -2058,6 +2315,22 @@ export function mountCopilotRuntime(
     // returns, so omitting it puts every person in the deployment in the same thread space and one
     // person's conversations become another's.
     identifyUser,
+    /*
+     * User memory only.
+     *
+     * Memory is already scoped by identifyUser, so the browser and the Bot may read/write only the
+     * signed-in person's durable Intelligence memory. Project scope stays closed: turning it on
+     * here would make one person's remembered context visible to everyone in the deployment.
+     *
+     * Explicit configuration is required by CopilotKit; omitting memory hides the browser memory
+     * routes and removes the agent memory tools entirely.
+     */
+    memory: {
+      access: async () => ({
+        user: "read-write",
+        project: "none",
+      }),
+    },
     // The subclass, not the base: a thread nobody has run yet reads as empty rather than as a 500.
     // See IntelligenceKnowingANewThread.
     intelligence: intelligenceClient,
@@ -2112,6 +2385,8 @@ export function mountCopilotRuntime(
       loadInstructionsForActor,
       loadAttachmentForActor,
       markAttachmentsSentForActor,
+      resolveAgentModel,
+      compatibleModel,
     ) as never,
   });
 

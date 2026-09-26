@@ -8,12 +8,16 @@ mod desktop_host_access;
 mod desktop_telemetry;
 
 #[cfg(test)]
+mod model_connection_tests;
+#[cfg(test)]
+mod show_route_tests;
+#[cfg(test)]
 mod test_support;
 
 use openbot_desktop_lib::{
-    acquire, deployment, deployment_release, engine, env as openbot_env, harness, host_access,
-    install, preparation, problem::Problem, provider, pull_metrics, quiet, stack, supervise,
-    telemetry, tray, windows as win,
+    acquire, close_behavior::CloseBehavior, deployment, deployment_release, engine,
+    env as openbot_env, harness, host_access, install, preparation, problem::Problem, provider,
+    pull_metrics, quiet, stack, supervise, telemetry, tray, update, windows as win,
 };
 
 const QUIT_CLEANUP_NOTICE_FILE: &str = ".openbot-quit-cleanup-notice";
@@ -53,6 +57,8 @@ struct Shell {
     last_failure: Mutex<Option<openbot_desktop_lib::problem::Problem>>,
     /// Reading the notification must not make a partially running deployment adoptable again.
     recovery_required: Mutex<Option<RecoveryRequired>>,
+    /// An explicit reset remains bound to the engine that found the leftover database.
+    leftover_database: Mutex<Option<LeftoverDatabase>>,
     selected_root: Mutex<Option<PathBuf>>,
     root: Mutex<Option<PathBuf>>,
     /// Containers may outlive a failed Start before any host root is published.
@@ -64,6 +70,11 @@ struct Shell {
         Mutex<Option<openbot_desktop_lib::intelligence::SigningInToIntelligence>>,
     /// The credential that sign-in produced, held so a project can be chosen with it.
     intelligence_credential: Mutex<Option<String>>,
+    /// A provisioned Intelligence project key waiting for Start.
+    ///
+    /// It never crosses Tauri IPC. Root-binding keeps a key provisioned for one installation from
+    /// being consumed after the setup screen switches to another folder.
+    pending_intelligence_key: Mutex<Option<PendingIntelligenceKey>>,
     /// A ChatGPT sign-in waiting for the browser redirect to complete it.
     ///
     /// Held for the same reason the Claude one is: a person leaves and comes back in the middle.
@@ -89,9 +100,20 @@ struct ContainerDeployment {
     address: engine::Address,
 }
 
+struct LeftoverDatabase {
+    root: PathBuf,
+    volume: String,
+    address: engine::Address,
+}
+
 struct RecoveryRequired {
     root: PathBuf,
     generation: u64,
+}
+
+struct PendingIntelligenceKey {
+    root: PathBuf,
+    key: String,
 }
 
 /// Callers serialize eligibility and any navigation with `startup`. A failed Start may advance
@@ -391,6 +413,7 @@ async fn prepare_installation(
                 ));
             }
             remember_selected_root(&shell, &root);
+            *shell.leftover_database.lock().unwrap() = None;
         }
         let address = tauri::async_runtime::block_on(engine_ready(&app))?.pin()?;
         attempt.require_current()?;
@@ -686,6 +709,27 @@ struct ChosenModel {
     saved: Option<bool>,
 }
 
+fn model_endpoint_url(raw: &str, label: &str) -> Result<reqwest::Url, Problem> {
+    let url = reqwest::Url::parse(raw.trim()).map_err(|_| {
+        Problem::plain(format!(
+            "Enter a valid http:// or https:// address for your {label}."
+        ))
+    })?;
+    if !matches!(url.scheme(), "http" | "https") || !url.has_host() {
+        return Err(format!("Enter a valid http:// or https:// address for your {label}.").into());
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(format!("{label} addresses must not contain credentials.").into());
+    }
+    if url.host_str().is_some_and(model_probe_never_allowed_host) {
+        return Err(format!(
+            "That {label} is reserved for cloud instance credentials and cannot be saved."
+        )
+        .into());
+    }
+    Ok(url)
+}
+
 impl ChosenModel {
     fn into_credential(self, root: &Path) -> Result<openbot_env::ModelCredential, Problem> {
         self.into_credential_with(root, saved_secret)
@@ -759,21 +803,10 @@ impl ChosenModel {
             }
             ("openai-compatible", "endpoint") => {
                 let base_url = given(self.base_url);
-                if !reqwest::Url::parse(&base_url)
-                    .is_ok_and(|url| matches!(url.scheme(), "http" | "https") && url.has_host())
-                {
-                    return Err(
-                        "Enter a valid http:// or https:// address for your model endpoint.".into(),
-                    );
-                }
+                model_endpoint_url(&base_url, "model endpoint")?;
                 let container_base_url = given(self.container_base_url);
-                if !container_base_url.is_empty()
-                    && !reqwest::Url::parse(&container_base_url)
-                        .is_ok_and(|url| matches!(url.scheme(), "http" | "https") && url.has_host())
-                {
-                    return Err(
-                        "Enter a valid http:// or https:// address for the container model endpoint.".into(),
-                    );
+                if !container_base_url.is_empty() {
+                    model_endpoint_url(&container_base_url, "container model endpoint")?;
                 }
                 let model = given(self.model);
                 if model.is_empty() {
@@ -807,6 +840,315 @@ impl ChosenModel {
     }
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelConnectionCheck {
+    detail: String,
+}
+
+fn model_probe_client() -> Result<reqwest::Client, Problem> {
+    reqwest::Client::builder()
+        // A provider credential must never follow a redirect to a different origin. If an endpoint
+        // moved, the person should see that and update the address rather than send a key wherever
+        // the redirect happened to point.
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|error| {
+            Problem::with(
+                "OpenBot could not prepare the connection test.",
+                error.to_string(),
+            )
+        })
+}
+
+fn model_probe_never_allowed_host(host: &str) -> bool {
+    let canonical = host
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+
+    if matches!(
+        canonical.as_str(),
+        "metadata.google.internal" | "metadata.goog"
+    ) {
+        return true;
+    }
+
+    let Ok(address) = canonical.parse::<std::net::IpAddr>() else {
+        return false;
+    };
+    let forbidden_v4 = |address: std::net::Ipv4Addr| {
+        matches!(
+            address.octets(),
+            [169, 254, 169, 254] | [169, 254, 170, 2] | [100, 100, 100, 200]
+        )
+    };
+
+    match address {
+        std::net::IpAddr::V4(address) => forbidden_v4(address),
+        std::net::IpAddr::V6(address) => {
+            if address == std::net::Ipv6Addr::new(0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0254) {
+                return true;
+            }
+
+            let bytes = address.octets();
+            let mapped =
+                bytes[..10].iter().all(|byte| *byte == 0) && bytes[10] == 0xff && bytes[11] == 0xff;
+            let compatible = bytes[..12].iter().all(|byte| *byte == 0);
+            let nat64 = bytes[..4] == [0x00, 0x64, 0xff, 0x9b]
+                && bytes[4..12].iter().all(|byte| *byte == 0);
+            if mapped || compatible || nat64 {
+                return forbidden_v4(std::net::Ipv4Addr::new(
+                    bytes[12], bytes[13], bytes[14], bytes[15],
+                ));
+            }
+            false
+        }
+    }
+}
+
+fn forbidden_resolved_probe_ip(ip: std::net::IpAddr) -> bool {
+    // Keep loopback and ordinary RFC1918 IPv4 available for local/self-hosted model servers, but
+    // refuse address classes that a credential-bearing setup probe has no legitimate reason to
+    // contact. The textual metadata floor above remains in force too.
+    if model_probe_never_allowed_host(&ip.to_string()) {
+        return true;
+    }
+
+    match ip {
+        std::net::IpAddr::V4(ip) => {
+            let octets = ip.octets();
+            ip.is_unspecified()
+                || ip.is_link_local()
+                || ip.is_multicast()
+                || ip.is_broadcast()
+                // Carrier-grade NAT space contains metadata endpoints on some clouds.
+                || (octets[0] == 100 && (64..=127).contains(&octets[1]))
+        }
+        std::net::IpAddr::V6(ip) => {
+            // IPv4 can be carried inside IPv6 syntax. Apply the exact same resolved-address
+            // policy to mapped, legacy compatible and well-known NAT64 forms so an AAAA answer
+            // cannot turn a blocked IPv4 destination into an allowed credential-bearing probe.
+            let bytes = ip.octets();
+            let mapped =
+                bytes[..10].iter().all(|byte| *byte == 0) && bytes[10] == 0xff && bytes[11] == 0xff;
+            let compatible = bytes[..12].iter().all(|byte| *byte == 0);
+            let nat64 = bytes[..4] == [0x00, 0x64, 0xff, 0x9b]
+                && bytes[4..12].iter().all(|byte| *byte == 0);
+            if mapped || compatible || nat64 {
+                return forbidden_resolved_probe_ip(std::net::IpAddr::V4(std::net::Ipv4Addr::new(
+                    bytes[12], bytes[13], bytes[14], bytes[15],
+                )));
+            }
+
+            let first = ip.segments()[0];
+            ip.is_unspecified()
+                // fe80::/10. Written explicitly because Ipv6Addr::is_unicast_link_local is newer
+                // than this desktop crate's Rust 1.77 MSRV.
+                || (first & 0xffc0) == 0xfe80
+                || ip.is_multicast()
+                // Unique-local IPv6 can expose machine-local infrastructure. Local model servers
+                // remain available over loopback and ordinary private IPv4.
+                || (first & 0xfe00) == 0xfc00
+        }
+    }
+}
+
+fn protected_model_probe_client(url: &reqwest::Url) -> Result<reqwest::Client, Problem> {
+    use std::net::ToSocketAddrs;
+
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("Do not put credentials in the model endpoint URL.".into());
+    }
+
+    let host = url
+        .host_str()
+        .ok_or_else(|| Problem::plain("The model endpoint has no host."))?;
+    if model_probe_never_allowed_host(host) {
+        return Err(
+            "That model endpoint is reserved for machine metadata and cannot be tested.".into(),
+        );
+    }
+    let port = url
+        .port_or_known_default()
+        .ok_or_else(|| Problem::plain("The model endpoint has no usable port."))?;
+
+    let addresses: Vec<std::net::SocketAddr> = if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        vec![std::net::SocketAddr::new(ip, port)]
+    } else {
+        (host, port)
+            .to_socket_addrs()
+            .map_err(|error| {
+                Problem::with(
+                    "OpenBot could not resolve the model endpoint.",
+                    error.to_string(),
+                )
+            })?
+            .collect()
+    };
+
+    if addresses.is_empty() {
+        return Err("The model endpoint did not resolve to an address.".into());
+    }
+    if addresses
+        .iter()
+        .any(|address| forbidden_resolved_probe_ip(address.ip()))
+    {
+        return Err(
+            "That model endpoint resolves to a machine-metadata or special-use address that OpenBot will not probe."
+                .into(),
+        );
+    }
+
+    // Resolve once, validate every result, then pin this client to those exact addresses. This
+    // closes the DNS-rebinding window between validation and the credential-bearing request while
+    // retaining the original hostname for TLS SNI/certificate verification.
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(10))
+        .resolve_to_addrs(host, &addresses)
+        .build()
+        .map_err(|error| {
+            Problem::with(
+                "OpenBot could not prepare the protected endpoint test.",
+                error.to_string(),
+            )
+        })
+}
+
+fn models_probe_url(base_url: &str) -> Result<reqwest::Url, Problem> {
+    let mut url = model_endpoint_url(base_url, "model endpoint")?;
+    if url.host_str().is_some_and(model_probe_never_allowed_host) {
+        return Err(
+            "That model endpoint is reserved for cloud instance credentials and cannot be tested."
+                .into(),
+        );
+    }
+    let path = format!("{}/models", url.path().trim_end_matches('/'));
+    url.set_path(&path);
+    url.set_query(None);
+    url.set_fragment(None);
+    Ok(url)
+}
+
+async fn provider_probe(request: reqwest::RequestBuilder, provider: &str) -> Result<(), Problem> {
+    let response = request.send().await.map_err(|error| {
+        Problem::with(
+            format!("OpenBot could not reach {provider}."),
+            error.to_string(),
+        )
+    })?;
+    let status = response.status();
+    if status.is_success() {
+        return Ok(());
+    }
+    if matches!(status.as_u16(), 401 | 403) {
+        return Err(format!("{provider} rejected this credential.").into());
+    }
+    if status.is_redirection() {
+        return Err(format!(
+            "{provider} redirected the connection test. Update the provider address instead of forwarding a credential through a redirect."
+        )
+        .into());
+    }
+    Err(format!("{provider} answered with HTTP {status}.").into())
+}
+
+/// Check exactly the model/provider answer currently shown in setup, without saving it.
+///
+/// API-key and compatible-endpoint choices make a bounded read-only provider request. Plan choices
+/// have already gone through the vendor's interactive sign-in, so this command verifies that the
+/// resulting token/store (or its saved copy) still resolves. The full Bot round-trip remains the
+/// final setup check after the local stack starts.
+#[tauri::command]
+async fn test_model_connection(
+    root: String,
+    model: ChosenModel,
+) -> Result<ModelConnectionCheck, Problem> {
+    let root = stack::root_from(&root);
+    let credential = model.into_credential(&root)?;
+    match credential {
+        openbot_env::ModelCredential::None => {
+            Err("Choose a model connection before testing it.".into())
+        }
+        openbot_env::ModelCredential::OpenAi { api_key } => {
+            if api_key.trim().is_empty() {
+                return Err("Enter an OpenAI API key before testing it.".into());
+            }
+            let client = model_probe_client()?;
+            provider_probe(
+                client
+                    .get("https://api.openai.com/v1/models")
+                    .bearer_auth(api_key),
+                "OpenAI",
+            )
+            .await?;
+            Ok(ModelConnectionCheck {
+                detail: "OpenAI accepted this API key.".into(),
+            })
+        }
+        openbot_env::ModelCredential::Anthropic { api_key } => {
+            if api_key.trim().is_empty() {
+                return Err("Enter an Anthropic API key before testing it.".into());
+            }
+            let client = model_probe_client()?;
+            provider_probe(
+                client
+                    .get("https://api.anthropic.com/v1/models?limit=1")
+                    .header("x-api-key", api_key)
+                    .header("anthropic-version", "2023-06-01"),
+                "Anthropic",
+            )
+            .await?;
+            Ok(ModelConnectionCheck {
+                detail: "Anthropic accepted this API key.".into(),
+            })
+        }
+        openbot_env::ModelCredential::Compatible {
+            base_url,
+            api_key,
+            model,
+            ..
+        } => {
+            let url = models_probe_url(&base_url)?;
+            let client = protected_model_probe_client(&url)?;
+            let mut request = client.get(url);
+            if !api_key.trim().is_empty() {
+                request = request.bearer_auth(api_key);
+            }
+            provider_probe(request, "The model endpoint").await?;
+            Ok(ModelConnectionCheck {
+                detail: format!(
+                    "The endpoint answered successfully. OpenBot will use model {model:?}; the final setup check verifies a real Bot response."
+                ),
+            })
+        }
+        openbot_env::ModelCredential::ClaudePlan { token } => {
+            if token.trim().is_empty() {
+                return Err("That Claude plan sign-in is no longer available.".into());
+            }
+            Ok(ModelConnectionCheck {
+                detail:
+                    "The Claude sign-in is available. The final setup check verifies a real Bot response."
+                        .into(),
+            })
+        }
+        openbot_env::ModelCredential::ChatGptPlan { store } => {
+            if store.trim().is_empty() {
+                return Err("That ChatGPT sign-in is no longer available.".into());
+            }
+            Ok(ModelConnectionCheck {
+                detail:
+                    "The ChatGPT sign-in is available. The final setup check verifies a real Bot response."
+                        .into(),
+            })
+        }
+    }
+}
+
 fn start_stack_credential(
     root: &Path,
     model: ChosenModel,
@@ -831,12 +1173,15 @@ fn saved_secret(root: &Path, key: &str) -> Result<String, Problem> {
 fn intelligence_key_for_start(
     root: &Path,
     given: String,
+    pending: Option<String>,
     mut resolve: impl FnMut(&Path, &str) -> Result<String, Problem>,
 ) -> Result<String, Problem> {
-    let key = if given.trim().is_empty() {
-        resolve(root, "INTELLIGENCE_API_KEY")?
-    } else {
+    let key = if !given.trim().is_empty() {
         given
+    } else if let Some(pending) = pending {
+        pending
+    } else {
+        resolve(root, "INTELLIGENCE_API_KEY")?
     };
     if key.trim().is_empty() {
         return Err("That saved CopilotKit connection is no longer available. Sign in again or enter a project key.".into());
@@ -847,22 +1192,169 @@ fn intelligence_key_for_start(
 fn require_existing_encryption_key(
     root: &Path,
     secrets: &std::collections::BTreeMap<String, String>,
+    existing_postgres_volume: impl FnOnce() -> Result<bool, Problem>,
 ) -> Result<(), Problem> {
+    if secrets
+        .get("KEY_ENCRYPTION_KEY")
+        .is_some_and(|value| openbot_env::usable_encryption_key(value))
+    {
+        return Ok(());
+    }
     let configured = openbot_desktop_lib::saved_intent::SavedIntent::read(root)
         .model
         .is_some()
         || openbot_env::already_set(&root.join(".env"), &["DATABASE_URL"])
             .contains_key("DATABASE_URL");
-    if configured
-        && !secrets
-            .get("KEY_ENCRYPTION_KEY")
-            .is_some_and(|value| openbot_env::usable_encryption_key(value))
-    {
+    // A reinstall can remove root-local markers while Compose keeps the named database volume.
+    // Only a verified fresh database may receive a newly minted encryption key.
+    if configured || existing_postgres_volume()? {
         return Err(Problem::plain(
             "This installation's saved encryption key is missing, invalid, or public. Restore its original private key from backup, or get help preserving its saved data. OpenBot will not replace the key automatically.",
         ));
     }
     Ok(())
+}
+
+fn require_existing_encryption_key_with_recovery(
+    root: &Path,
+    secrets: &stack::Secrets,
+    existing_postgres_volume: impl FnOnce() -> Result<bool, Problem>,
+    resettable_volume: impl FnOnce() -> Result<Option<String>, Problem>,
+) -> Result<(), Problem> {
+    let mut volume_exists = false;
+    require_existing_encryption_key(root, secrets, || {
+        volume_exists = existing_postgres_volume()?;
+        Ok(volume_exists)
+    })
+    .map_err(|mut problem| {
+        // A failed probe is not proof of an existing volume. Configured roots never reach here.
+        if volume_exists {
+            let recovery = fresh_root_without_encryption_key(root, secrets).and_then(|fresh| {
+                if fresh {
+                    resettable_volume()
+                } else {
+                    Ok(None)
+                }
+            });
+            match recovery {
+                Ok(volume) => {
+                    if volume.is_some() {
+                        problem.said = "OpenBot found a database from a previous installation, but its encryption key is unavailable. Restore the original key to keep its saved data, or reset the leftover database to start fresh.".into();
+                    }
+                    problem.database_reset = volume;
+                }
+                Err(verification) => {
+                    problem.detail = Some(match verification.detail {
+                        Some(detail) => format!("{}\n{detail}", verification.said),
+                        None => verification.said,
+                    });
+                }
+            }
+        }
+        problem
+    })
+}
+
+/// Destructive recovery needs positive evidence that root metadata is readable and unconfigured.
+/// The ordinary startup guard keeps its existing behavior when metadata is unknown.
+fn fresh_root_without_encryption_key(
+    root: &Path,
+    secrets: &stack::Secrets,
+) -> Result<bool, Problem> {
+    if secrets
+        .get("KEY_ENCRYPTION_KEY")
+        .is_some_and(|key| openbot_env::usable_encryption_key(key))
+    {
+        return Ok(false);
+    }
+    let unknown = || {
+        Problem::plain("OpenBot could not verify that this is an unconfigured installation. Its leftover database cannot be reset here.")
+    };
+    let settings = openbot_env::read_already_set(&root.join(".env"), &["DATABASE_URL"])
+        .map_err(|_| unknown())?;
+    if settings.contains_key("DATABASE_URL") {
+        return Ok(false);
+    }
+    use openbot_desktop_lib::saved_intent::{SavedIntent, FILE};
+    match std::fs::read(root.join(FILE)) {
+        Ok(bytes) => {
+            let record: serde_json::Value =
+                serde_json::from_slice(&bytes).map_err(|_| unknown())?;
+            if record["version"].as_u64() != Some(1) {
+                return Err(unknown());
+            }
+            let intent: SavedIntent = serde_json::from_value(record).map_err(|_| unknown())?;
+            Ok(intent.model.is_none())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
+        Err(_) => Err(unknown()),
+    }
+}
+
+fn reset_leftover_database_with(
+    shell: &Shell,
+    root: &Path,
+    volume: &str,
+    confirmed: bool,
+    read_secrets: impl FnOnce() -> Result<stack::Secrets, Problem>,
+    reset: impl FnOnce(&engine::Address, &stack::Secrets) -> Result<(), Problem>,
+) -> Result<(), Problem> {
+    if !confirmed {
+        return Err(Problem::plain("Confirm that you want to permanently delete the leftover database before resetting it."));
+    }
+    let attempt = StartAttempt::begin(shell)?;
+    let _startup = attempt.lock_current()?;
+    if shell.containers.lock().unwrap().is_some()
+        || shell.root.lock().unwrap().is_some()
+        || !shell.children.lock().unwrap().is_empty()
+    {
+        return Err(Problem::plain("OpenBot still owns running services. Choose Stop OpenBot before resetting a leftover database."));
+    }
+    if shell
+        .selected_root
+        .lock()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|selected| selected != root)
+    {
+        return Err(Problem::plain("The selected installation changed. Try Start again before resetting its leftover database."));
+    }
+    let address = shell.leftover_database.lock().unwrap().as_ref()
+        .filter(|offer| offer.root == root && offer.volume == volume)
+        .map(|offer| offer.address.clone())
+        .ok_or_else(|| Problem::plain("The leftover database reset offer is no longer current. Try Start again before confirming a reset."))?;
+    let secrets = read_secrets()?;
+    if !fresh_root_without_encryption_key(root, &secrets)? {
+        return Err(Problem::plain("This installation is already configured or has its original encryption key. Its database cannot be reset here."));
+    }
+    reset(&address, &secrets)?;
+    *shell.leftover_database.lock().unwrap() = None;
+    Ok(())
+}
+
+#[tauri::command]
+async fn reset_leftover_database<R: tauri::Runtime>(
+    root: String,
+    volume: String,
+    confirmed: bool,
+    app: tauri::AppHandle<R>,
+) -> Result<(), Problem> {
+    let root = stack::root_from(&root);
+    let shell = app.state::<Shell>();
+    reset_leftover_database_with(
+        &shell,
+        &root,
+        &volume,
+        confirmed,
+        || {
+            openbot_desktop_lib::vault::already_given_no_ui(
+                &root,
+                &root.join(".env"),
+                &openbot_env::MINTED[..],
+            )
+        },
+        |address, secrets| stack::reset_leftover_database(address, &root, secrets, &volume),
+    )
 }
 
 /// Write the `.env`, raise the containers, migrate, then start the three host processes.
@@ -909,6 +1401,7 @@ async fn start_stack_inner<R: tauri::Runtime>(
         }
         // A rejected concurrent Start must not replace the accepted attempt's selection.
         remember_selected_root(&shell, &root);
+        *shell.leftover_database.lock().unwrap() = None;
     }
     /*
      * Resolved from the catalogue rather than taken from the window.
@@ -1001,13 +1494,37 @@ async fn start_stack_inner<R: tauri::Runtime>(
             return Err(problem.into());
         }
 
-        let api_key = intelligence_key_for_start(&root, api_key, saved_secret)?;
+        let pending_intelligence_key = shell
+            .pending_intelligence_key
+            .lock()
+            .unwrap()
+            .as_ref()
+            .filter(|pending| pending.root == root)
+            .map(|pending| pending.key.clone());
+        let api_key =
+            intelligence_key_for_start(&root, api_key, pending_intelligence_key, saved_secret)?;
         let existing_secrets = openbot_desktop_lib::vault::already_given_no_ui(
             &root,
             &root.join(".env"),
             &openbot_env::MINTED[..],
         )?;
-        require_existing_encryption_key(&root, &existing_secrets)?;
+        require_existing_encryption_key_with_recovery(
+            &root,
+            &existing_secrets,
+            || stack::postgres_volume_exists(&found, &root, &existing_secrets),
+            || stack::leftover_database_volume(&found, &root, &existing_secrets),
+        )
+        .inspect_err(|problem| {
+            *shell.leftover_database.lock().unwrap() =
+                problem
+                    .database_reset
+                    .as_ref()
+                    .map(|volume| LeftoverDatabase {
+                        root: root.clone(),
+                        volume: volume.clone(),
+                        address: found.clone(),
+                    });
+        })?;
 
         let settings = openbot_env::compose(
             &openbot_env::Intelligence {
@@ -1057,6 +1574,12 @@ async fn start_stack_inner<R: tauri::Runtime>(
             &purge,
             &credential,
         )?;
+        {
+            let mut pending = shell.pending_intelligence_key.lock().unwrap();
+            if pending.as_ref().is_some_and(|pending| pending.root == root) {
+                *pending = None;
+            }
+        }
         report(&app, "env", true, "settings written, credentials stored");
         // Set before Bun imports the runtime, and retained for supervised restarts.
         secrets.extend(desktop_telemetry::runtime_env(&app));
@@ -1226,9 +1749,9 @@ async fn start_stack_inner<R: tauri::Runtime>(
 /// This dedicated command accepts no setting, value, root or policy from the webview.
 /// Stop what this started, and only what this started.
 ///
-/// A Bot's computer belongs to the supervisor rather than to Compose and is deliberately left
-/// running: its files and browser profile are volumes, and killing it here would sign somebody out
-/// of everything their Bot had logged into.
+/// A Bot's computer belongs to the supervisor rather than to Compose, so shutdown must explicitly
+/// stop those runtime-created containers too. Their persistent volumes are left intact: Stop ends
+/// CPU/RAM/network activity without signing the Bot out or deleting its workspace.
 #[tauri::command]
 async fn stop_stack<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -1971,9 +2494,45 @@ fn show_openbot<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), Strin
     show_openbot_on(app, &openbot_env::Ports::default())
 }
 
+/// Successful first-run handoff: enter the product with the New coworker dialog already open.
+///
+/// No arbitrary route crosses IPC. The destination is native-owned and fixed so the high-trust
+/// desktop command cannot be repurposed as a general navigator after the WebView enters the app.
+#[tauri::command]
+fn show_agent_creator<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
+    show_openbot_route_on(
+        app,
+        &openbot_env::Ports::default(),
+        Some(("/agents", "new=true")),
+    )
+}
+
 fn show_openbot_on<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     ports: &openbot_env::Ports,
+) -> Result<(), String> {
+    show_openbot_route_on(app, ports, None)
+}
+
+fn openbot_route_url(base: &str, route: Option<(&str, &str)>) -> Result<tauri::Url, String> {
+    let mut url: tauri::Url = base
+        .parse()
+        .map_err(|error| format!("{base} is not a URL: {error}"))?;
+    if let Some((path, query)) = route {
+        if !path.starts_with('/') || path.starts_with("//") {
+            return Err("the OpenBot route must stay on the local app origin".into());
+        }
+        url.set_path(path);
+        url.set_query((!query.is_empty()).then_some(query));
+        url.set_fragment(None);
+    }
+    Ok(url)
+}
+
+fn show_openbot_route_on<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    ports: &openbot_env::Ports,
+    route: Option<(&str, &str)>,
 ) -> Result<(), String> {
     let port = ports.app;
     // Where it answered, not where it was asked to listen. A dev server binds whichever loopback
@@ -1985,18 +2544,16 @@ fn show_openbot_on<R: tauri::Runtime>(
     if recovery_required_or_pending_quit_notice(&shell, &root) {
         return Err("Part of OpenBot needs recovery. Try starting OpenBot once more.".into());
     }
-    let url = owned_app_url(&root, ports).ok_or_else(|| {
+    let base = owned_app_url(&root, ports).ok_or_else(|| {
         format!("OpenBot could not verify its app on port {port} belongs to this installation. Try starting OpenBot again.")
     })?;
+    let url = openbot_route_url(&base, route)?;
     eprintln!("[show] navigating the window to {url}");
     let window = app
         .get_webview_window("main")
         .ok_or("the OpenBot window is not there to show it in")?;
     let outcome = window
-        .navigate(
-            url.parse()
-                .map_err(|error| format!("{url} is not a URL: {error}"))?,
-        )
+        .navigate(url)
         .map_err(|error| format!("could not show OpenBot: {error}"));
     eprintln!("[show] navigate returned {outcome:?}");
     outcome
@@ -2206,6 +2763,31 @@ fn selected_root(app: tauri::AppHandle) -> Option<String> {
         .map(|root| root.to_string_lossy().into_owned())
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopBuildIdentity {
+    version: &'static str,
+    source_revision: Option<&'static str>,
+    release_repository: &'static str,
+}
+
+fn valid_source_revision(value: Option<&'static str>) -> Option<&'static str> {
+    value.filter(|sha| sha.len() == 40 && sha.bytes().all(|byte| byte.is_ascii_hexdigit()))
+}
+
+/// Public support identity for this executable: never deployment configuration or credentials.
+///
+/// Hosted/release builds stamp the exact source SHA and repository into the binary. Local builds
+/// still report their package version and simply omit a source revision.
+#[tauri::command]
+fn desktop_build_identity() -> Result<DesktopBuildIdentity, String> {
+    Ok(DesktopBuildIdentity {
+        version: env!("CARGO_PKG_VERSION"),
+        source_revision: valid_source_revision(option_env!("OPENBOT_SOURCE_SHA")),
+        release_repository: update::release_repository()?,
+    })
+}
+
 /**
 Put the wizard's last question to the Bot, and hand back what it said.
 
@@ -2344,17 +2926,27 @@ async fn ask_the_bot_with_settings(
 }
 
 /**
-What a previous run already wrote, so the wizard can arrive filled in.
+What a previous run already wrote, so the wizard can resume without exposing credentials.
 
-Returned to the window because that is where the fields are, and it is the same machine and the
-same person: reading their own file back to them is not a disclosure. The key is not logged here or
-anywhere, and only the settings the wizard asks about are read.
+Only non-secret connection metadata crosses to the WebView. Credential presence is represented by
+booleans; Start resolves the actual secret native-side from the selected installation's vault.
 */
 #[tauri::command]
 fn already_configured<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     root: String,
 ) -> AlreadyConfigured {
+    let requested_root = stack::root_from(&root);
+    {
+        let shell = app.state::<Shell>();
+        let mut pending = shell.pending_intelligence_key.lock().unwrap();
+        if pending
+            .as_ref()
+            .is_some_and(|pending| pending.root != requested_root)
+        {
+            *pending = None;
+        }
+    }
     let mut configured = already_configured_for_root(root);
     if app
         .state::<Shell>()
@@ -2375,14 +2967,6 @@ fn already_configured_for_root(root: String) -> AlreadyConfigured {
             "INTELLIGENCE_API_KEY",
             "INTELLIGENCE_API_URL",
             "INTELLIGENCE_GATEWAY_WS_URL",
-            /*
-             * The model credentials too, so the wizard never asks twice for one of these either.
-             *
-             * A key already in the file is one somebody has already produced, and making them find
-             * it again means opening a dotfile in an editor. Read back for the same reason the
-             * Intelligence key is: it is their own file, on their own machine, and this is the
-             * screen that asks for it.
-             */
             "OPENAI_API_KEY",
             "ANTHROPIC_API_KEY",
             "OPENAI_BASE_URL",
@@ -2392,28 +2976,25 @@ fn already_configured_for_root(root: String) -> AlreadyConfigured {
         ],
     );
 
+    // Secrets are presence-only across IPC. The values themselves stay native-side and are
+    // resolved by Start from the selected root's vault.
+    let intelligence_api_key = values.remove("INTELLIGENCE_API_KEY").is_some();
+    let openai_api_key = values.remove("OPENAI_API_KEY").is_some();
+    let anthropic_api_key = values.remove("ANTHROPIC_API_KEY").is_some();
+    let claude_plan = values.remove("CLAUDE_CODE_OAUTH_TOKEN").is_some();
+
     use openbot_desktop_lib::saved_intent::{Category, SavedIntent};
     let intent = SavedIntent::read(&root);
     let hint = |category, file_present| {
         (file_present || intent.categories.contains(&category)).then_some(true)
     };
-    let claude_plan = values.remove("CLAUDE_CODE_OAUTH_TOKEN").is_some();
     AlreadyConfigured {
         launch: preparation::launch(&root),
         saved: SavedConfiguration {
-            intelligence_api_key: hint(
-                Category::Intelligence,
-                values.contains_key("INTELLIGENCE_API_KEY"),
-            ),
+            intelligence_api_key: hint(Category::Intelligence, intelligence_api_key),
             model_api_keys: SavedModelApiKeys {
-                openai: hint(
-                    Category::OpenAiApiKey,
-                    values.contains_key("OPENAI_API_KEY"),
-                ),
-                anthropic: hint(
-                    Category::AnthropicApiKey,
-                    values.contains_key("ANTHROPIC_API_KEY"),
-                ),
+                openai: hint(Category::OpenAiApiKey, openai_api_key),
+                anthropic: hint(Category::AnthropicApiKey, anthropic_api_key),
                 compatible: values
                     .get("OPENAI_BASE_URL")
                     .is_some_and(|url| intent.has_compatible_key_for(url))
@@ -2586,12 +3167,14 @@ async fn finish_intelligence_sign_in(
     Ok(projects)
 }
 
-/// Create a key for the project somebody chose, and hand it back for the field.
+/// Create a key for the project somebody chose and keep it native-side until Start.
 #[tauri::command]
 async fn intelligence_key_for(
     app: tauri::AppHandle,
+    root: String,
     project: String,
-) -> Result<String, openbot_desktop_lib::problem::Problem> {
+) -> Result<(), openbot_desktop_lib::problem::Problem> {
+    let root = stack::root_from(&root);
     let credential = app
         .state::<Shell>()
         .intelligence_credential
@@ -2601,13 +3184,19 @@ async fn intelligence_key_for(
         .ok_or_else(|| {
             openbot_desktop_lib::problem::Problem::plain("Sign in to CopilotKit first.")
         })?;
-    tauri::async_runtime::spawn_blocking(move || {
+    let key = tauri::async_runtime::spawn_blocking(move || {
         openbot_desktop_lib::intelligence::provision_key(&credential, &project)
     })
     .await
     .map_err(|error| {
         openbot_desktop_lib::problem::Problem::plain(format!("A key could not be created: {error}"))
-    })?
+    })??;
+    *app.state::<Shell>().intelligence_credential.lock().unwrap() = None;
+    *app.state::<Shell>()
+        .pending_intelligence_key
+        .lock()
+        .unwrap() = Some(PendingIntelligenceKey { root, key });
+    Ok(())
 }
 
 /// The model screen's rows. Independent of the picker above, and required to stay that way: no
@@ -2923,16 +3512,70 @@ fn stop_from_menu<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
     });
 }
 
-/// What each of the three items does, wherever it was chosen from.
+fn check_for_updates(app: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+        use tauri_plugin_opener::OpenerExt;
+
+        match update::check_latest_release().await {
+            Ok(info) if info.update_available => {
+                app.dialog()
+                    .message(format!(
+                        "OpenBot {} is available. This computer has {}. The verified release page will open in your browser.",
+                        info.latest_version, info.current_version
+                    ))
+                    .title("OpenBot update available")
+                    .kind(MessageDialogKind::Info)
+                    .show(|_| {});
+                if let Err(error) = app.opener().open_url(info.release_url, None::<&str>) {
+                    app.dialog()
+                        .message(format!(
+                            "The update was found, but its release page could not be opened: {error}"
+                        ))
+                        .title("Could not open the update")
+                        .kind(MessageDialogKind::Error)
+                        .show(|_| {});
+                }
+            }
+            Ok(info) => {
+                app.dialog()
+                    .message(format!(
+                        "OpenBot {} is already the latest stable release.",
+                        info.current_version
+                    ))
+                    .title("OpenBot is up to date")
+                    .kind(MessageDialogKind::Info)
+                    .show(|_| {});
+            }
+            Err(error) => {
+                app.dialog()
+                    .message(format!(
+                        "OpenBot could not check GitHub for a stable release. {error}"
+                    ))
+                    .title("Update check failed")
+                    .kind(MessageDialogKind::Error)
+                    .show(|_| {});
+            }
+        }
+    });
+}
+
+/// What each menu item does, wherever it was chosen from.
 ///
 /// The tray and the window menu carry the same items, so they share one function: two copies would
-/// be two chances for Stop to mean something different depending on where somebody clicked.
+/// be two chances for Stop or Update to mean something different depending on where somebody clicked.
 fn chose(app: &tauri::AppHandle, item: &str) {
     match item {
         "open" => show_whichever_applies(app),
+        // Native rather than a WebView link. The app navigates to local OpenBot after setup and that
+        // remote page deliberately has no Tauri IPC capability, so the menu remains available there.
+        "updates" => check_for_updates(app.clone()),
         // Stop without quitting: the stack is what costs something to leave running, and somebody
         // who wants it stopped does not necessarily want the application gone.
         "stop" => stop_from_menu(app.clone()),
+        "close-ask" => save_close_behavior(app, CloseBehavior::Ask),
+        "close-tray" => save_close_behavior(app, CloseBehavior::KeepRunning),
+        "close-exit" => save_close_behavior(app, CloseBehavior::Exit),
         // Exit rather than hide: quitting is a decision to stop, and the exit handler is what stops
         // the processes with it.
         "quit" => {
@@ -2944,6 +3587,49 @@ fn chose(app: &tauri::AppHandle, item: &str) {
 
 fn quit_menu_accelerator() -> Option<&'static str> {
     Some(QUIT_MENU_ACCELERATOR)
+}
+
+fn close_behavior_for<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> CloseBehavior {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|directory| CloseBehavior::read(&directory))
+        .unwrap_or_default()
+}
+
+fn save_close_behavior<R: tauri::Runtime>(app: &tauri::AppHandle<R>, behavior: CloseBehavior) {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+
+    let saved = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| error.to_string())
+        .and_then(|directory| {
+            behavior
+                .write(&directory)
+                .map_err(|error| error.to_string())
+        });
+    match saved {
+        Ok(()) => {
+            app.dialog()
+                .message(format!(
+                    "When the main window is closed: {}.",
+                    behavior.label()
+                ))
+                .title("Close behavior saved")
+                .kind(MessageDialogKind::Info)
+                .show(|_| {});
+        }
+        Err(error) => {
+            app.dialog()
+                .message(format!(
+                    "OpenBot could not save the close behavior. The previously saved close behavior is still active; try again. {error}"
+                ))
+                .title("Close behavior not saved")
+                .kind(MessageDialogKind::Error)
+                .show(|_| {});
+        }
+    }
 }
 
 fn main() {
@@ -2966,16 +3652,20 @@ fn main() {
             prepare_engine,
             prepare_installation,
             start_stack,
+            reset_leftover_database,
             stop_stack,
             show_openbot,
+            show_agent_creator,
             show_setup,
             already_running,
             last_failure,
             default_root,
             selected_root,
+            desktop_build_identity,
             harnesses,
             providers,
             already_configured,
+            test_model_connection,
             begin_claude_sign_in,
             finish_claude_sign_in,
             begin_chatgpt_sign_in,
@@ -2995,14 +3685,49 @@ fn main() {
             let _ = window
                 .eval("document.addEventListener('contextmenu', e => e.preventDefault(), true)");
         })
-        // Closing the window hides it. A tray application whose window is destroyed on close has a
-        // menu item that points at nothing: `get_webview_window` returns None from then on, and the
-        // only way back is to quit and start again, with a stack still running that nothing on
-        // screen can reach.
+        // Closing the window is an explicit product choice, not a hidden background transition.
+        //
+        // Minimize never comes through this branch and keeps running. The X button asks whether the
+        // person wants the same tray behaviour or a real Exit. A real Exit goes through RunEvent::
+        // ExitRequested below, which is the one cleanup path that retires host processes, folder
+        // operations, supervisor-created Computers and Compose services before the process exits.
+        //
+        // The window itself is hidden rather than destroyed for "Keep running": the tray's Open item
+        // must still have a WebView to restore, and a hidden window costs far less than an Agent
+        // Computer while making the running state recoverable and visible.
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+
                 api.prevent_close();
-                let _ = window.hide();
+                let app = window.app_handle();
+                match close_behavior_for(app) {
+                    CloseBehavior::KeepRunning => {
+                        let _ = window.hide();
+                    }
+                    CloseBehavior::Exit => app.exit(0),
+                    CloseBehavior::Ask => {
+                        let keep_running = app
+                            .dialog()
+                            .message(
+                                "OpenBot is still running. Keep Agents and Computers running in the system tray, or exit OpenBot and stop all Agents?",
+                            )
+                            .title("Close OpenBot")
+                            .kind(MessageDialogKind::Warning)
+                            .buttons(MessageDialogButtons::OkCancelCustom(
+                                "Keep running in tray".into(),
+                                "Exit and stop all Agents".into(),
+                            ))
+                            .parent(window)
+                            .blocking_show();
+
+                        if keep_running {
+                            let _ = window.hide();
+                        } else {
+                            app.exit(0);
+                        }
+                    }
+                }
             }
         })
         .setup(|app| {
@@ -3024,13 +3749,44 @@ fn main() {
             remember_setup_url(app.handle())?;
 
             // The status menu lets somebody open the window, stop the stack, or quit the app.
-            use tauri::menu::{Menu, MenuItem};
+            use tauri::menu::{Menu, MenuItem, Submenu};
             use tauri::tray::TrayIconBuilder;
 
             let open = MenuItem::with_id(app, "open", "Open OpenBot", true, None::<&str>)?;
-            let stop = MenuItem::with_id(app, "stop", "Stop OpenBot", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "Quit", true, quit_menu_accelerator())?;
-            let menu = Menu::with_items(app, &[&open, &stop, &quit])?;
+            let updates =
+                MenuItem::with_id(app, "updates", "Check for updates", true, None::<&str>)?;
+            let stop = MenuItem::with_id(app, "stop", "STOP ALL AGENTS", true, None::<&str>)?;
+            let close_ask =
+                MenuItem::with_id(app, "close-ask", "Ask every time", true, None::<&str>)?;
+            let close_tray = MenuItem::with_id(
+                app,
+                "close-tray",
+                "Keep running in tray",
+                true,
+                None::<&str>,
+            )?;
+            let close_exit = MenuItem::with_id(
+                app,
+                "close-exit",
+                "Exit and stop all Agents",
+                true,
+                None::<&str>,
+            )?;
+            let close_behavior = Submenu::with_items(
+                app,
+                "On window close",
+                true,
+                &[&close_ask, &close_tray, &close_exit],
+            )?;
+            let quit = MenuItem::with_id(
+                app,
+                "quit",
+                "Exit OpenBot and stop all Agents",
+                true,
+                quit_menu_accelerator(),
+            )?;
+            let menu =
+                Menu::with_items(app, &[&open, &updates, &stop, &close_behavior, &quit])?;
 
             TrayIconBuilder::with_id("openbot")
                 .icon(tray::icon())
@@ -3047,17 +3803,56 @@ fn main() {
             // menu still provides access when the tray is unavailable or hard to find.
             // Its own items, not the tray's: a menu item belongs to one menu, and the two menus
             // outlive each other. The ids match so both arrive at the same function.
-            use tauri::menu::Submenu;
             let window_open = MenuItem::with_id(app, "open", "Open OpenBot", true, None::<&str>)?;
-            let window_stop = MenuItem::with_id(app, "stop", "Stop OpenBot", true, None::<&str>)?;
-            let window_quit =
-                MenuItem::with_id(app, "quit", "Quit", true, quit_menu_accelerator())?;
+            let window_updates =
+                MenuItem::with_id(app, "updates", "Check for updates", true, None::<&str>)?;
+            let window_stop =
+                MenuItem::with_id(app, "stop", "STOP ALL AGENTS", true, None::<&str>)?;
+            let window_close_ask =
+                MenuItem::with_id(app, "close-ask", "Ask every time", true, None::<&str>)?;
+            let window_close_tray = MenuItem::with_id(
+                app,
+                "close-tray",
+                "Keep running in tray",
+                true,
+                None::<&str>,
+            )?;
+            let window_close_exit = MenuItem::with_id(
+                app,
+                "close-exit",
+                "Exit and stop all Agents",
+                true,
+                None::<&str>,
+            )?;
+            let window_close_behavior = Submenu::with_items(
+                app,
+                "On window close",
+                true,
+                &[
+                    &window_close_ask,
+                    &window_close_tray,
+                    &window_close_exit,
+                ],
+            )?;
+            let window_quit = MenuItem::with_id(
+                app,
+                "quit",
+                "Exit OpenBot and stop all Agents",
+                true,
+                quit_menu_accelerator(),
+            )?;
             // A submenu, because a top-level entry in a menu bar has to be one to open at all.
             let openbot = Submenu::with_items(
                 app,
                 "OpenBot",
                 true,
-                &[&window_open, &window_stop, &window_quit],
+                &[
+                    &window_open,
+                    &window_updates,
+                    &window_stop,
+                    &window_close_behavior,
+                    &window_quit,
+                ],
             )?;
             /*
              * AN EDIT MENU, WITHOUT WHICH COMMAND-V DOES NOTHING.
@@ -3538,7 +4333,17 @@ mod tests {
                 std::fs::write(root.join(".env"), format!("INTELLIGENCE_API_URL=https://synthetic.example\n{legacy}")).unwrap();
                 let configured = already_configured_for_root(root.to_string_lossy().into_owned());
                 assert_eq!(configured.values["INTELLIGENCE_API_URL"], "https://synthetic.example");
-                assert!(!configured.values.contains_key("CLAUDE_CODE_OAUTH_TOKEN"));
+                for secret in [
+                    "INTELLIGENCE_API_KEY",
+                    "OPENAI_API_KEY",
+                    "ANTHROPIC_API_KEY",
+                    "CLAUDE_CODE_OAUTH_TOKEN",
+                ] {
+                    assert!(
+                        !configured.values.contains_key(secret),
+                        "{secret} crossed the public setup boundary"
+                    );
+                }
             }
         }
         std::fs::remove_dir_all(root).unwrap();
@@ -3677,7 +4482,7 @@ mod tests {
     }
 
     #[test]
-    fn already_configured_returns_file_values_and_saved_indicators() {
+    fn already_configured_returns_public_values_and_saved_indicators_only() {
         let root = temp_root("openbot-already-configured");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(
@@ -3695,18 +4500,60 @@ mod tests {
         let configured = already_configured_for_root(root.to_string_lossy().into_owned());
 
         assert_eq!(
-            configured.values.get("INTELLIGENCE_API_KEY"),
-            Some(&"file-cpk".to_string())
+            configured.values.get("OPENAI_BASE_URL"),
+            Some(&"https://models.example/v1".to_string())
         );
-        assert_eq!(
-            configured.values.get("OPENAI_API_KEY"),
-            Some(&"file-openai".to_string())
-        );
+        assert!(!configured.values.contains_key("INTELLIGENCE_API_KEY"));
+        assert!(!configured.values.contains_key("OPENAI_API_KEY"));
+        assert!(!configured.values.contains_key("ANTHROPIC_API_KEY"));
+        assert!(!configured.values.contains_key("CLAUDE_CODE_OAUTH_TOKEN"));
         assert_eq!(configured.saved.intelligence_api_key, Some(true));
         assert_eq!(configured.saved.model_api_keys.openai, Some(true));
         assert_eq!(configured.saved.model_sessions.openai, Some(true));
         assert_eq!(configured.saved.model_sessions.anthropic, None);
+        let serialized = serde_json::to_string(&configured).unwrap();
+        assert!(!serialized.contains("file-cpk"));
+        assert!(!serialized.contains("file-openai"));
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn already_configured_retires_pending_intelligence_key_for_another_root() {
+        let root_a = temp_root("pending-intelligence-root-a");
+        let root_b = temp_root("pending-intelligence-root-b");
+        std::fs::create_dir_all(&root_a).unwrap();
+        std::fs::create_dir_all(&root_b).unwrap();
+        let app = tauri::test::mock_builder()
+            .manage(Shell::default())
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+
+        *app.state::<Shell>()
+            .pending_intelligence_key
+            .lock()
+            .unwrap() = Some(PendingIntelligenceKey {
+            root: root_a.clone(),
+            key: "synthetic-pending-key".into(),
+        });
+
+        let _ = already_configured(app.handle().clone(), root_a.to_string_lossy().into_owned());
+        assert!(app
+            .state::<Shell>()
+            .pending_intelligence_key
+            .lock()
+            .unwrap()
+            .is_some());
+
+        let _ = already_configured(app.handle().clone(), root_b.to_string_lossy().into_owned());
+        assert!(app
+            .state::<Shell>()
+            .pending_intelligence_key
+            .lock()
+            .unwrap()
+            .is_none());
+
+        let _ = std::fs::remove_dir_all(root_a);
+        let _ = std::fs::remove_dir_all(root_b);
     }
 
     #[test]
@@ -3840,7 +4687,7 @@ mod tests {
             }
         }
         for denied in [false, true] {
-            let result = intelligence_key_for_start(&root, String::new(), |_, key| {
+            let result = intelligence_key_for_start(&root, String::new(), None, |_, key| {
                 assert_eq!(key, "INTELLIGENCE_API_KEY");
                 if denied {
                     Err(Problem::plain("synthetic access denied"))
@@ -3850,6 +4697,24 @@ mod tests {
             });
             assert!(result.is_err());
         }
+        let pending = intelligence_key_for_start(
+            &root,
+            String::new(),
+            Some("synthetic-pending-intelligence".into()),
+            |_, _| panic!("a pending native key must win over saved-secret lookup"),
+        )
+        .unwrap();
+        assert_eq!(pending, "synthetic-pending-intelligence");
+
+        let typed = intelligence_key_for_start(
+            &root,
+            "synthetic-explicit-intelligence".into(),
+            Some("synthetic-pending-intelligence".into()),
+            |_, _| panic!("an explicit key must not read a saved secret"),
+        )
+        .unwrap();
+        assert_eq!(typed, "synthetic-explicit-intelligence");
+
         // A missing or unreadable ChatGPT file is an action error; no API-key resolver is called.
         std::fs::create_dir_all(&root).unwrap();
         for unreadable in [false, true] {
@@ -4026,7 +4891,10 @@ mod tests {
                     })
                     .unwrap_or_default();
                 assert!(
-                    require_existing_encryption_key(&root, &secrets).is_err(),
+                    require_existing_encryption_key(&root, &secrets, || {
+                        panic!("configured roots already require their original key")
+                    })
+                    .is_err(),
                     "{marker}: {original:?}"
                 );
             }
@@ -4038,7 +4906,23 @@ mod tests {
     fn configured_root_without_original_key_is_rejected_but_fresh_root_is_allowed() {
         let root = temp_root("valid-existing-encryption-key");
         std::fs::create_dir_all(&root).unwrap();
-        assert!(require_existing_encryption_key(&root, &std::collections::BTreeMap::new()).is_ok());
+        assert!(
+            require_existing_encryption_key(&root, &std::collections::BTreeMap::new(), || Ok(
+                false
+            ))
+            .is_ok()
+        );
+        assert!(
+            require_existing_encryption_key(&root, &std::collections::BTreeMap::new(), || Ok(true))
+                .is_err()
+        );
+        let unavailable = Problem::plain("selected engine unavailable");
+        assert_eq!(
+            require_existing_encryption_key(&root, &std::collections::BTreeMap::new(), || Err(
+                unavailable.clone()
+            )),
+            Err(unavailable)
+        );
         std::fs::write(
             root.join(".env"),
             "DATABASE_URL=postgres://synthetic-local\n",
@@ -4047,8 +4931,291 @@ mod tests {
         let original = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
         let secrets =
             std::collections::BTreeMap::from([("KEY_ENCRYPTION_KEY".into(), original.into())]);
-        assert!(require_existing_encryption_key(&root, &secrets).is_ok());
+        assert!(require_existing_encryption_key(&root, &secrets, || {
+            panic!("a valid original key needs no volume probe")
+        })
+        .is_ok());
         assert_eq!(secrets["KEY_ENCRYPTION_KEY"], original);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn leftover_database_recovery_is_offered_only_for_a_proven_fresh_root() {
+        let root = temp_root("leftover-database-offer");
+        std::fs::create_dir_all(&root).unwrap();
+        let error = require_existing_encryption_key_with_recovery(
+            &root,
+            &stack::Secrets::new(),
+            || Ok(true),
+            || Ok(Some("openbot_postgres-data".into())),
+        )
+        .unwrap_err();
+        assert_eq!(
+            serde_json::to_value(error).unwrap()["database_reset"],
+            "openbot_postgres-data"
+        );
+        for (file, content) in [
+            (".env", "DATABASE_URL=postgres://fixture\n"),
+            (
+                openbot_desktop_lib::saved_intent::FILE,
+                r#"{"version":1,"categories":[],"model":"open-ai-api-key"}"#,
+            ),
+            (
+                openbot_desktop_lib::saved_intent::FILE,
+                "invalid-settings-secret",
+            ),
+            (
+                openbot_desktop_lib::saved_intent::FILE,
+                r#"{"version":99,"categories":[],"model":null}"#,
+            ),
+        ] {
+            std::fs::write(root.join(file), content).unwrap();
+            let error = require_existing_encryption_key_with_recovery(
+                &root,
+                &stack::Secrets::new(),
+                || Ok(true),
+                || panic!("unknown or configured roots must not offer deletion"),
+            )
+            .unwrap_err();
+            assert!(serde_json::to_value(error)
+                .unwrap()
+                .get("database_reset")
+                .is_none());
+            std::fs::remove_file(root.join(file)).unwrap();
+        }
+        let secrets = stack::Secrets::from([(
+            "KEY_ENCRYPTION_KEY".into(),
+            "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=".into(),
+        )]);
+        assert!(require_existing_encryption_key_with_recovery(
+            &root,
+            &secrets,
+            || panic!("original key needs no probe"),
+            || panic!("original key needs no reset")
+        )
+        .is_ok());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn leftover_database_reset_rechecks_confirmation_configuration_key_and_ownership() {
+        let root = temp_root("leftover-database-command");
+        std::fs::create_dir_all(&root).unwrap();
+        let shell = Shell::default();
+        let offer = || {
+            *shell.leftover_database.lock().unwrap() = Some(LeftoverDatabase {
+                root: root.clone(),
+                volume: "openbot_postgres-data".into(),
+                address: engine::Address::new(
+                    engine::Engine::Podman,
+                    Some("original-machine".into()),
+                ),
+            });
+        };
+        offer();
+        assert!(reset_leftover_database_with(
+            &shell,
+            &root,
+            "openbot_postgres-data",
+            false,
+            || panic!("unconfirmed must not access credentials"),
+            |_, _| panic!("unconfirmed must not delete")
+        )
+        .is_err());
+        assert!(reset_leftover_database_with(
+            &shell,
+            &root,
+            "openbot_postgres-data",
+            true,
+            || Ok(stack::Secrets::new()),
+            |_, _| Ok(())
+        )
+        .is_ok());
+        offer();
+        for (file, content) in [
+            (".env", "DATABASE_URL=postgres://fixture\n"),
+            (
+                openbot_desktop_lib::saved_intent::FILE,
+                r#"{"version":1,"categories":[],"model":"open-ai-api-key"}"#,
+            ),
+            (
+                openbot_desktop_lib::saved_intent::FILE,
+                "invalid-settings-secret",
+            ),
+        ] {
+            std::fs::write(root.join(file), content).unwrap();
+            assert!(reset_leftover_database_with(
+                &shell,
+                &root,
+                "openbot_postgres-data",
+                true,
+                || Ok(stack::Secrets::new()),
+                |_, _| panic!("configured or unknown root must not delete")
+            )
+            .is_err());
+            std::fs::remove_file(root.join(file)).unwrap();
+        }
+        std::fs::create_dir(root.join(".env")).unwrap();
+        assert!(reset_leftover_database_with(
+            &shell,
+            &root,
+            "openbot_postgres-data",
+            true,
+            || Ok(stack::Secrets::new()),
+            |_, _| panic!("unreadable settings must not delete")
+        )
+        .is_err());
+        std::fs::remove_dir(root.join(".env")).unwrap();
+        let secrets = stack::Secrets::from([(
+            "KEY_ENCRYPTION_KEY".into(),
+            "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=".into(),
+        )]);
+        assert!(reset_leftover_database_with(
+            &shell,
+            &root,
+            "openbot_postgres-data",
+            true,
+            || Ok(secrets),
+            |_, _| panic!("restored key must prevent deletion")
+        )
+        .is_err());
+        *shell.root.lock().unwrap() = Some(root.clone());
+        assert!(reset_leftover_database_with(
+            &shell,
+            &root,
+            "openbot_postgres-data",
+            true,
+            || panic!("owned hosts must refuse before credential access"),
+            |_, _| panic!("owned hosts must prevent deletion")
+        )
+        .is_err());
+        *shell.root.lock().unwrap() = None;
+        *shell.containers.lock().unwrap() = Some(ContainerDeployment {
+            root: root.clone(),
+            address: engine::Address::new(engine::Engine::Podman, Some("fixture".into())),
+        });
+        assert!(reset_leftover_database_with(
+            &shell,
+            &root,
+            "openbot_postgres-data",
+            true,
+            || panic!("owned containers must refuse"),
+            |_, _| panic!("owned containers must prevent deletion")
+        )
+        .is_err());
+        *shell.containers.lock().unwrap() = None;
+        let attempt = StartAttempt::begin(&shell).unwrap();
+        assert!(reset_leftover_database_with(
+            &shell,
+            &root,
+            "openbot_postgres-data",
+            true,
+            || panic!("concurrent startup must refuse"),
+            |_, _| panic!("concurrent startup must prevent deletion")
+        )
+        .is_err());
+        drop(attempt);
+        assert!(reset_leftover_database_with(
+            &shell,
+            &root,
+            "openbot_postgres-data",
+            true,
+            || Ok(stack::Secrets::new()),
+            |_, _| {
+                assert!(
+                    shell.startup.try_lock().is_err(),
+                    "deletion must retain the startup lock"
+                );
+                assert!(
+                    StartAttempt::begin(&shell).is_err(),
+                    "startup must remain excluded during deletion"
+                );
+                Ok(())
+            }
+        )
+        .is_ok());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn leftover_database_reset_keeps_offered_runtime_and_rejects_stale_offers() {
+        if crate::test_support::isolated_process(
+            "tests::leftover_database_reset_keeps_offered_runtime_and_rejects_stale_offers",
+        ) {
+            return;
+        }
+        let root = temp_root("leftover-database-affinity");
+        std::fs::create_dir_all(&root).unwrap();
+        let shell = Shell::default();
+        let original =
+            engine::Address::new(engine::Engine::Podman, Some("original-machine".into()));
+        let volume = "openbot_postgres-data";
+        assert!(reset_leftover_database_with(
+            &shell,
+            &root,
+            volume,
+            true,
+            || panic!("a missing offer must refuse before reading credentials"),
+            |_, _| panic!("a missing offer must not remove anything")
+        )
+        .is_err());
+        *shell.leftover_database.lock().unwrap() = Some(LeftoverDatabase {
+            root: root.clone(),
+            volume: volume.into(),
+            address: original.clone(),
+        });
+        for (selected_root, selected_volume) in [
+            (&root, "other-volume"),
+            (&root.join("another-root"), volume),
+        ] {
+            assert!(reset_leftover_database_with(
+                &shell,
+                selected_root,
+                selected_volume,
+                true,
+                || panic!("a mismatched offer must refuse before reading credentials"),
+                |_, _| panic!("a mismatched offer must not remove anything")
+            )
+            .is_err());
+        }
+        // Ambient choices may change while the confirmation is open. Both a new Docker endpoint
+        // and a new Podman default remain irrelevant to the already pinned offer.
+        std::env::set_var("DOCKER_HOST", "unix:///another-engine.sock");
+        std::env::set_var("CONTAINER_CONNECTION", "replacement-machine");
+        let unavailable = Problem::plain("the originally offered engine is unavailable");
+        assert_eq!(
+            reset_leftover_database_with(
+                &shell,
+                &root,
+                volume,
+                true,
+                || Ok(stack::Secrets::new()),
+                |address, _| {
+                    assert_eq!(address, &original);
+                    Err(unavailable.clone())
+                }
+            ),
+            Err(unavailable)
+        );
+        reset_leftover_database_with(
+            &shell,
+            &root,
+            volume,
+            true,
+            || Ok(stack::Secrets::new()),
+            |address, _| {
+                assert_eq!(address, &original);
+                let command = address.command();
+                let arguments: Vec<_> = command.get_args().collect();
+                assert_eq!(arguments, ["--connection", "original-machine"]);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(
+            shell.leftover_database.lock().unwrap().is_none(),
+            "successful reset consumes the offer"
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -4306,7 +5473,7 @@ mod tests {
                 .expect_err("a container endpoint URL must be an absolute HTTP(S) URL");
         assert_eq!(
             problem.said,
-            "Enter a valid http:// or https:// address for the container model endpoint."
+            "Enter a valid http:// or https:// address for your container model endpoint."
         );
     }
 
@@ -4818,6 +5985,11 @@ fn main() {
         ["version","--format",_] => println!("1.44"),
         ["info","--format","{{.Host.ServiceIsRemote}}"] => println!("false"),
         ["compose","version"] => println!("Synthetic Compose"),
+        ["compose","config","--format","json"] => println!(
+            "{}",
+            "{\"services\":{\"postgres\":{\"volumes\":[{\"type\":\"volume\",\"source\":\"postgres-data\",\"target\":\"/var/lib/postgresql/data\"}]},\"supervisor\":{\"environment\":{\"COMPUTER_NAMESPACE\":\"fixture\"}}},\"volumes\":{\"postgres-data\":{\"name\":\"openbot-postgres-data\"}}}"
+        ),
+        ["volume","ls","--format","{{.Name}}"] => (),
         ["compose","ps","--format",_] => (),
         ["compose","up",..] => {
             fs::write(cwd.join("fixture-containers-running"),&identity).unwrap();
@@ -5674,7 +6846,7 @@ fn main() {
             images.images.insert(
                 name.into(),
                 deployment::Image {
-                    reference: format!("localhost/{name}@sha256:00"),
+                    reference: fixture_release_image_reference(name),
                 },
             );
         }
@@ -5858,7 +7030,7 @@ fn main() {
         } else if let Some(image) = expected_image {
             assert_eq!(
                 settings.get("PICKED_HARNESS_IMAGE"),
-                Some(&format!("localhost/{image}@sha256:00"))
+                Some(&fixture_release_image_reference(image))
             );
             assert_ne!(settings.get("PICKED_HARNESS_URL"), Some(&remote));
         } else {
@@ -6572,6 +7744,20 @@ fn main() {
         let _ = std::fs::remove_dir_all(record.parent().expect("record parent"));
     }
 
+    fn fixture_release_image_reference(published: &str) -> String {
+        let repository =
+            crate::update::release_repository().expect("release repository should be valid");
+        let owner = repository
+            .split_once('/')
+            .expect("release repository should contain an owner and name")
+            .0
+            .to_ascii_lowercase();
+        format!(
+            "ghcr.io/{owner}/openbot-{published}@sha256:{}",
+            "0".repeat(64)
+        )
+    }
+
     fn write_installed_deployment(root: &Path) {
         const DEPLOYMENT_VERSION: &str = "v0.0.8";
         std::fs::create_dir_all(root.join("server")).unwrap();
@@ -6589,31 +7775,31 @@ fn main() {
                 (
                     "server".into(),
                     deployment::Image {
-                        reference: "localhost/openbot-server@sha256:00".into(),
+                        reference: fixture_release_image_reference("server"),
                     },
                 ),
                 (
                     "supervisor".into(),
                     deployment::Image {
-                        reference: "localhost/openbot-supervisor@sha256:00".into(),
+                        reference: fixture_release_image_reference("supervisor"),
                     },
                 ),
                 (
                     "agent-computer".into(),
                     deployment::Image {
-                        reference: "localhost/openbot-agent-computer@sha256:00".into(),
+                        reference: fixture_release_image_reference("agent-computer"),
                     },
                 ),
                 (
                     "agent-bot".into(),
                     deployment::Image {
-                        reference: "localhost/openbot-agent-bot@sha256:00".into(),
+                        reference: fixture_release_image_reference("agent-bot"),
                     },
                 ),
                 (
                     "agent-langgraph".into(),
                     deployment::Image {
-                        reference: "localhost/openbot-agent-langgraph@sha256:00".into(),
+                        reference: fixture_release_image_reference("agent-langgraph"),
                     },
                 ),
             ]),

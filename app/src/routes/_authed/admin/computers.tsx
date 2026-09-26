@@ -8,6 +8,9 @@ import {
   PageShell,
 } from "@/components/layout/page-shell";
 import { StaggerItem } from "@/components/layout/stagger";
+import { ComputerFilesDialog } from "@/components/computers/computer-files-dialog";
+import { ComputerQuarantineDialog } from "@/components/computers/computer-quarantine-dialog";
+import { ComputerScreenDialog } from "@/components/computers/computer-screen-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -26,8 +29,15 @@ import {
 } from "@/components/ui/item";
 import { Separator } from "@/components/ui/separator";
 import { useBotNames } from "@/lib/agents/bot-names";
-import { agentListQueryOptions } from "@/lib/agents/queries";
-import { setComputerStateMutationOptions } from "@/lib/computers/mutations";
+import {
+  agentListQueryOptions,
+  type ComputerResourceProfile,
+} from "@/lib/agents/queries";
+import {
+  computerSnapshotMutationOptions,
+  setComputerStateMutationOptions,
+  stopAllComputersMutationOptions,
+} from "@/lib/computers/mutations";
 import {
   hostAccessQueryOptions,
   requestHostFolderGrantMutationOptions,
@@ -43,10 +53,26 @@ export const Route = createFileRoute("/_authed/admin/computers")({
 });
 
 function ComputersPage() {
-  /** Bot id currently running a stop/reset request. */
+  /** Bot id currently running a lifecycle request. */
   const [busy, setBusy] = useState<string | null>(null);
   /** Reset deletes the browser profile, so it requires confirmation. */
   const [confirming, setConfirming] = useState<string | null>(null);
+  const [snapshotConfirming, setSnapshotConfirming] = useState<{
+    botId: string;
+    action: "snapshot" | "restore";
+  } | null>(null);
+  /** Computer whose persistent workspace is open in the file manager. */
+  const [filesFor, setFilesFor] = useState<string | null>(null);
+  /** Computer whose browser is being watched or driven by the administrator. */
+  const [screenFor, setScreenFor] = useState<string | null>(null);
+  /** Computer whose untrusted browser downloads are being reviewed. */
+  const [quarantineFor, setQuarantineFor] = useState<string | null>(null);
+  /** A start/wake that needs one last resource-pressure confirmation. */
+  const [confirmingStart, setConfirmingStart] = useState<{
+    botId: string;
+    after: "start" | "screen" | "quarantine";
+    warning: string;
+  } | null>(null);
   const queryClient = useQueryClient();
   const nameFor = useBotNames();
 
@@ -54,6 +80,10 @@ function ComputersPage() {
   const hostAccess = useQuery(hostAccessQueryOptions());
   const agents = useQuery(agentListQueryOptions());
   const setState = useMutation(setComputerStateMutationOptions(queryClient));
+  const snapshotState = useMutation(
+    computerSnapshotMutationOptions(queryClient),
+  );
+  const stopAll = useMutation(stopAllComputersMutationOptions(queryClient));
   const requestGrant = useMutation(
     requestHostFolderGrantMutationOptions(queryClient),
   );
@@ -66,6 +96,13 @@ function ComputersPage() {
 
   const computers = fleet.data?.computers ?? null;
   const isolation = fleet.data?.isolation ?? null;
+  const capacity = fleet.data?.capacity;
+  const resourceProfiles = Object.fromEntries(
+    (agents.data ?? []).map((agent) => [
+      agent.id,
+      agent.computerResourceProfile,
+    ]),
+  ) as Record<string, ComputerResourceProfile>;
   /*
    * One line for either failure. A list that could not be read and an action that was refused are
    * both "this did not work", and the page has one place to say so.
@@ -74,7 +111,11 @@ function ComputersPage() {
     ? "The computers could not be listed."
     : setState.error
       ? setState.error.message
-      : null;
+      : snapshotState.error
+        ? snapshotState.error.message
+        : stopAll.error
+          ? stopAll.error.message
+          : null;
   const hostProblem = hostAccess.error
     ? hostAccess.error.message
     : requestGrant.error
@@ -85,10 +126,61 @@ function ComputersPage() {
           ? stopHostAccess.error.message
           : null;
 
-  const run = (botId: string, action: "stop" | "reset") => {
+  const run = (
+    botId: string,
+    action: "start" | "restart" | "stop" | "reset",
+  ) => {
     setBusy(botId);
     setConfirming(null);
     setState.mutate({ action, botId }, { onSettled: () => setBusy(null) });
+  };
+
+  const runSnapshot = (botId: string, action: "snapshot" | "restore") => {
+    setBusy(botId);
+    setSnapshotConfirming(null);
+    snapshotState.mutate({ action, botId }, { onSettled: () => setBusy(null) });
+  };
+
+  const showScreen = async (botId: string, running: boolean) => {
+    setBusy(botId);
+    try {
+      if (!running) {
+        await setState.mutateAsync({ action: "start", botId });
+      }
+      setScreenFor(botId);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const showQuarantine = async (botId: string, running: boolean) => {
+    setBusy(botId);
+    try {
+      if (!running) {
+        await setState.mutateAsync({ action: "start", botId });
+      }
+      setQuarantineFor(botId);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const startOrWarn = (
+    botId: string,
+    after: "start" | "screen" | "quarantine",
+  ) => {
+    const warning = computerStartWarning(fleet.data, botId, resourceProfiles);
+    if (warning) {
+      setConfirmingStart({ botId, after, warning });
+      return;
+    }
+    if (after === "screen") {
+      void showScreen(botId, false);
+    } else if (after === "quarantine") {
+      void showQuarantine(botId, false);
+    } else {
+      run(botId, "start");
+    }
   };
 
   return (
@@ -121,6 +213,22 @@ function ComputersPage() {
         </p>
       ) : null}
 
+      {capacity ? (
+        <p className="mt-4 rounded-md border border-border bg-muted/40 px-3 py-2 text-muted-foreground text-sm">
+          Scheduler capacity:{" "}
+          <strong>{capacity.logicalCpus ?? "?"} logical CPUs</strong> ·{" "}
+          <strong>
+            {capacity.memoryBytes
+              ? formatBytes(capacity.memoryBytes)
+              : "RAM unknown"}
+          </strong>
+          {capacity.maxActiveComputers
+            ? ` · up to ${capacity.maxActiveComputers} active Computers`
+            : ""}
+          .
+        </p>
+      ) : null}
+
       <HostFoldersSection
         connected={hostAccess.data?.connected ?? false}
         grants={hostAccess.data?.grants ?? []}
@@ -145,6 +253,27 @@ function ComputersPage() {
         stopping={stopHostAccess.isPending}
       />
 
+      <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3">
+        <div>
+          <p className="font-medium text-sm">Emergency Computer stop</p>
+          <p className="text-muted-foreground text-xs">
+            Stops every Agent Computer now. Persistent browser profiles,
+            workspaces and quarantine stay saved for later Start.
+          </p>
+        </div>
+        <Button
+          disabled={
+            stopAll.isPending ||
+            !computers?.some((computer) => computer.running)
+          }
+          onClick={() => stopAll.mutate()}
+          size="sm"
+          variant="destructive"
+        >
+          {stopAll.isPending ? "Stopping…" : "KILL ALL COMPUTERS"}
+        </Button>
+      </div>
+
       <PageSection title="Computers in this deployment">
         {computers === null && problem ? (
           <PageEmpty>The list could not be loaded.</PageEmpty>
@@ -162,9 +291,7 @@ function ComputersPage() {
                       {nameFor(computer.botId)}
                     </ItemTitle>
                     <ItemDescription>
-                      {computer.running
-                        ? `Browser running since ${new Date(computer.startedAt ?? "").toLocaleTimeString()}`
-                        : "No browser running. It starts when the Bot next needs it."}
+                      {computerLifecycleDescription(computer)}
                       {" · "}
                       {computer.egress === undefined
                         ? "Egress not reported"
@@ -172,15 +299,111 @@ function ComputersPage() {
                           ? "Leaves directly"
                           : `Leaves through ${computer.egress}`}
                     </ItemDescription>
+                    {computer.running ? (
+                      <p className="mt-1 text-muted-foreground text-xs">
+                        {computer.metrics
+                          ? resourceSummary(computer.metrics)
+                          : "CPU / RAM / Disk metrics unavailable for this sample"}
+                      </p>
+                    ) : null}
                   </ItemContent>
                   <ItemActions>
+                    {computer.running ? (
+                      <>
+                        <Button
+                          disabled={busy === computer.botId}
+                          onClick={() => void run(computer.botId, "restart")}
+                          size="sm"
+                          variant="outline"
+                        >
+                          {busy === computer.botId ? "Working…" : "Restart"}
+                        </Button>
+                        <Button
+                          disabled={busy === computer.botId}
+                          onClick={() => void run(computer.botId, "stop")}
+                          size="sm"
+                          variant="outline"
+                        >
+                          Stop
+                        </Button>
+                      </>
+                    ) : (
+                      <Button
+                        disabled={busy === computer.botId}
+                        onClick={() => startOrWarn(computer.botId, "start")}
+                        size="sm"
+                        variant="outline"
+                      >
+                        {busy === computer.botId
+                          ? computer.lifecycle === "sleeping"
+                            ? "Waking…"
+                            : "Starting…"
+                          : computer.lifecycle === "sleeping"
+                            ? "Wake"
+                            : "Start"}
+                      </Button>
+                    )}
                     <Button
-                      disabled={busy === computer.botId || !computer.running}
-                      onClick={() => void run(computer.botId, "stop")}
+                      disabled={busy === computer.botId}
+                      onClick={() =>
+                        computer.running
+                          ? void showScreen(computer.botId, true)
+                          : startOrWarn(computer.botId, "screen")
+                      }
                       size="sm"
                       variant="outline"
                     >
-                      {busy === computer.botId ? "Working…" : "Stop browser"}
+                      Screen
+                    </Button>
+                    <Button
+                      disabled={!computer.running || busy === computer.botId}
+                      onClick={() => setFilesFor(computer.botId)}
+                      size="sm"
+                      variant="outline"
+                    >
+                      Files
+                    </Button>
+                    <Button
+                      disabled={busy === computer.botId}
+                      onClick={() =>
+                        computer.running
+                          ? void showQuarantine(computer.botId, true)
+                          : startOrWarn(computer.botId, "quarantine")
+                      }
+                      size="sm"
+                      variant="outline"
+                    >
+                      Quarantine
+                    </Button>
+                    <Button
+                      disabled={computer.running || busy === computer.botId}
+                      onClick={() =>
+                        setSnapshotConfirming({
+                          botId: computer.botId,
+                          action: "snapshot",
+                        })
+                      }
+                      size="sm"
+                      variant="outline"
+                    >
+                      Snapshot
+                    </Button>
+                    <Button
+                      disabled={
+                        computer.running ||
+                        busy === computer.botId ||
+                        computer.snapshotAvailable !== true
+                      }
+                      onClick={() =>
+                        setSnapshotConfirming({
+                          botId: computer.botId,
+                          action: "restore",
+                        })
+                      }
+                      size="sm"
+                      variant="outline"
+                    >
+                      Restore snapshot
                     </Button>
                     <Button
                       disabled={busy === computer.botId}
@@ -198,6 +421,135 @@ function ComputersPage() {
           </PageRows>
         )}
       </PageSection>
+
+      {filesFor ? (
+        <ComputerFilesDialog
+          botId={filesFor}
+          botName={nameFor(filesFor)}
+          onOpenChange={(open) => !open && setFilesFor(null)}
+          open
+        />
+      ) : null}
+
+      {screenFor ? (
+        <ComputerScreenDialog
+          botId={screenFor}
+          botName={nameFor(screenFor)}
+          onOpenChange={(open) => !open && setScreenFor(null)}
+          open
+        />
+      ) : null}
+
+      {quarantineFor ? (
+        <ComputerQuarantineDialog
+          botId={quarantineFor}
+          botName={nameFor(quarantineFor)}
+          onOpenChange={(open) => !open && setQuarantineFor(null)}
+          open
+        />
+      ) : null}
+
+      <Dialog
+        onOpenChange={(open) => {
+          if (!open) setSnapshotConfirming(null);
+        }}
+        open={snapshotConfirming !== null}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {snapshotConfirming?.action === "restore"
+                ? `Restore ${nameFor(snapshotConfirming.botId)} from snapshot?`
+                : snapshotConfirming
+                  ? `Create a clean snapshot for ${nameFor(snapshotConfirming.botId)}?`
+                  : ""}
+            </DialogTitle>
+            <DialogDescription>
+              {snapshotConfirming?.action === "restore"
+                ? "This replaces the current browser profile, logins, workspace and quarantine with the saved clean snapshot. The Computer stays stopped after restore; Wake it when you are ready."
+                : "The Computer must already be stopped. This replaces any older clean snapshot with the current browser profile, workspace and quarantine."}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              onClick={() => setSnapshotConfirming(null)}
+              size="sm"
+              variant="ghost"
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={
+                !snapshotConfirming || busy === snapshotConfirming.botId
+              }
+              onClick={() => {
+                if (snapshotConfirming) {
+                  runSnapshot(
+                    snapshotConfirming.botId,
+                    snapshotConfirming.action,
+                  );
+                }
+              }}
+              size="sm"
+              variant={
+                snapshotConfirming?.action === "restore"
+                  ? "destructive"
+                  : "default"
+              }
+            >
+              {snapshotConfirming?.action === "restore"
+                ? "Restore snapshot"
+                : "Create snapshot"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        onOpenChange={(open) => {
+          if (!open) setConfirmingStart(null);
+        }}
+        open={confirmingStart !== null}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              Start {confirmingStart ? nameFor(confirmingStart.botId) : ""}'s
+              Computer?
+            </DialogTitle>
+            <DialogDescription>
+              {confirmingStart?.warning} Existing Computers are not stopped
+              automatically.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              onClick={() => setConfirmingStart(null)}
+              size="sm"
+              variant="ghost"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (!confirmingStart) return;
+                const request = confirmingStart;
+                setConfirmingStart(null);
+                if (request.after === "screen") {
+                  void showScreen(request.botId, false);
+                } else if (request.after === "quarantine") {
+                  void showQuarantine(request.botId, false);
+                } else {
+                  run(request.botId, "start");
+                }
+              }}
+              size="sm"
+            >
+              Start anyway
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/*
        * A DIALOG RATHER THAN AN INLINE CONFIRM. Resetting signs a Bot out of everything it has ever
@@ -217,8 +569,9 @@ function ComputersPage() {
               Reset {confirming ? nameFor(confirming) : ""}'s computer?
             </DialogTitle>
             <DialogDescription>
-              Its profile is deleted, so the Bot is signed out of every service
-              it had logged into and starts clean. This cannot be undone.
+              Its browser profile, logins, workspace files and download
+              quarantine are deleted, so the Bot starts completely clean. This
+              cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -244,10 +597,16 @@ function ComputersPage() {
       </Dialog>
 
       <p className="mt-4 text-muted-foreground text-sm">
-        <strong>Stop</strong> closes the browser and keeps its logins: the next
-        thing the Bot does starts it again where it left off.{" "}
-        <strong>Reset</strong> deletes the profile, so the Bot is signed out of
-        everything and starts clean. Both are recorded in{" "}
+        <strong>Start</strong> wakes a stopped computer, <strong>Screen</strong>{" "}
+        lets you watch it and take control for login or intervention,{" "}
+        <strong>Quarantine</strong> scans and explicitly exports untrusted
+        downloads, <strong>Restart</strong> cycles it without deleting saved
+        state, and <strong>Stop</strong> releases runtime resources while
+        keeping its profile and workspace. <strong>Snapshot</strong> saves one
+        clean recovery point while stopped, and{" "}
+        <strong>Restore snapshot</strong> replaces current persistent state from
+        it. <strong>Reset</strong> deletes its profile, workspace and quarantine
+        and starts clean. Lifecycle actions are recorded in{" "}
         <Link className="underline" to="/admin/audit">
           Audit
         </Link>
@@ -452,6 +811,70 @@ function summaryFor(
   return parts.length > 0 ? parts.join(" · ") : "No folders approved.";
 }
 
+function computerLifecycleDescription(computer: {
+  running: boolean;
+  lifecycle?: "running" | "idle" | "sleeping" | "stopped";
+  startedAt: string | null;
+  metrics?: { browserRunning?: boolean };
+}): string {
+  const lifecycle =
+    computer.lifecycle ??
+    (computer.running
+      ? computer.metrics?.browserRunning === false
+        ? "idle"
+        : "running"
+      : "stopped");
+
+  switch (lifecycle) {
+    case "idle":
+      return "Idle · Computer awake, browser sleeping until the next task";
+    case "sleeping":
+      return "Sleeping after idle · profile and workspace saved · next task wakes it";
+    case "stopped":
+      return "Stopped manually · profile and workspace remain saved";
+    case "running":
+      return computer.startedAt
+        ? `Running since ${new Date(computer.startedAt).toLocaleTimeString()}`
+        : "Running";
+  }
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"] as const;
+  let value = bytes;
+  let index = 0;
+  while (value >= 1024 && index < units.length - 1) {
+    value /= 1024;
+    index += 1;
+  }
+  return `${value >= 10 || index === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[index]}`;
+}
+
+function resourceSummary(metrics: {
+  cpuPercent: number;
+  memoryUsedBytes: number;
+  memoryLimitBytes: number | null;
+  diskUsedBytes: number;
+  diskTotalBytes: number;
+  browserRunning?: boolean;
+}) {
+  const memory = metrics.memoryLimitBytes
+    ? `${formatBytes(metrics.memoryUsedBytes)} / ${formatBytes(metrics.memoryLimitBytes)}`
+    : formatBytes(metrics.memoryUsedBytes);
+  const disk =
+    metrics.diskTotalBytes > 0
+      ? `${formatBytes(metrics.diskUsedBytes)} / ${formatBytes(metrics.diskTotalBytes)}`
+      : "unavailable";
+  const browser =
+    metrics.browserRunning === true
+      ? "Browser running"
+      : metrics.browserRunning === false
+        ? "Browser sleeping"
+        : "Browser unknown";
+  return `${browser} · CPU ${metrics.cpuPercent.toFixed(1)}% · RAM ${memory} · Disk ${disk}`;
+}
+
 function ownerLabel(grant: { ownerName?: string; ownerEmail?: string }) {
   return grant.ownerName ?? grant.ownerEmail ?? "the desktop owner";
 }
@@ -472,4 +895,58 @@ function pendingLabel(request: HostAccessPendingOperation) {
     default:
       return "Folder access awaiting approval";
   }
+}
+
+export function computerStartWarning(
+  fleet:
+    | {
+        computers: Array<{ botId: string; running: boolean }>;
+        capacity?: {
+          memoryBytes: number | null;
+          logicalCpus: number | null;
+          maxActiveComputers: number | null;
+          resourceProfiles: Record<
+            ComputerResourceProfile,
+            { memoryBytes: number; nanoCpus: number }
+          >;
+        };
+      }
+    | undefined,
+  botId: string,
+  profiles: Record<string, ComputerResourceProfile>,
+): string | null {
+  const capacity = fleet?.capacity;
+  if (!fleet || !capacity) return null;
+  const running = fleet.computers.filter((computer) => computer.running);
+  if (
+    capacity.maxActiveComputers &&
+    running.length + 1 >= capacity.maxActiveComputers
+  ) {
+    return `This will use ${running.length + 1} of ${capacity.maxActiveComputers} active Computer slots.`;
+  }
+  const quotaFor = (id: string) =>
+    capacity.resourceProfiles[profiles[id] ?? "normal"];
+  const next = quotaFor(botId);
+  if (capacity.memoryBytes && capacity.memoryBytes > 0) {
+    const projected =
+      running.reduce(
+        (total, computer) => total + quotaFor(computer.botId).memoryBytes,
+        0,
+      ) + next.memoryBytes;
+    if (projected >= capacity.memoryBytes * 0.8) {
+      return `Computer memory quotas would reach about ${Math.round((projected / capacity.memoryBytes) * 100)}% of the container engine's available RAM.`;
+    }
+  }
+  if (capacity.logicalCpus && capacity.logicalCpus > 0) {
+    const projectedNanoCpus =
+      running.reduce(
+        (total, computer) => total + quotaFor(computer.botId).nanoCpus,
+        0,
+      ) + next.nanoCpus;
+    const hostNanoCpus = capacity.logicalCpus * 1_000_000_000;
+    if (projectedNanoCpus >= hostNanoCpus * 0.8) {
+      return `Computer CPU quotas would reach about ${Math.round((projectedNanoCpus / hostNanoCpus) * 100)}% of the container engine's logical CPU capacity.`;
+    }
+  }
+  return null;
 }

@@ -38,6 +38,45 @@ describe("locating a Bot's computer", () => {
     );
   });
 
+  test("sends the bounded resource profile to ensure", async () => {
+    let body: unknown;
+    const client = createDockerSupervisorProvider({
+      baseUrl: "http://supervisor:4300",
+      fetchImpl: (async (_url: string | URL | Request, init?: RequestInit) => {
+        body = init?.body ? JSON.parse(String(init.body)) : null;
+        return Response.json({ url: "http://openbot-computer-sales:4100" });
+      }) as unknown as typeof fetch,
+    });
+
+    await client.locate("sales", { resourceProfile: "heavy" });
+    expect(body).toEqual({ resourceProfile: "heavy" });
+  });
+
+  test("restart uses one supervisor verb and carries the resource profile", async () => {
+    let seenPath = "";
+    let seenBody: unknown;
+    const client = createDockerSupervisorProvider({
+      baseUrl: "http://supervisor:4300",
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        seenPath = new URL(String(url)).pathname;
+        seenBody = init?.body ? JSON.parse(String(init.body)) : null;
+        return Response.json({
+          botId: "sales",
+          status: "running",
+          url: "http://openbot-computer-sales:4100",
+          startedAt: "2026-09-19T06:30:00.000Z",
+        });
+      }) as unknown as typeof fetch,
+    });
+
+    expect(await client.restart?.("sales", { resourceProfile: "heavy" })).toBe(
+      "http://openbot-computer-sales:4100",
+    );
+    expect(seenPath).toBe("/computers/sales/restart");
+    expect(seenBody).toEqual({ resourceProfile: "heavy" });
+    expect(await client.sessionOf?.("sales")).toBe("2026-09-19T06:30:00.000Z");
+  });
+
   test("falls back to a published port when there is no name to use", async () => {
     // A laptop: the server runs outside Docker, so the only way in is the published port.
     const client = clientWith(() =>
@@ -228,6 +267,36 @@ describe("Docker supervisor provider", () => {
     expect(await provider.reset("bot")).toEqual({ cleared: true });
   });
 
+  test("snapshot calls the supervisor snapshot verb", async () => {
+    const seen: string[] = [];
+    const provider = createDockerSupervisorProvider({
+      baseUrl: "http://supervisor:4300",
+      fetchImpl: (async (url: string | URL | Request) => {
+        seen.push(new URL(String(url)).pathname);
+        return Response.json({ snapshot: true });
+      }) as unknown as typeof fetch,
+    });
+
+    expect(await provider.snapshot?.("bot")).toEqual({ created: true });
+    expect(seen).toContain("/computers/bot/snapshot");
+  });
+
+  test("restore calls the supervisor restore verb", async () => {
+    const seen: string[] = [];
+    const provider = createDockerSupervisorProvider({
+      baseUrl: "http://supervisor:4300",
+      fetchImpl: (async (url: string | URL | Request) => {
+        seen.push(new URL(String(url)).pathname);
+        return Response.json({ restored: true });
+      }) as unknown as typeof fetch,
+    });
+
+    expect(await provider.restoreSnapshot?.("bot")).toEqual({
+      restored: true,
+    });
+    expect(seen).toContain("/computers/bot/restore");
+  });
+
   test("reset reports false when container was not present to clear", async () => {
     const provider = createDockerSupervisorProvider({
       baseUrl: "http://supervisor:4300",
@@ -253,6 +322,96 @@ describe("Docker supervisor provider", () => {
  * design, which is right for a provider that cannot tell and wrong here: the check is simply absent,
  * silently, on exactly the deployment shape it was written for.
  */
+describe("Docker supervisor session cache", () => {
+  test("evicts old Bot sessions instead of growing without bound", async () => {
+    let listCalls = 0;
+    const provider = createDockerSupervisorProvider({
+      baseUrl: "http://supervisor:4300",
+      fetchImpl: (async (url: string | URL | Request) => {
+        const path = new URL(String(url)).pathname;
+        if (path === "/computers") {
+          listCalls += 1;
+          return Response.json({
+            computers: [
+              {
+                botId: "bot-0",
+                status: "running",
+                url: "http://openbot-computer-bot-0:4100",
+                startedAt: "fresh-after-eviction",
+              },
+            ],
+          });
+        }
+        const botId = decodeURIComponent(
+          path.slice("/computers/".length, -"/ensure".length),
+        );
+        return Response.json({
+          botId,
+          status: "running",
+          url: `http://openbot-computer-${botId}:4100`,
+          startedAt: `session-${botId}`,
+        });
+      }) as unknown as typeof fetch,
+    });
+
+    for (let index = 0; index <= 512; index += 1) {
+      await provider.locate(`bot-${index}`);
+    }
+
+    // bot-0 is the oldest of 513 remembered sessions and must have been evicted. sessionOf then
+    // uses the existing cross-replica read path rather than retaining every Bot id forever.
+    expect(await provider.sessionOf?.("bot-0")).toBe("fresh-after-eviction");
+    expect(listCalls).toBe(1);
+  });
+
+  test("stop/reset/restore forget the inactive run identity", async () => {
+    const seenGets: string[] = [];
+    const provider = createDockerSupervisorProvider({
+      baseUrl: "http://supervisor:4300",
+      fetchImpl: (async (url: string | URL | Request) => {
+        const path = new URL(String(url)).pathname;
+        if (path.endsWith("/ensure")) {
+          return Response.json({
+            botId: "bot",
+            status: "running",
+            url: "http://openbot-computer-bot:4100",
+            startedAt: "old-run",
+          });
+        }
+        if (path === "/computers") {
+          seenGets.push(path);
+          return Response.json({
+            computers: [
+              {
+                botId: "bot",
+                status: "running",
+                url: "http://openbot-computer-bot:4100",
+                startedAt: "current-run",
+              },
+            ],
+          });
+        }
+        if (path.endsWith("/stop")) return Response.json({ stopped: true });
+        if (path.endsWith("/reset")) return Response.json({ reset: true });
+        if (path.endsWith("/restore")) return Response.json({ restored: true });
+        return Response.json({});
+      }) as unknown as typeof fetch,
+    });
+
+    for (const clear of [
+      () => provider.stop("bot"),
+      () => provider.reset("bot"),
+      () => provider.restoreSnapshot?.("bot"),
+    ]) {
+      await provider.locate("bot");
+      expect(await provider.sessionOf?.("bot")).toBe("old-run");
+      await clear();
+      expect(await provider.sessionOf?.("bot")).toBe("current-run");
+    }
+    expect(seenGets).toHaveLength(3);
+  });
+});
+
 describe("telling one run of a computer from the next, across replicas", () => {
   /*
    * A bot id of its own per test, because the map this reads is module scope.

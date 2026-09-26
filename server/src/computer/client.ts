@@ -95,6 +95,21 @@ export type ComputerTransportOptions = {
 
 /** Internal HTTP interface used only by ComputerGateway. */
 export interface ComputerTransport {
+  /**
+   * Authenticated response without JSON decoding.
+   *
+   * Used only for native quarantine export, where hostile file bytes must stream to the desktop
+   * worker instead of being materialized into an API/model JSON object.
+   */
+  raw(
+    baseUrl: string,
+    botId: string,
+    path: string,
+    init?: RequestInit,
+    caller?: AbortSignal,
+    /** Overrides the transport's own deadline for this one call. */
+    timeoutMs?: number,
+  ): Promise<Response>;
   call<T>(
     baseUrl: string,
     botId: string,
@@ -132,14 +147,14 @@ export function createComputerTransport(
   const doFetch = options.fetchImpl ?? fetch;
   const defaultTimeoutMs = options.timeoutMs ?? 45_000;
 
-  async function call<T>(
+  async function raw(
     baseUrl: string,
     botId: string,
     path: string,
     init?: RequestInit,
     caller?: AbortSignal,
     timeoutMsOverride?: number,
-  ): Promise<T> {
+  ): Promise<Response> {
     if (caller?.aborted) {
       throw new ComputerStoppedError("The action was stopped.");
     }
@@ -148,12 +163,11 @@ export function createComputerTransport(
      * A browser action either happens in seconds or has gone wrong, so 45s is the right deadline for
      * it. A command is not that: the shell's own budget is 120s by default and up to 600s, and the
      * tool description tells the model to install packages. Giving up here first reported failure to
-     * the person while the command carried on running to completion inside the container, and made
-     * the shell's own limit unreachable. A caller with a longer limit of its own passes it in, and
-     * this becomes the backstop rather than the limit.
+     * the person while the command ran to completion inside the container, and made the shell's own
+     * limit unreachable. A caller with a longer limit of its own passes it in, and this becomes the
+     * backstop rather than the limit.
      */
     const timeoutMs = timeoutMsOverride ?? defaultTimeoutMs;
-
     const target = baseUrl.replace(/\/$/, "");
     let response: Response;
     try {
@@ -171,15 +185,6 @@ export function createComputerTransport(
           : AbortSignal.timeout(timeoutMs),
       });
     } catch (error) {
-      /*
-       * The caller's own abort is answered first, and says what the check above the fetch says.
-       *
-       * The signal is handed to fetch precisely so a Stop can land mid-flight, and a fetch aborted
-       * that way rejects with an AbortError, which is neither a TimeoutError nor a computer that is
-       * not running. Both of the other answers are statements about the infrastructure, and this
-       * message is not only read by the model: the gateway writes it into the action's audit row,
-       * and the type below is what keeps that row a stop rather than an outage.
-       */
       if (caller?.aborted) {
         throw new ComputerStoppedError("The action was stopped.");
       }
@@ -190,14 +195,33 @@ export function createComputerTransport(
       );
     }
 
-    const body = (await response.json().catch(() => null)) as Record<
-      string,
-      unknown
-    > | null;
     if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as Record<
+        string,
+        unknown
+      > | null;
       throwMappedError(response.status, body);
     }
-    return body as T;
+    return response;
+  }
+
+  async function call<T>(
+    baseUrl: string,
+    botId: string,
+    path: string,
+    init?: RequestInit,
+    caller?: AbortSignal,
+    timeoutMsOverride?: number,
+  ): Promise<T> {
+    const response = await raw(
+      baseUrl,
+      botId,
+      path,
+      init,
+      caller,
+      timeoutMsOverride,
+    );
+    return (await response.json().catch(() => null)) as T;
   }
 
   function post<T>(
@@ -238,7 +262,7 @@ export function createComputerTransport(
     });
   }
 
-  return { call, post, navigate };
+  return { raw, call, post, navigate };
 }
 
 /** Map agent-computer responses to errors that a caller can act on. */

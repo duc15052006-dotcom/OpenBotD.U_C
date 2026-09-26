@@ -99,43 +99,47 @@ function encodeCursor(cursor: Cursor): string {
   return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
 }
 
+/** A cursor no page could have come from: garbage, the wrong shape, or a bad date. */
+export class PeopleCursorError extends Error {
+  constructor(message = "cursor must be a valid people page cursor") {
+    super(message);
+    this.name = "PeopleCursorError";
+  }
+}
+
 /**
- * Read a cursor a client sent back.
+ * Read a cursor a client sent back, strictly.
  *
- * A malformed one is treated as no cursor rather than as an error: it means the first page, which is
- * a sensible answer to a stale or hand-edited link, and there is nothing here worth refusing over.
- *
- * Exported for regression tests: a well-formed cursor carrying a non-date `lastSignedInAt` must
- * also fall back instead of reaching `::timestamptz` in SQL and answering 500.
+ * A malformed cursor is a caller error, not the first page. Falling back re-serves page one and can
+ * make a paging client loop forever with a bad bookmark. A non-date timestamp is refused before it
+ * reaches `::timestamptz` in SQL. Rebuild the two fields so extra input never reaches the query.
  */
 export function decodeCursor(value: string | undefined): Cursor | undefined {
   if (!value) return undefined;
+  let parsed: Partial<Cursor> | null | undefined;
   try {
-    const parsed = JSON.parse(
+    parsed = JSON.parse(
       Buffer.from(value, "base64url").toString("utf8"),
-    ) as Cursor;
-    if (typeof parsed?.email !== "string") return undefined;
-    // A well-formed cursor with a non-date `lastSignedInAt` would reach
-    // `${cursor.lastSignedInAt}::timestamptz` in SQL and answer 500. Treat it as no cursor
-    // (first page), consistent with how a stale or hand-edited cursor is handled above.
-    if (
-      parsed.lastSignedInAt !== null &&
-      parsed.lastSignedInAt !== undefined &&
-      (typeof parsed.lastSignedInAt !== "string" ||
-        Number.isNaN(Date.parse(parsed.lastSignedInAt)))
-    ) {
-      return undefined;
-    }
-    return {
-      email: parsed.email,
-      lastSignedInAt:
-        typeof parsed.lastSignedInAt === "string"
-          ? parsed.lastSignedInAt
-          : null,
-    };
+    ) as Partial<Cursor>;
   } catch {
-    return undefined;
+    throw new PeopleCursorError();
   }
+  if (typeof parsed?.email !== "string" || parsed.email.length === 0) {
+    throw new PeopleCursorError();
+  }
+  if (
+    parsed.lastSignedInAt !== null &&
+    parsed.lastSignedInAt !== undefined &&
+    (typeof parsed.lastSignedInAt !== "string" ||
+      Number.isNaN(Date.parse(parsed.lastSignedInAt)))
+  ) {
+    throw new PeopleCursorError();
+  }
+  return {
+    email: parsed.email,
+    lastSignedInAt:
+      typeof parsed.lastSignedInAt === "string" ? parsed.lastSignedInAt : null,
+  };
 }
 
 /** So a search for `100%` finds that and not everything. */

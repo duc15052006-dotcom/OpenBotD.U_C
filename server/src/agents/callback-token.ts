@@ -207,7 +207,9 @@ function readInitiator(value: unknown): AuditInitiator {
   if (!value || typeof value !== "object") return PERSON_INITIATOR;
   const kind = (value as { kind?: unknown }).kind;
   if (kind === "person" || kind === "deployment") return { kind };
-  if (kind !== "routine" && kind !== "handoff") return PERSON_INITIATOR;
+  if (kind !== "routine" && kind !== "workflow" && kind !== "handoff") {
+    return PERSON_INITIATOR;
+  }
   const id = (value as { id?: unknown }).id;
   return typeof id === "string" && id ? { kind, id } : PERSON_INITIATOR;
 }

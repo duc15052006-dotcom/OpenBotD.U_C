@@ -34,6 +34,7 @@ import {
 } from "drizzle-orm";
 import type { Database } from "../db/client";
 import {
+  agentProfiles,
   channelAgents,
   channelMemberships,
   channels,
@@ -62,6 +63,13 @@ export class RoutineRefusedError extends Error {
 
 /** A person may keep this many routines switched on. A constant with a reason, not a setting. */
 export const MAX_ENABLED_ROUTINES = 20;
+/**
+ * Unattended work gets a deployment-wide ceiling and a tighter per-Bot ceiling. These are hard
+ * refusal caps, not queue batch sizes: once reached, that occurrence is recorded as skipped rather
+ * than allowed to pile up behind an already-busy Bot.
+ */
+export const MAX_CONCURRENT_ROUTINE_RUNS = 20;
+export const MAX_CONCURRENT_ROUTINE_RUNS_PER_AGENT = 4;
 /** Same code-point cap discipline as channel activity. */
 export const MAX_INSTRUCTION_CODE_POINTS = 2000;
 /** Capped like audit payloads, because a failure is not a promise about length. */
@@ -88,6 +96,10 @@ const TOO_MANY_ENABLED = `You already have ${MAX_ENABLED_ROUTINES} routines swit
 const MAX_NAMED_CHANNELS = 5;
 
 export type RoutineRunOutcome = "succeeded" | "failed" | "skipped";
+export type RoutineRunAdmission =
+  | { runId: string; skippedReason: null }
+  | { runId: string; skippedReason: string };
+export type RoutineScheduleKind = "recurring" | "once";
 
 export type Routine = {
   id: string;
@@ -95,6 +107,7 @@ export type Routine = {
   agentId: string;
   channelId: string;
   instruction: string;
+  scheduleKind: RoutineScheduleKind;
   cron: string;
   timezone: string;
   enabled: boolean;
@@ -119,6 +132,7 @@ export type RoutineSummary = {
    * and the sweep both derive from the expression itself.
    */
   schedule: string;
+  scheduleKind: RoutineScheduleKind;
   timezone: string;
   enabled: boolean;
   nextRunAt: Date;
@@ -138,6 +152,14 @@ export type RoutineInput = {
   instruction: string;
   cron: string;
   timezone?: string;
+};
+
+export type OneShotRoutineInput = {
+  ownerUserId: string;
+  agentId: string;
+  channelId?: string;
+  instruction: string;
+  runAt: Date;
 };
 
 /**
@@ -165,6 +187,7 @@ export type RoutinePatch = Partial<{
 
 export type RoutineStore = {
   create(input: RoutineInput): Promise<Routine>;
+  createOneShot(input: OneShotRoutineInput): Promise<Routine>;
   listFor(ownerUserId: string): Promise<RoutineSummary[]>;
   update(
     ownerUserId: string,
@@ -177,7 +200,11 @@ export type RoutineStore = {
   /* The sweep's half. Deliberately not owner-scoped — see the boundary comment below. */
 
   /** Enabled routines whose next run has arrived, oldest due first. */
-  dueRoutines(limit: number): Promise<{ id: string; nextRunAt: Date }[]>;
+  dueRoutines(
+    limit: number,
+  ): Promise<
+    { id: string; nextRunAt: Date; scheduleKind: RoutineScheduleKind }[]
+  >;
   /**
    * Compare-and-set the clock forward. False means another sweep got there first.
    *
@@ -187,8 +214,13 @@ export type RoutineStore = {
    * clock caught up — so the sweep passes `now` here and one advance makes the clock current.
    */
   advanceNextRun(id: string, from: Date, computeFrom?: Date): Promise<boolean>;
-  /** Open a run row. Its status stays null until something finishes it. */
+  /** Open a run row without applying unattended-run capacity policy. Test/support use only. */
   insertRun(routineId: string): Promise<{ runId: string }>;
+  /**
+   * Open one unattended run under deployment + per-Bot concurrency caps. A refused occurrence is
+   * recorded immediately as skipped and returned with its reason instead of being dispatched.
+   */
+  insertRunWithCapacity(routineId: string): Promise<RoutineRunAdmission>;
   /**
    * The runner's read: an opened run row, joined to the routine it fires.
    *
@@ -204,9 +236,15 @@ export type RoutineStore = {
    * what the consumer's re-read needs before firing: has the routine been deleted or switched off
    * since the offer. Null means deleted; otherwise `enabled` says the rest.
    */
-  routineForFiring(
-    id: string,
-  ): Promise<{ id: string; enabled: boolean } | null>;
+  routineForFiring(id: string): Promise<{
+    id: string;
+    enabled: boolean;
+    scheduleKind: RoutineScheduleKind;
+    nextRunAt: Date;
+    lastRunAt: Date | null;
+  } | null>;
+  /** Commit one exact wake to the queue by disabling it with a compare-and-set. */
+  consumeOneShot(id: string, scheduledFor: Date): Promise<boolean>;
   /** Close a run row with its outcome, and the capped error when there was one. */
   finishRun(
     runId: string,
@@ -249,6 +287,26 @@ type RoutineRow = typeof routines.$inferSelect;
 /** What drizzle hands the callback of `database.transaction`. */
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
 
+async function databaseNow(transaction: Transaction): Promise<Date> {
+  const rows = (await transaction.execute(
+    sql`select date_trunc('milliseconds', now()) as "now"`,
+  )) as unknown as Array<{ now: Date }>;
+  const row = rows[0];
+  if (!row) throw new Error("database clock query returned no row");
+  return row.now;
+}
+
+async function requireDatabaseFuture(
+  transaction: Transaction,
+  at: Date,
+  message: string,
+): Promise<void> {
+  const rows = (await transaction.execute(
+    sql`select ${at} > now() as "future"`,
+  )) as unknown as Array<{ future: boolean }>;
+  if (rows[0]?.future !== true) throw new RoutineRefusedError(message);
+}
+
 function toRoutine(row: RoutineRow): Routine {
   return {
     id: row.id,
@@ -256,6 +314,7 @@ function toRoutine(row: RoutineRow): Routine {
     agentId: row.agentId,
     channelId: row.channelId,
     instruction: row.instruction,
+    scheduleKind: row.scheduleKind,
     cron: row.cron,
     timezone: row.timezone,
     enabled: row.enabled,
@@ -290,6 +349,26 @@ function nextRunFor(cron: string, timezone: string, after: Date): Date {
     }
     throw error;
   }
+}
+
+function validOneShotAt(runAt: Date): Date {
+  if (!(runAt instanceof Date) || Number.isNaN(runAt.getTime())) {
+    throw new RoutineRefusedError(
+      "A one-time wake needs a valid date and time.",
+    );
+  }
+  return runAt;
+}
+
+/** Observability only: one-shot rows are never advanced through this cron expression. */
+function oneShotCron(runAt: Date): string {
+  return [
+    runAt.getUTCMinutes(),
+    runAt.getUTCHours(),
+    runAt.getUTCDate(),
+    runAt.getUTCMonth() + 1,
+    "*",
+  ].join(" ");
 }
 
 /**
@@ -478,16 +557,24 @@ export function createRoutineStore(database: Database): RoutineStore {
 
     const cron = patch.cron ?? existing.cron;
     const timezone = patch.timezone ?? existing.timezone;
+    if (
+      existing.scheduleKind === "once" &&
+      (patch.cron !== undefined || patch.timezone !== undefined)
+    ) {
+      throw new RoutineRefusedError(
+        "A one-time wake has an exact time, not a cron schedule. Delete it and schedule a new wake to change that time.",
+      );
+    }
     if (patch.cron !== undefined) values.cron = patch.cron;
     if (patch.timezone !== undefined) values.timezone = timezone;
     /*
-     * Recomputed for a new cron, a new zone, and for switching back on. That last one is the subtle
-     * case: a routine switched off in June still holds June's `next_run_at`, and enabling it without
-     * recomputing hands the sweep a firing that was due months ago.
+     * Recurring schedules recompute when their cron/zone changes or they are switched back on. A
+     * one-time wake keeps its exact persisted stamp; re-enabling it after that stamp has passed is
+     * refused rather than silently turning completed work back into scheduled work.
      */
-    if (patch.cron !== undefined || patch.timezone !== undefined || enabling) {
-      values.nextRunAt = nextRunFor(cron, timezone, new Date());
-    }
+    const recomputeRecurring =
+      existing.scheduleKind === "recurring" &&
+      (patch.cron !== undefined || patch.timezone !== undefined || enabling);
 
     /*
      * The cap is re-counted inside the lock, in the same transaction as the write. Counting outside
@@ -495,6 +582,19 @@ export function createRoutineStore(database: Database): RoutineStore {
      * before either committed.
      */
     const [row] = await withEnabledCapLock(ownerUserId, async (transaction) => {
+      if (recomputeRecurring) {
+        values.nextRunAt = nextRunFor(
+          cron,
+          timezone,
+          await databaseNow(transaction),
+        );
+      } else if (existing.scheduleKind === "once" && enabling) {
+        await requireDatabaseFuture(
+          transaction,
+          existing.nextRunAt,
+          "That one-time wake has already passed. Schedule a new wake instead.",
+        );
+      }
       if (
         enabling &&
         (await countEnabled(transaction, ownerUserId)) >= MAX_ENABLED_ROUTINES
@@ -522,13 +622,16 @@ export function createRoutineStore(database: Database): RoutineStore {
         input.agentId,
         input.channelId,
       );
-      const nextRunAt = nextRunFor(input.cron, timezone, new Date());
-
       // Counted and inserted under the owner's cap lock, so two creates racing at 19 cannot both
       // count 19 and hand the person 21: the second waits, counts 20, and gets the refusal.
       const [row] = await withEnabledCapLock(
         input.ownerUserId,
         async (transaction) => {
+          const nextRunAt = nextRunFor(
+            input.cron,
+            timezone,
+            await databaseNow(transaction),
+          );
           if (
             (await countEnabled(transaction, input.ownerUserId)) >=
             MAX_ENABLED_ROUTINES
@@ -553,6 +656,49 @@ export function createRoutineStore(database: Database): RoutineStore {
       // An insert that returned nothing is not a missing routine, it is a broken database: loud
       // rather than folded into the not-found sentence a caller is meant to be able to trust.
       if (!row) throw new Error("inserting a routine returned no row");
+      return toRoutine(row);
+    },
+
+    async createOneShot(input) {
+      const instruction = validInstruction(input.instruction);
+      const nextRunAt = validOneShotAt(input.runAt);
+      const channelId = await resolveChannel(
+        input.ownerUserId,
+        input.agentId,
+        input.channelId,
+      );
+
+      const [row] = await withEnabledCapLock(
+        input.ownerUserId,
+        async (transaction) => {
+          await requireDatabaseFuture(
+            transaction,
+            nextRunAt,
+            "A one-time wake has to be in the future.",
+          );
+          if (
+            (await countEnabled(transaction, input.ownerUserId)) >=
+            MAX_ENABLED_ROUTINES
+          ) {
+            throw new RoutineRefusedError(TOO_MANY_ENABLED);
+          }
+          return await transaction
+            .insert(routines)
+            .values({
+              id: `routine_${crypto.randomUUID()}`,
+              ownerUserId: input.ownerUserId,
+              agentId: input.agentId,
+              channelId,
+              instruction,
+              scheduleKind: "once",
+              cron: oneShotCron(nextRunAt),
+              timezone: "UTC",
+              nextRunAt,
+            })
+            .returning();
+        },
+      );
+      if (!row) throw new Error("inserting a one-time wake returned no row");
       return toRoutine(row);
     },
 
@@ -616,7 +762,11 @@ export function createRoutineStore(database: Database): RoutineStore {
           id: routine.id,
           agentId: routine.agentId,
           instruction: routine.instruction,
-          schedule: describeCron(routine.cron),
+          schedule:
+            routine.scheduleKind === "once"
+              ? `Once at ${routine.nextRunAt.toISOString()}`
+              : describeCron(routine.cron),
+          scheduleKind: routine.scheduleKind,
           timezone: routine.timezone,
           enabled: routine.enabled,
           nextRunAt: routine.nextRunAt,
@@ -666,7 +816,11 @@ export function createRoutineStore(database: Database): RoutineStore {
        * it returns ids and stamps and nothing a person wrote.
        */
       return await database
-        .select({ id: routines.id, nextRunAt: routines.nextRunAt })
+        .select({
+          id: routines.id,
+          nextRunAt: routines.nextRunAt,
+          scheduleKind: routines.scheduleKind,
+        })
         .from(routines)
         .where(
           and(
@@ -685,11 +839,20 @@ export function createRoutineStore(database: Database): RoutineStore {
 
     async advanceNextRun(id, from, computeFrom) {
       const [row] = await database
-        .select({ cron: routines.cron, timezone: routines.timezone })
+        .select({
+          cron: routines.cron,
+          timezone: routines.timezone,
+          scheduleKind: routines.scheduleKind,
+        })
         .from(routines)
         .where(eq(routines.id, id))
         .limit(1);
       if (!row) return false;
+      if (row.scheduleKind !== "recurring") {
+        throw new RoutineRefusedError(
+          "A one-time wake cannot be advanced as a recurring routine.",
+        );
+      }
 
       // `computeFrom` moves only where the next occurrence is measured from, never what the CAS
       // compares against: the sweep uses it to make a month-stale clock current in one pass, and
@@ -738,6 +901,65 @@ export function createRoutineStore(database: Database): RoutineStore {
       return { runId: row.id };
     },
 
+    async insertRunWithCapacity(routineId) {
+      return await database.transaction(async (transaction) => {
+        /*
+         * Counts and insert must be one serialized decision across every replica. Row locks cannot
+         * guard "how many open rows exist", so use one transaction-scoped advisory lock for this
+         * small critical section. A hash collision can only make two openings wait, never widen a
+         * cap.
+         */
+        await transaction.execute(
+          sql`select pg_advisory_xact_lock(hashtext('routine-run-capacity'))`,
+        );
+
+        const [routine] = await transaction
+          .select({ agentId: routines.agentId })
+          .from(routines)
+          .where(eq(routines.id, routineId))
+          .limit(1);
+        if (!routine) {
+          throw new RoutineNotFoundError();
+        }
+
+        const [counts] = await transaction
+          .select({
+            deployment: sql<number>`count(*)::int`,
+            agent: sql<number>`count(*) filter (where ${routines.agentId} = ${routine.agentId})::int`,
+          })
+          .from(routineRuns)
+          .innerJoin(routines, eq(routines.id, routineRuns.routineId))
+          .where(isNull(routineRuns.status));
+
+        const deploymentOpen = counts?.deployment ?? 0;
+        const agentOpen = counts?.agent ?? 0;
+        const skippedReason =
+          deploymentOpen >= MAX_CONCURRENT_ROUTINE_RUNS
+            ? `Skipped because this deployment already has ${MAX_CONCURRENT_ROUTINE_RUNS} routine runs in flight.`
+            : agentOpen >= MAX_CONCURRENT_ROUTINE_RUNS_PER_AGENT
+              ? `Skipped because this Bot already has ${MAX_CONCURRENT_ROUTINE_RUNS_PER_AGENT} routine runs in flight.`
+              : null;
+
+        const runId = `routine_run_${crypto.randomUUID()}`;
+        const [row] = await transaction
+          .insert(routineRuns)
+          .values(
+            skippedReason === null
+              ? { id: runId, routineId }
+              : {
+                  id: runId,
+                  routineId,
+                  status: "skipped",
+                  finishedAt: sql`now()`,
+                  error: skippedReason,
+                },
+          )
+          .returning({ id: routineRuns.id });
+        if (!row) throw new Error("inserting a routine run returned no row");
+        return { runId: row.id, skippedReason };
+      });
+    },
+
     async runContext(runId) {
       /*
        * An inner join, so a run whose routine is gone reads as no row rather than as a firing with
@@ -763,11 +985,44 @@ export function createRoutineStore(database: Database): RoutineStore {
       // A single select, not owner-scoped — the sweep's read, like `dueRoutines`. A routine id here
       // comes from a work item's own payload, not from a person, so there is no owner to check.
       const [row] = await database
-        .select({ id: routines.id, enabled: routines.enabled })
+        .select({
+          id: routines.id,
+          enabled: routines.enabled,
+          scheduleKind: routines.scheduleKind,
+          nextRunAt: routines.nextRunAt,
+          lastRunAt: routines.lastRunAt,
+        })
         .from(routines)
+        .innerJoin(
+          agentProfiles,
+          and(
+            eq(agentProfiles.agentId, routines.agentId),
+            isNull(agentProfiles.deletedAt),
+          ),
+        )
         .where(eq(routines.id, id))
         .limit(1);
       return row ?? null;
+    },
+
+    async consumeOneShot(id, scheduledFor) {
+      const consumed = await database
+        .update(routines)
+        .set({
+          enabled: false,
+          lastRunAt: scheduledFor,
+          updatedAt: sql`now()`,
+        })
+        .where(
+          and(
+            eq(routines.id, id),
+            eq(routines.scheduleKind, "once"),
+            eq(routines.enabled, true),
+            eq(routines.nextRunAt, scheduledFor),
+          ),
+        )
+        .returning({ id: routines.id });
+      return consumed.length > 0;
     },
 
     async finishRun(runId, status, error) {

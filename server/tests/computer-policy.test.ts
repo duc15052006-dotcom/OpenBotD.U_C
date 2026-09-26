@@ -5,7 +5,10 @@ import {
   policyInitiator,
   type PolicyContext,
 } from "../src/computer/policy";
-import { parseActionPolicy } from "../src/computer/policy-store";
+import {
+  DEFAULT_ACTION_POLICY,
+  parseActionPolicy,
+} from "../src/computer/policy-store";
 
 /**
  * These test the decision, not the plumbing.
@@ -30,6 +33,26 @@ function context(overrides: Partial<PolicyContext> = {}): PolicyContext {
 }
 
 const permissive: ActionPolicy = { mode: "enforce", deny: [], allow: ["true"] };
+
+describe("default computer policy", () => {
+  test("keeps browser actions available but refuses raw shell execution", () => {
+    expect(evaluateActionPolicy(DEFAULT_ACTION_POLICY, context()).allowed).toBe(
+      true,
+    );
+    expect(
+      evaluateActionPolicy(
+        DEFAULT_ACTION_POLICY,
+        context({
+          tool: { name: "computer_run_command" },
+          element: undefined,
+          page: { url: "", host: "" },
+          intent: "run_command",
+          command: "echo hello",
+        }),
+      ).allowed,
+    ).toBe(false);
+  });
+});
 
 describe("evaluateActionPolicy", () => {
   test("an absent policy refuses, rather than permitting everything", () => {

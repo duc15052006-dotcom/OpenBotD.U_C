@@ -1,6 +1,7 @@
 //! The parts of the shell that are worth testing without a window around them.
 pub mod acquire;
 pub mod ask;
+pub mod close_behavior;
 pub mod deployment;
 pub mod deployment_release;
 pub mod engine;
@@ -20,6 +21,7 @@ pub mod stack;
 pub mod supervise;
 pub mod telemetry;
 pub mod tray;
+pub mod update;
 pub mod vault;
 pub mod windows;
 

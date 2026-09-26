@@ -49,6 +49,11 @@ function desk(options?: {
   offered?: number;
   caps?: HandoffCaps;
   role?: "admin" | "user";
+  mayAddress?: (
+    fromBotId: string,
+    toBotId: string,
+    context: { actorId: string; threadId?: string },
+  ) => boolean | Promise<boolean>;
 }) {
   const rows: Array<{ kind: string; key: string; payload: unknown }> = [];
   const events: Array<{
@@ -98,7 +103,10 @@ function desk(options?: {
     desk: createHandoffDesk({
       queue,
       profiles,
-      mayAddress: async () => options?.granted ?? true,
+      mayAddress: async (fromBotId, toBotId, context) =>
+        options?.mayAddress
+          ? options.mayAddress(fromBotId, toBotId, context)
+          : (options?.granted ?? true),
       actorFor: async (id: string) => ({
         id,
         role: options?.role ?? ("user" as const),
@@ -259,6 +267,42 @@ describe("handing work to another Bot", () => {
     expect((hidden as { refusal: string }).refusal).toBe(
       (missing as { refusal: string }).refusal,
     );
+  });
+
+  test("a conversation-scoped group permission receives the signed actor and thread", async () => {
+    const seen: Array<{
+      fromBotId: string;
+      toBotId: string;
+      context: { actorId: string; threadId?: string };
+    }> = [];
+    const { desk: handoff, rows } = desk({
+      granted: false,
+      mayAddress: (fromBotId, toBotId, context) => {
+        seen.push({ fromBotId, toBotId, context });
+        return (
+          context.actorId === "user-1" &&
+          context.threadId === "thread-1" &&
+          fromBotId === "assistant" &&
+          toBotId === "researcher"
+        );
+      },
+    });
+
+    const outcome = await handoff.send({
+      from: FROM,
+      target: "researcher",
+      envelope: { task: "check the figures" },
+    });
+
+    expect(outcome).toMatchObject({ ok: true, to: "researcher" });
+    expect(rows).toHaveLength(1);
+    expect(seen).toEqual([
+      {
+        fromBotId: "assistant",
+        toBotId: "researcher",
+        context: { actorId: "user-1", threadId: "thread-1" },
+      },
+    ]);
   });
 
   test("a Bot nobody granted cannot be reached", async () => {

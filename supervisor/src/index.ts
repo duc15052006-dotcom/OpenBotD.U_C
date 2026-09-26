@@ -1,20 +1,32 @@
 import { serve } from "bun";
 import { Hono } from "hono";
+import { createComputerLifecycleLock } from "./computer-lifecycle-lock";
 import { environmentFor } from "./environment";
 import {
+  ComputerCapacityError,
   ComputerNotAnsweringError,
+  ComputerSnapshotError,
+  createCleanSnapshot,
   DockerUnavailableError,
   ensure,
+  hostCapacity,
   listOwned,
   NameHeldError,
   reachable,
   reset,
+  restoreCleanSnapshot,
   stop,
 } from "./docker";
 import { registerEntry } from "./identity";
 import { namesFor } from "./names";
+import { computerMaxActive } from "./computer-max-active";
 import { computerMemoryBytes } from "./computer-memory-bytes";
+import { computerNanoCpus } from "./computer-nano-cpus";
 import { listenPort } from "./listen-port";
+import {
+  parseComputerResourceProfile,
+  RESOURCE_PROFILES,
+} from "./resource-profile";
 
 /**
  * The container supervisor: the only thing here that holds the Docker socket.
@@ -69,9 +81,22 @@ if (!resolvedMemory.ok) {
   process.exit(1);
 }
 const memoryBytes = resolvedMemory.bytes;
+const resolvedCpu = computerNanoCpus(process.env.COMPUTER_NANO_CPUS);
+if (!resolvedCpu.ok) {
+  console.error(resolvedCpu.reason);
+  process.exit(1);
+}
+const nanoCpus = resolvedCpu.nanoCpus;
+const resolvedMaxActive = computerMaxActive(process.env.COMPUTER_MAX_ACTIVE);
+if (!resolvedMaxActive.ok) {
+  console.error(resolvedMaxActive.reason);
+  process.exit(1);
+}
+const maxActiveComputers = resolvedMaxActive.maxActive;
 const spireSocketVolume =
   process.env.SPIRE_AGENT_SOCKET_VOLUME?.trim() || undefined;
 
+const lifecycleLock = createComputerLifecycleLock();
 const app = new Hono();
 
 app.use("*", async (context, next) => {
@@ -96,19 +121,48 @@ app.post("/computers/:botId/ensure", async (context) => {
   const parsed = resolve(context.req.param("botId"));
   if (!parsed.ok) return context.json({ error: parsed.reason }, 400);
 
+  const body = (await context.req.json().catch(() => ({}))) as {
+    resourceProfile?: unknown;
+  };
+  const requestedProfile =
+    body.resourceProfile === undefined
+      ? null
+      : parseComputerResourceProfile(body.resourceProfile);
+  if (body.resourceProfile !== undefined && !requestedProfile) {
+    return context.json(
+      { error: "Resource profile must be light, normal, or heavy." },
+      400,
+    );
+  }
+  const profileResources = requestedProfile
+    ? RESOURCE_PROFILES[requestedProfile]
+    : null;
+
   try {
     // Registered before the computer is handed out, so it can prove which Bot it is from its first
     // request.
     const identity = await registerEntry(parsed.names);
 
-    const state = await ensure(parsed.names, {
-      image,
-      environment: environmentFor(parsed.names.botId),
-      ...(network ? { network } : {}),
-      ...(runtime ? { runtime } : {}),
-      ...(memoryBytes ? { memoryBytes } : {}),
-      ...(spireSocketVolume ? { spireSocketVolume } : {}),
-    });
+    const state = await lifecycleLock.run(parsed.names.botId, () =>
+      ensure(parsed.names, {
+        image,
+        environment: environmentFor(parsed.names.botId),
+        ...(network ? { network } : {}),
+        ...(runtime ? { runtime } : {}),
+        ...(profileResources
+          ? { memoryBytes: profileResources.memoryBytes }
+          : memoryBytes
+            ? { memoryBytes }
+            : {}),
+        ...(profileResources
+          ? { nanoCpus: profileResources.nanoCpus }
+          : nanoCpus
+            ? { nanoCpus }
+            : {}),
+        ...(maxActiveComputers ? { maxActiveComputers } : {}),
+        ...(spireSocketVolume ? { spireSocketVolume } : {}),
+      }),
+    );
     return context.json({
       ...state,
       ...(identity.registered
@@ -123,6 +177,78 @@ app.post("/computers/:botId/ensure", async (context) => {
     }
     // Not ready is a 503 like an outage is, because the caller's next move is the same: wait and
     // ask again. The message is what differs, and it is the part an operator acts on.
+    if (error instanceof ComputerCapacityError) {
+      return context.json({ error: error.message }, 409);
+    }
+    if (
+      error instanceof DockerUnavailableError ||
+      error instanceof ComputerNotAnsweringError
+    ) {
+      return context.json({ error: error.message }, 503);
+    }
+    throw error;
+  }
+});
+
+app.post("/computers/:botId/restart", async (context) => {
+  const parsed = resolve(context.req.param("botId"));
+  if (!parsed.ok) return context.json({ error: parsed.reason }, 400);
+
+  const body = (await context.req.json().catch(() => ({}))) as {
+    resourceProfile?: unknown;
+  };
+  const requestedProfile =
+    body.resourceProfile === undefined
+      ? null
+      : parseComputerResourceProfile(body.resourceProfile);
+  if (body.resourceProfile !== undefined && !requestedProfile) {
+    return context.json(
+      { error: "Resource profile must be light, normal, or heavy." },
+      400,
+    );
+  }
+  const profileResources = requestedProfile
+    ? RESOURCE_PROFILES[requestedProfile]
+    : null;
+
+  try {
+    const identity = await registerEntry(parsed.names);
+    const state = await lifecycleLock.run(parsed.names.botId, async () => {
+      // One critical section for the whole cycle. A Reset/Stop/Ensure for this Bot cannot slip
+      // between these two calls and accidentally erase or supersede the state Restart preserves.
+      await stop(parsed.names);
+      return ensure(parsed.names, {
+        image,
+        environment: environmentFor(parsed.names.botId),
+        ...(network ? { network } : {}),
+        ...(runtime ? { runtime } : {}),
+        ...(profileResources
+          ? { memoryBytes: profileResources.memoryBytes }
+          : memoryBytes
+            ? { memoryBytes }
+            : {}),
+        ...(profileResources
+          ? { nanoCpus: profileResources.nanoCpus }
+          : nanoCpus
+            ? { nanoCpus }
+            : {}),
+        ...(maxActiveComputers ? { maxActiveComputers } : {}),
+        ...(spireSocketVolume ? { spireSocketVolume } : {}),
+      });
+    });
+    return context.json({
+      ...state,
+      ...(identity.registered
+        ? { spiffeId: identity.spiffeId }
+        : { identity: identity.reason }),
+    });
+  } catch (error) {
+    if (
+      error instanceof NameHeldError ||
+      error instanceof ComputerCapacityError
+    ) {
+      return context.json({ error: error.message }, 409);
+    }
     if (
       error instanceof DockerUnavailableError ||
       error instanceof ComputerNotAnsweringError
@@ -137,9 +263,55 @@ app.post("/computers/:botId/stop", async (context) => {
   const parsed = resolve(context.req.param("botId"));
   if (!parsed.ok) return context.json({ error: parsed.reason }, 400);
   try {
-    const stopped = await stop(parsed.names);
+    const stopped = await lifecycleLock.run(parsed.names.botId, () =>
+      stop(parsed.names),
+    );
     return context.json({ stopped });
   } catch (error) {
+    if (error instanceof DockerUnavailableError) {
+      return context.json({ error: error.message }, 503);
+    }
+    throw error;
+  }
+});
+
+app.post("/computers/:botId/snapshot", async (context) => {
+  const parsed = resolve(context.req.param("botId"));
+  if (!parsed.ok) return context.json({ error: parsed.reason }, 400);
+  try {
+    const created = await lifecycleLock.run(parsed.names.botId, () =>
+      createCleanSnapshot(parsed.names, image),
+    );
+    return context.json({ snapshot: created });
+  } catch (error) {
+    if (
+      error instanceof NameHeldError ||
+      error instanceof ComputerSnapshotError
+    ) {
+      return context.json({ error: error.message }, 409);
+    }
+    if (error instanceof DockerUnavailableError) {
+      return context.json({ error: error.message }, 503);
+    }
+    throw error;
+  }
+});
+
+app.post("/computers/:botId/restore", async (context) => {
+  const parsed = resolve(context.req.param("botId"));
+  if (!parsed.ok) return context.json({ error: parsed.reason }, 400);
+  try {
+    const restored = await lifecycleLock.run(parsed.names.botId, () =>
+      restoreCleanSnapshot(parsed.names, image),
+    );
+    return context.json({ restored });
+  } catch (error) {
+    if (
+      error instanceof NameHeldError ||
+      error instanceof ComputerSnapshotError
+    ) {
+      return context.json({ error: error.message }, 409);
+    }
     if (error instanceof DockerUnavailableError) {
       return context.json({ error: error.message }, 503);
     }
@@ -151,8 +323,28 @@ app.post("/computers/:botId/reset", async (context) => {
   const parsed = resolve(context.req.param("botId"));
   if (!parsed.ok) return context.json({ error: parsed.reason }, 400);
   try {
-    const wasThere = await reset(parsed.names);
+    const wasThere = await lifecycleLock.run(parsed.names.botId, () =>
+      reset(parsed.names),
+    );
     return context.json({ reset: wasThere });
+  } catch (error) {
+    if (error instanceof NameHeldError) {
+      return context.json({ error: error.message }, 409);
+    }
+    if (error instanceof DockerUnavailableError) {
+      return context.json({ error: error.message }, 503);
+    }
+    throw error;
+  }
+});
+
+app.get("/capacity", async (context) => {
+  try {
+    return context.json({
+      ...(await hostCapacity()),
+      maxActiveComputers: maxActiveComputers ?? null,
+      resourceProfiles: RESOURCE_PROFILES,
+    });
   } catch (error) {
     if (error instanceof DockerUnavailableError) {
       return context.json({ error: error.message }, 503);

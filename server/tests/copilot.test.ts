@@ -6,7 +6,10 @@ import { HttpAgent } from "@ag-ui/client";
 import { LLMock } from "@copilotkit/aimock";
 import { BuiltInAgent } from "@copilotkit/runtime/v2";
 import { EMPTY } from "rxjs";
-import { PROVENANCE_GUIDANCE } from "../../shared/bot-prompt";
+import {
+  AUTONOMOUS_WORKFLOW_GUIDANCE,
+  PROVENANCE_GUIDANCE,
+} from "../../shared/bot-prompt";
 import { MAX_INLINED_BYTES_PER_RUN } from "../src/channels/attachment-parts";
 import { loadConfig } from "../src/config";
 import type { LoadAttachment } from "../src/copilot";
@@ -159,7 +162,6 @@ describe("deployment model selection", () => {
     {},
     { OPENAI_BASE_URL: "http://127.0.0.1:11434/v1", BOT_MODEL: "   " },
     { BOT_MODEL: "selected-local-model" },
-    { BOT_PROVIDER: "anthropic", BOT_MODEL: "claude-sonnet-4-5" },
   ])(
     "package default remains the model without a compatible endpoint selection: %j",
     async (environment) => {
@@ -244,7 +246,7 @@ describe("registered Copilot agents", () => {
       model: "openai/gpt-5.6-terra",
       // The provenance rule is unconditional, so even a Bot with no tools and no computer carries
       // it. That Bot needs it most: nothing it says was read anywhere.
-      prompt: `Be helpful.\n\n${PROVENANCE_GUIDANCE}`,
+      prompt: `Be helpful.\n\n${PROVENANCE_GUIDANCE}\n\n${AUTONOMOUS_WORKFLOW_GUIDANCE}`,
       apiKey: "openai-secret",
     });
   });
@@ -521,6 +523,67 @@ describe("registered Copilot agents", () => {
     }
   });
 
+  test("resolves model configuration independently for every built-in Bot", async () => {
+    const resolved: string[] = [];
+    let deploymentKeyReads = 0;
+    const agents = await resolveRuntimeAgents(
+      async () => [
+        {
+          id: "writer",
+          name: "Writer",
+          type: "built_in",
+          systemPrompt: "Write clearly.",
+        },
+        {
+          id: "researcher",
+          name: "Researcher",
+          type: "built_in",
+          systemPrompt: "Research carefully.",
+        },
+      ],
+      { provider: "openai", defaultModel: "gpt-default" },
+      async () => {
+        deploymentKeyReads += 1;
+        return "deployment-key";
+      },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      async (agentId) => {
+        resolved.push(agentId);
+        return agentId === "writer"
+          ? {
+              provider: "anthropic",
+              defaultModel: "claude-sonnet",
+              apiKey: "writer-key",
+              temperature: 0.2,
+            }
+          : {
+              provider: "google",
+              defaultModel: "gemini-pro",
+              apiKey: "researcher-key",
+              maxTokens: 4096,
+            };
+      },
+    );
+
+    expect(Object.keys(agents).sort()).toEqual(["researcher", "writer"]);
+    expect(resolved.sort()).toEqual(["researcher", "writer"]);
+    // The per-Agent resolver owns provider-specific credentials; the old deployment resolver must
+    // not be read once and accidentally reused for the whole roster.
+    expect(deploymentKeyReads).toBe(0);
+  });
+
   test("does not resolve model credentials for remote-only agents", async () => {
     let resolverInvoked = false;
     const agents = await resolveRuntimeAgents(
@@ -570,6 +633,7 @@ describe("standing agent roles", () => {
         // travel in it or the Bot never hears it. Referenced rather than restated, so the assertion
         // stays exact without pinning the wording twice.
         PROVENANCE_GUIDANCE,
+        AUTONOMOUS_WORKFLOW_GUIDANCE,
       ].join("\n\n"),
     });
   });
@@ -771,6 +835,7 @@ describe("standing agent roles", () => {
         "Reconcile corporate card statements.",
         "This standing role applies in every channel. Treat channel messages as task-specific instructions within it.",
         PROVENANCE_GUIDANCE,
+        AUTONOMOUS_WORKFLOW_GUIDANCE,
       ].join("\n\n"),
     );
   });
@@ -1031,6 +1096,41 @@ describe("what a Bot is told it holds", () => {
  * So both paths are asserted, because they are built by different functions and a fix to one is not
  * a fix to the other.
  */
+describe("NOTE 21-2 autonomous workflow guidance reaches every coworker path", () => {
+  test("a built-in coworker receives the scene isolation and exact-prompt contract", () => {
+    const prompt = builtInAgentConfiguration(
+      {
+        id: "creator",
+        name: "Creator",
+        type: "built_in",
+        systemPrompt: "Produce campaign assets.",
+      },
+      { provider: "openai", defaultModel: "gpt-5.6-terra" },
+      "openai-secret",
+    ).prompt as string;
+
+    expect(prompt).toContain(AUTONOMOUS_WORKFLOW_GUIDANCE);
+    expect(prompt).toContain("projectId + sceneId");
+    expect(prompt).toContain(
+      "An approved prompt is an execution input, not something to grade",
+    );
+  });
+
+  test("a remote coworker receives the same contract in its standing role", () => {
+    const content = standingRoleMessage({
+      id: "creator",
+      name: "Creator",
+      title: "Creative Production",
+      roleDescription: "Produce campaign assets using the selected services.",
+    }).content;
+
+    expect(content).toContain(AUTONOMOUS_WORKFLOW_GUIDANCE);
+    expect(content).toContain(
+      "Never claim you will automatically wake, monitor in the background or receive a completion event",
+    );
+  });
+});
+
 describe("where a Bot says its answer came from", () => {
   test("a built-in Bot carries the rule even holding nothing at all", () => {
     // The Bot that needs it most. No tools and no computer means nothing it says was read anywhere.
@@ -1165,9 +1265,11 @@ describe("a person's standing instructions", () => {
       const prompt = promptWith(instructions as string | null);
 
       expect(prompt).not.toContain("standing instructions");
-      // Byte for byte what a deployment had before any of this existed, which is what most people
-      // on most days get.
-      expect(prompt).toBe(`Be helpful.\n\n${PROVENANCE_GUIDANCE}`);
+      // NOTE 21-2 is deployment-wide guidance, independent of whether this person has written
+      // standing instructions of their own.
+      expect(prompt).toBe(
+        `Be helpful.\n\n${PROVENANCE_GUIDANCE}\n\n${AUTONOMOUS_WORKFLOW_GUIDANCE}`,
+      );
     },
   );
 

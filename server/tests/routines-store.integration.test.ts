@@ -17,6 +17,8 @@ import {
 } from "../src/db/schema";
 import {
   createRoutineStore,
+  MAX_CONCURRENT_ROUTINE_RUNS,
+  MAX_CONCURRENT_ROUTINE_RUNS_PER_AGENT,
   MAX_ENABLED_ROUTINES,
   MAX_INSTRUCTION_CODE_POINTS,
   MAX_RUN_ERROR,
@@ -157,6 +159,86 @@ describe("owner-guarding", () => {
   });
 });
 
+describe("unattended-run concurrency caps", () => {
+  test("records a skipped firing when one Bot already has its run capacity in flight", async () => {
+    const { owner, agentId, channel } = await setUp();
+    const routine = await store.create({
+      ownerUserId: owner.id,
+      agentId,
+      channelId: channel.id,
+      instruction: "Check the render queue.",
+      cron: DAILY,
+    });
+
+    for (
+      let index = 0;
+      index < MAX_CONCURRENT_ROUTINE_RUNS_PER_AGENT;
+      index += 1
+    ) {
+      await store.insertRun(routine.id);
+    }
+
+    const admission = await store.insertRunWithCapacity(routine.id);
+    expect(admission.skippedReason).toContain("this Bot already has");
+
+    const [row] = await database
+      .select()
+      .from(routineRuns)
+      .where(eq(routineRuns.id, admission.runId));
+    expect(row?.status).toBe("skipped");
+    expect(row?.finishedAt).toBeInstanceOf(Date);
+    expect(row?.error).toContain(String(MAX_CONCURRENT_ROUTINE_RUNS_PER_AGENT));
+  });
+
+  test("serializes the deployment cap so concurrent openings cannot both cross it", async () => {
+    const owner = await createUser();
+    const agentIds: string[] = [];
+    for (let index = 0; index < 7; index += 1) {
+      agentIds.push(await createAgent(owner, `Worker ${index + 1}`));
+    }
+    const channel = await createChannel(owner, agentIds);
+    const routineIds: string[] = [];
+    for (const [index, agentId] of agentIds.entries()) {
+      const routine = await store.create({
+        ownerUserId: owner.id,
+        agentId,
+        channelId: channel.id,
+        instruction: `Run bounded task ${index + 1}.`,
+        cron: DAILY,
+      });
+      routineIds.push(routine.id);
+    }
+
+    // Seed one below the deployment ceiling without violating the per-Bot ceiling.
+    let seeded = 0;
+    for (const routineId of routineIds.slice(0, 5)) {
+      const wanted = Math.min(
+        MAX_CONCURRENT_ROUTINE_RUNS_PER_AGENT,
+        MAX_CONCURRENT_ROUTINE_RUNS - 1 - seeded,
+      );
+      for (let index = 0; index < wanted; index += 1) {
+        await store.insertRun(routineId);
+        seeded += 1;
+      }
+      if (seeded === MAX_CONCURRENT_ROUTINE_RUNS - 1) break;
+    }
+    expect(seeded).toBe(MAX_CONCURRENT_ROUTINE_RUNS - 1);
+
+    const contenders = routineIds.slice(5, 7);
+    const admissions = await Promise.all(
+      contenders.map((routineId) => store.insertRunWithCapacity(routineId)),
+    );
+    expect(
+      admissions.filter((admission) => admission.skippedReason === null),
+    ).toHaveLength(1);
+    expect(
+      admissions.filter((admission) =>
+        admission.skippedReason?.includes("deployment already has"),
+      ),
+    ).toHaveLength(1);
+  });
+});
+
 describe("what the schedule has to be", () => {
   test("refuses a cron under the floor, in the schedule's own words", async () => {
     const { owner, agentId, channel } = await setUp();
@@ -231,6 +313,112 @@ describe("what the schedule has to be", () => {
   });
 });
 
+describe("one-time wake lifecycle", () => {
+  test("stores the exact future stamp and lists it as a one-time schedule", async () => {
+    const { owner, agentId, channel } = await setUp();
+    const runAt = new Date(Date.now() + 60 * 60_000);
+    runAt.setMilliseconds(0);
+
+    const wake = await store.createOneShot({
+      ownerUserId: owner.id,
+      agentId,
+      channelId: channel.id,
+      instruction: "Check the external render and continue.",
+      runAt,
+    });
+
+    expect(wake.scheduleKind).toBe("once");
+    expect(wake.timezone).toBe("UTC");
+    expect(wake.nextRunAt.toISOString()).toBe(runAt.toISOString());
+    const [summary] = await store.listFor(owner.id);
+    expect(summary?.scheduleKind).toBe("once");
+    expect(summary?.schedule).toBe(`Once at ${runAt.toISOString()}`);
+  });
+
+  test("uses the database clock when the server clock is skewed forward", async () => {
+    const { owner, agentId, channel } = await setUp();
+    const realNow = Date.now;
+    const runAt = new Date(realNow() + 60_000);
+
+    Date.now = () => realNow() + 24 * 60 * 60_000;
+    try {
+      const wake = await store.createOneShot({
+        ownerUserId: owner.id,
+        agentId,
+        channelId: channel.id,
+        instruction: "Wake from the durable database clock.",
+        runAt,
+      });
+      expect(wake.nextRunAt.getTime()).toBe(runAt.getTime());
+
+      await store.setEnabled(owner.id, wake.id, false);
+      const enabled = await store.update(owner.id, wake.id, { enabled: true });
+      expect(enabled.enabled).toBe(true);
+      expect(enabled.nextRunAt.getTime()).toBe(runAt.getTime());
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
+  test("refuses a past wake and cron edits on a one-time wake", async () => {
+    const { owner, agentId, channel } = await setUp();
+    await expect(
+      store.createOneShot({
+        ownerUserId: owner.id,
+        agentId,
+        channelId: channel.id,
+        instruction: "Continue.",
+        runAt: new Date(Date.now() - 60_000),
+      }),
+    ).rejects.toThrow(/future/);
+
+    const wake = await store.createOneShot({
+      ownerUserId: owner.id,
+      agentId,
+      channelId: channel.id,
+      instruction: "Continue.",
+      runAt: new Date(Date.now() + 60 * 60_000),
+    });
+    await expect(
+      store.update(owner.id, wake.id, { cron: DAILY }),
+    ).rejects.toThrow(/exact time/);
+  });
+
+  test("a routine is no longer fireable after its Agent is soft deleted", async () => {
+    const { owner, agentId, channel } = await setUp();
+    const routine = await store.create({
+      ownerUserId: owner.id,
+      agentId,
+      channelId: channel.id,
+      instruction: "Do not survive Bot deletion.",
+      cron: DAILY,
+    });
+
+    expect(await store.routineForFiring(routine.id)).not.toBeNull();
+    await profileStore.softDelete(owner, agentId);
+    expect(await store.routineForFiring(routine.id)).toBeNull();
+  });
+
+  test("consume is compare-and-set and records the exact committed wake", async () => {
+    const { owner, agentId, channel } = await setUp();
+    const runAt = new Date(Date.now() + 60 * 60_000);
+    runAt.setMilliseconds(0);
+    const wake = await store.createOneShot({
+      ownerUserId: owner.id,
+      agentId,
+      channelId: channel.id,
+      instruction: "Continue.",
+      runAt,
+    });
+
+    expect(await store.consumeOneShot(wake.id, runAt)).toBe(true);
+    expect(await store.consumeOneShot(wake.id, runAt)).toBe(false);
+    const row = await store.routineForFiring(wake.id);
+    expect(row?.enabled).toBe(false);
+    expect(row?.scheduleKind).toBe("once");
+    expect(row?.lastRunAt?.toISOString()).toBe(runAt.toISOString());
+  });
+});
 /**
  * The cap is a constant with a reason: every enabled routine is a headless turn somebody's Bot will
  * take without being watched, and a model that can be talked into creating them one at a time can be
@@ -1198,9 +1386,10 @@ describe("the sweep's by-id read of a routine before firing", () => {
   test("an existing enabled routine reads back enabled", async () => {
     const { routine } = await makeRoutine();
 
-    expect(await store.routineForFiring(routine.id)).toEqual({
+    expect(await store.routineForFiring(routine.id)).toMatchObject({
       id: routine.id,
       enabled: true,
+      scheduleKind: "recurring",
     });
   });
 
@@ -1208,9 +1397,10 @@ describe("the sweep's by-id read of a routine before firing", () => {
     const { owner, routine } = await makeRoutine();
     await store.setEnabled(owner.id, routine.id, false);
 
-    expect(await store.routineForFiring(routine.id)).toEqual({
+    expect(await store.routineForFiring(routine.id)).toMatchObject({
       id: routine.id,
       enabled: false,
+      scheduleKind: "recurring",
     });
   });
 

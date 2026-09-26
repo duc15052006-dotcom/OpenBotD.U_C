@@ -3,6 +3,11 @@
 A release is one person choosing a version, and a reviewed pull request doing everything else. No
 step involves a terminal, a tag pushed by hand, or an image built on somebody's laptop.
 
+> **Fork verification:** GitHub Actions does not run workflows in a newly created fork until Actions
+> is enabled for that fork. Enable Actions before relying on CI, then push or synchronize the
+> release-candidate branch so the workflows receive a fresh event. Never treat an empty Actions
+> history as a successful verification.
+
 ## Cutting one
 
 1. Check `## Unreleased` in [CHANGELOG.md](../CHANGELOG.md) reads the way you want it to. It is the
@@ -46,6 +51,17 @@ Ad-hoc signed Mac builds require the first-open exception described in
 [Apple's instructions](https://support.apple.com/en-us/102445). They are for internal testing
 and are not Apple-notarized. See [Windows signing](windows-signing.md) for signed NSIS builds.
 
+On Windows the NSIS installer also creates **OpenBot.lnk** on the installing user's desktop and
+removes that shortcut during uninstall. The Users-only acceptance test checks both ends of that
+lifecycle against the actual installer artifact.
+
+The installed desktop app keeps **Check for updates** in both its tray and window menu, even after
+the WebView has navigated from setup to the local OpenBot app. The check asks GitHub only for the
+latest stable release of the repository that built that artifact. A newer release opens only a
+validated `https://github.com/<that-repository>/releases/...` page in the default browser; arbitrary
+URLs returned by the API are refused. CI and protected signing inject `github.repository` at build
+time so fork artifacts do not silently check another project's releases.
+
 ## What merging does
 
 `publish-release.yml` runs on every push to `main` and starts by deciding whether the commit is a
@@ -57,17 +73,29 @@ Then, in order:
 
 - the version in the tree is checked against the branch that is publishing it, and the changelog is
   checked for a section with that number
-- one image is built and pushed to `ghcr.io/copilotkit/openbot`, tagged with the version, the commit
-  and `latest`
+- the normal CI workflow **and the Desktop workflow** run again against the release commit; desktop
+  packaging must pass on macOS/Linux and the Windows NSIS artifact must build, install, launch, and
+  uninstall twice: once on the hosted runner and once inside a fresh **Users-only, non-admin**
+  account, so an accidental elevation dependency cannot pass as a clean-machine success
+- protected Windows signing then repeats the Users-only install → first launch → uninstall journey
+  against the **exact signed NSIS artifact** that will be retained for the GitHub Release; a valid
+  Authenticode signature is not enough if signing or packaging produced an installer that no longer
+  works
+- the protected Windows signing workflow signs and verifies the app plus NSIS installer from that
+  same release commit; its `windows-signing` environment approval is the publisher-certificate
+  boundary, and nothing is published before it succeeds
+- one image is built and pushed under the current repository owner's GHCR namespace as
+  `ghcr.io/<owner>/openbot`, tagged with the version, the commit and `latest`
 - the services `docker-compose.yml` can build are published too, one image each, at
-  `ghcr.io/copilotkit/openbot-<service>`. Those are `linux/amd64` and `linux/arm64`, built on native
+  `ghcr.io/<owner>/openbot-<service>`. Those are `linux/amd64` and `linux/arm64`, built on native
   runners of each architecture and joined into one manifest list, because the machines pulling them
   are laptops as well as servers. `.github/published-images.json` is the list, and CI fails if it
   stops matching the Dockerfiles in the tree
 - a build provenance attestation is signed with the workflow's OIDC identity and pushed alongside
   every one of them
-- the commit is tagged and a GitHub Release is created, carrying the changelog section as its notes
-  and `container-images.json` as an asset
+- the commit is tagged and a GitHub Release is created, carrying the changelog section as its notes,
+  `container-images.json`, the verified signed Windows `*-setup.exe`, its build metadata, and
+  `signatures.json` as assets
 
 ## Deploying a release
 
@@ -104,11 +132,32 @@ Before deploying, you can check an image is the one this repository built. Every
 carries its own attestation:
 
 ```sh
-gh attestation verify oci://ghcr.io/copilotkit/openbot:v0.1.0 -R CopilotKit/OpenBot
-gh attestation verify oci://ghcr.io/copilotkit/openbot-supervisor:v0.1.0 -R CopilotKit/OpenBot
+OWNER="$(gh repo view --json owner --jq .owner.login | tr '[:upper:]' '[:lower:]')"
+REPOSITORY="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
+gh attestation verify "oci://ghcr.io/$OWNER/openbot:v0.1.0" -R "$REPOSITORY"
+gh attestation verify "oci://ghcr.io/$OWNER/openbot-supervisor:v0.1.0" -R "$REPOSITORY"
 ```
 
 ## What has to be green
+
+Before asking GitHub for runners, the repository has a fast static release wiring check:
+
+```sh
+bun run release:preflight
+```
+
+It verifies the packaged WebView boundary, reusable workflow wiring, Windows installer acceptance
+step, protected signing gate, signed release assets, release-commit identity checks, and version
+sources. It does **not** replace actually running CI, installing on Windows, or using the protected
+certificate; its job is to make broken release wiring fail immediately instead of on release day.
+
+Both **CI** and **Desktop** can also be started manually from the Actions tab after a branch is
+available to Actions, which is useful when pull-request events are unavailable or suppressed.
+
+A branch under `verify/**` is also an explicit release-candidate verification lane: pushes there run
+the full CI workflow, and desktop-relevant pushes run the cross-platform Desktop workflow. That keeps
+ordinary feature branches from burning runner time while still providing a push-triggered path when
+PR events are unavailable.
 
 Branch protection should require one check, `verify`, which fails unless every other job succeeded.
 A job added to `ci.yml` is covered by it without anybody updating a list.
@@ -123,6 +172,8 @@ A job added to `ci.yml` is covered by it without anybody updating a list.
 | `migrations` | a schema change with no migration, or a snapshot that has drifted |
 | `image` | an image that builds but does not boot, or a supervised service that respawns |
 | `component dockerfiles` | a Dockerfile a release would publish that no longer builds, or one the publish list has stopped covering |
+| `Desktop` reusable workflow | a desktop regression or package failure; on Windows, an NSIS artifact that cannot install, stay alive on first launch, or uninstall |
+| `Desktop Windows signing` reusable workflow | a release installer whose embedded version, publisher, timestamp, signature chain, or signed-file hash does not match the release commit |
 
 `image` matters more than its position suggests. Everything above it can pass on a tree whose image
 never starts, because nothing else here runs the thing it ships. It builds the container, boots it
@@ -133,7 +184,10 @@ These checks run again, against the release commit, when the release PR is merge
 publish rather than the proposal, which is why the release PR arriving without its own checks does
 not matter: a pull request opened by a workflow does not trigger them.
 
-**No secrets are required.** Every workflow here uses only the built-in `GITHUB_TOKEN`.
+The image/build checks require no repository secret. Windows release signing uses GitHub OIDC to the
+protected `windows-signing` environment and the existing Azure Key Vault certificate; no client
+secret, PFX, exported private key, or signing key is stored in GitHub. An environment reviewer must
+approve access before the signed installer can become a release asset.
 
 ## The one thing CI cannot do
 

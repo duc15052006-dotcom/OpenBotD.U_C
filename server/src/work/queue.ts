@@ -124,6 +124,20 @@ export type WorkQueue = {
     limit?: number;
     maxAttempts?: number;
   }) => Promise<WorkItem[]>;
+  /**
+   * Lease items that already exhausted their normal retry budget, without incrementing attempts.
+   *
+   * This is a cleanup/reconciliation lane only. Normal execution must use claim(). It exists so a
+   * worker that crashed on its final attempt cannot leave durable domain state permanently stuck
+   * after claim() correctly stops handing that item out.
+   */
+  claimExhausted?: (input: {
+    kind: string;
+    owner: string;
+    leaseMs: number;
+    limit?: number;
+    maxAttempts?: number;
+  }) => Promise<WorkItem[]>;
   /** Keep a claim alive while the work runs. False means it was already taken away. */
   renew: (input: {
     kind: string;
@@ -141,6 +155,21 @@ export type WorkQueue = {
   }) => Promise<boolean>;
   /** Not done, and worth another go after `delayMs`. False means it was no longer ours. */
   release: (input: {
+    kind: string;
+    key: string;
+    owner: string;
+    delayMs: number;
+    reason?: string;
+  }) => Promise<boolean>;
+  /**
+   * Put claimed work back for later WITHOUT spending one of its retry attempts.
+   *
+   * This is only for an external admission condition such as a deployment concurrency ceiling:
+   * nothing failed, the worker simply was not allowed to begin. Claim increments attempts before
+   * the caller can discover that condition, so a normal release would eventually exhaust healthy
+   * work merely because the deployment stayed busy long enough.
+   */
+  defer?: (input: {
     kind: string;
     key: string;
     owner: string;
@@ -331,6 +360,66 @@ export function createWorkQueue(database: Database): WorkQueue {
       });
     },
 
+    async claimExhausted({
+      kind,
+      owner,
+      leaseMs,
+      limit = 1,
+      maxAttempts = DEFAULT_MAX_ATTEMPTS,
+    }) {
+      return database.transaction(async (transaction) => {
+        const due = await transaction.execute(sql`
+          select "kind", "key"
+          from "work_items"
+          where "kind" = ${kind}
+            and "finished_at" is null
+            and "attempts" >= ${maxAttempts}
+            and "run_at" <= now()
+            and ("lease_until" is null or "lease_until" <= now())
+          order by "run_at" asc
+          limit ${limit}
+          for update skip locked
+        `);
+
+        const rows = (
+          Array.isArray(due) ? due : ((due as { rows?: unknown[] })?.rows ?? [])
+        ) as {
+          kind: string;
+          key: string;
+        }[];
+        if (rows.length === 0) return [];
+
+        const claimed: WorkItem[] = [];
+        for (const row of rows) {
+          const [updated] = await transaction
+            .update(workItems)
+            .set({
+              claimedBy: owner,
+              leaseUntil: fromNow(leaseMs),
+              updatedAt: sql`now()`,
+            })
+            .where(
+              and(eq(workItems.kind, row.kind), eq(workItems.key, row.key)),
+            )
+            .returning({
+              kind: workItems.kind,
+              key: workItems.key,
+              payload: workItems.payload,
+              attempts: workItems.attempts,
+            });
+          if (updated) {
+            claimed.push({
+              kind: updated.kind,
+              key: updated.key,
+              payload: (updated.payload ?? {}) as Record<string, unknown>,
+              attempts: updated.attempts,
+            });
+          }
+        }
+        return claimed;
+      });
+    },
+
     async renew({ kind, key, owner, leaseMs }) {
       const [renewed] = await database
         .update(workItems)
@@ -380,6 +469,27 @@ export function createWorkQueue(database: Database): WorkQueue {
         .where(ours(kind, key, owner))
         .returning({ key: workItems.key });
       return Boolean(released);
+    },
+
+    async defer({ kind, key, owner, delayMs, reason }) {
+      /*
+       * Claim increments attempts before the worker can discover a shared-capacity refusal. Undo
+       * exactly that claim here, while the row is still leased to this owner, and push it out. The
+       * GREATEST guard is defensive against malformed/manual rows; attempts must never go negative.
+       */
+      const [deferred] = await database
+        .update(workItems)
+        .set({
+          claimedBy: null,
+          leaseUntil: null,
+          attempts: sql`greatest(${workItems.attempts} - 1, 0)`,
+          runAt: fromNow(delayMs),
+          updatedAt: sql`now()`,
+          ...(reason === undefined ? {} : { lastError: reason }),
+        })
+        .where(ours(kind, key, owner))
+        .returning({ key: workItems.key });
+      return Boolean(deferred);
     },
 
     async purge({

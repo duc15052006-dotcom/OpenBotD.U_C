@@ -4,6 +4,7 @@
  * boot boundary.
  */
 import { singleUserEnabled } from "./auth/dev-actor";
+import { normalizeDomain } from "./auth/email-domain";
 import type { ActionPolicy } from "./computer/policy";
 import { parseActionPolicy } from "./computer/policy-store";
 
@@ -84,6 +85,11 @@ export type AuthConfig = {
   secret: string;
   trustedOrigins: string[];
   initialAdminEmails: string[];
+  /**
+   * Email domains this deployment admits, on top of whatever the provider decided.
+   * Empty means no opinion and preserves the current sign-in behaviour.
+   */
+  allowedEmailDomains: string[];
   google?: OAuthClient;
   /**
    * `tenantId` decides who may sign in at all, so it is not a detail. `common` admits any Microsoft
@@ -406,6 +412,87 @@ function keyEncryptionKey(environment: Environment): string {
   return value;
 }
 
+/**
+ * Whether this deployment may run with no sign-in at all.
+ *
+ * OPENBOT_SINGLE_USER is an explicit opt-in, but an opt-in alone must not turn a publicly
+ * reachable deployment into one administrator with no authentication. Loopback is silent,
+ * private/LAN addresses are allowed with a warning, and public or unparseable addresses fail closed.
+ */
+function singleUserAllowed(
+  environment: Environment,
+  hasProvider: boolean,
+): boolean {
+  if (!singleUserEnabled(environment, hasProvider)) return false;
+
+  const reachable = [
+    optional(environment, "OPENBOT_PUBLIC_URL"),
+    optional(environment, "OPENBOT_APP_URL"),
+    ...commaSeparated(environment, "TRUSTED_ORIGINS"),
+  ].filter((value): value is string => value !== undefined);
+
+  const published = reachable.filter((value) => reachOf(value) === "public");
+  if (published.length > 0) {
+    throw new Error(
+      `OPENBOT_SINGLE_USER admits every request as one administrator with no sign-in, so it cannot be combined with an address the public internet reaches: ${published.join(", ")}. Configure GOOGLE_OAUTH_*, MICROSOFT_OAUTH_* or OKTA_OAUTH_* with BETTER_AUTH_SECRET and BETTER_AUTH_URL, or serve it somewhere only you reach.`,
+    );
+  }
+
+  const shared = reachable.filter((value) => reachOf(value) === "private");
+  if (shared.length > 0) {
+    console.warn(
+      `OPENBOT_SINGLE_USER admits every request as one administrator with no sign-in, and this deployment answers on an address beyond this machine: ${shared.join(", ")}. Anybody on that network is that administrator. Configure a sign-in provider before anybody else is on it.`,
+    );
+  }
+
+  return true;
+}
+
+type Reach = "loopback" | "private" | "public";
+
+function reachOf(raw: string): Reach {
+  let bare: string;
+  try {
+    bare = new URL(raw).hostname.toLowerCase();
+  } catch {
+    return "public";
+  }
+  bare = bare.replace(/^\[|\]$/g, "").replace(/\.+$/, "");
+
+  if (
+    bare === "localhost" ||
+    bare === "::1" ||
+    bare === "0:0:0:0:0:0:0:1" ||
+    /^127\./.test(bare)
+  ) {
+    return "loopback";
+  }
+
+  if (bare.includes(":")) {
+    return /^f[cd]/.test(bare) || /^fe[89ab]/.test(bare) ? "private" : "public";
+  }
+
+  const octets = bare.split(".");
+  if (octets.length === 4 && octets.every((part) => /^\d{1,3}$/.test(part))) {
+    const [a, b] = octets.map(Number) as [number, number, number, number];
+    const privateV4 =
+      a === 10 ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      (a === 169 && b === 254) ||
+      (a === 100 && b >= 64 && b <= 127);
+    return privateV4 ? "private" : "public";
+  }
+
+  const privateName =
+    !bare.includes(".") ||
+    bare.endsWith(".local") ||
+    bare.endsWith(".internal") ||
+    bare.endsWith(".lan") ||
+    bare.endsWith(".home.arpa");
+  return privateName ? "private" : "public";
+}
+
 function url(environment: Environment, name: string): string | undefined {
   const value = optional(environment, name);
   if (!value) {
@@ -513,6 +600,20 @@ function commaSeparated(environment: Environment, name: string): string[] {
     .filter(Boolean);
 }
 
+/** Microsoft's multi-tenant audiences: none names one directory this deployment controls. */
+const MULTI_TENANT_AUDIENCES = new Set([
+  "common",
+  "organizations",
+  "consumers",
+]);
+
+function namesNoDirectory(tenantId: string | undefined): boolean {
+  return (
+    tenantId !== undefined &&
+    MULTI_TENANT_AUDIENCES.has(tenantId.trim().toLowerCase())
+  );
+}
+
 /**
  * Sign-in, if this deployment has an identity provider to sign people in with.
  *
@@ -570,6 +671,36 @@ function authConfig(
     );
   }
 
+  const namedDomains = commaSeparated(
+    environment,
+    "SIGNIN_ALLOWED_EMAIL_DOMAINS",
+  );
+  const allowedEmailDomains = namedDomains
+    .map(normalizeDomain)
+    .filter((domain): domain is string => domain !== undefined);
+
+  if (namedDomains.length > 0 && allowedEmailDomains.length === 0) {
+    throw new Error(
+      "SIGNIN_ALLOWED_EMAIL_DOMAINS is set but names no domain, so every sign-in would be refused. Write it as example.com,example.co.uk",
+    );
+  }
+
+  if (allowedEmailDomains.length > 0 && namesNoDirectory(microsoft?.tenantId)) {
+    throw new Error(
+      `SIGNIN_ALLOWED_EMAIL_DOMAINS names domains, but MICROSOFT_OAUTH_TENANT_ID is \`${microsoft?.tenantId}\`, which names no directory and admits accounts from any of them. Set your directory GUID before using the domain filter.`,
+    );
+  }
+
+  if (
+    isProduction(environment) &&
+    allowedEmailDomains.length === 0 &&
+    namesNoDirectory(microsoft?.tenantId)
+  ) {
+    console.warn(
+      "MICROSOFT_OAUTH_TENANT_ID is multi-tenant and SIGNIN_ALLOWED_EMAIL_DOMAINS names no domain. Set your directory GUID or explicitly constrain who may sign in.",
+    );
+  }
+
   return {
     baseUrl,
     secret,
@@ -582,6 +713,7 @@ function authConfig(
          */
         ["http://127.0.0.1:3010", "http://[::1]:3010", "http://localhost:3010"],
     initialAdminEmails,
+    allowedEmailDomains,
     ...(google ? { google } : {}),
     ...(microsoft ? { microsoft } : {}),
     ...(okta ? { okta } : {}),
@@ -1037,7 +1169,7 @@ export function loadConfig(
     auditRetentionDays: auditRetentionDays(environment),
     oauth: { google },
     auth,
-    singleUser: singleUserEnabled(
+    singleUser: singleUserAllowed(
       environment,
       configuredAuthProviders(auth).length > 0,
     ),
