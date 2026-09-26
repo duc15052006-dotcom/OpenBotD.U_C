@@ -1468,6 +1468,35 @@ describe("resolving a ref across replicas", () => {
  * supervisor replaces a computer whose image has changed without telling the server, so the row
  * outlives the run that wrote it and nothing notices.
  */
+describe("snapshot run ordering", () => {
+  test("stamps the snapshot with the run read before capture", async () => {
+    const snapshots = createInMemorySnapshotStore();
+    let run = "run-1";
+    const { provider, fetchImpl } = fakeComputer({
+      session: () => run,
+      routes: {
+        "/snapshot": () => {
+          // A reset/replacement lands while the snapshot request is in flight.
+          run = "run-2";
+          return Response.json(SNAPSHOT);
+        },
+      },
+    });
+    const { store } = fakeAudit();
+    const gateway = createComputerGateway({
+      provider,
+      fetchImpl,
+      auditStore: store,
+      policy: () => PERMISSIVE,
+      snapshots,
+    });
+
+    await gateway.snapshot("bot-1");
+
+    expect((await snapshots.load("bot-1"))?.session).toBe("run-1");
+  });
+});
+
 describe("a ref that outlived its computer", () => {
   test("does not resolve against the dead run's page", async () => {
     const snapshots = createInMemorySnapshotStore();
