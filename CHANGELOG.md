@@ -8,6 +8,14 @@ Newest first. `Unreleased` is what is on `main` and not yet tagged.
 
 ## Unreleased
 
+### Skill selection keeps capabilities named across multiple JSON replies
+
+When a model wraps its skill choice in prose or sends a revised JSON object, OpenBot reads each
+complete `skills` list and offers the union of the named skills' granted tools. Previously a reply
+containing multiple objects fell back to offering every tool; replies with no valid `skills` list
+still do.
+
+
 ### Malformed paging cursors are rejected instead of restarting at page one
 
 Channel and administrator people-list endpoints now return a clear 400 for malformed, stale or
