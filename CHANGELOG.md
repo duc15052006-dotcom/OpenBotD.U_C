@@ -8,6 +8,12 @@ Newest first. `Unreleased` is what is on `main` and not yet tagged.
 
 ## Unreleased
 
+### Malformed paging cursors are rejected instead of restarting at page one
+
+Channel and administrator people-list endpoints now return a clear 400 for malformed, stale or
+invalid-date cursors. Previously those cursors silently restarted paging from page one, which could
+make clients loop over the same results; valid and absent cursors keep their existing behavior.
+
 ### MCP resource links keep their destination
 
 MCP tools that return a `resource_link` now preserve its name, URI and description in the text
