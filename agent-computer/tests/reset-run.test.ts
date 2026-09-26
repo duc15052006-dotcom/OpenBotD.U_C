@@ -52,6 +52,7 @@ const SET = [
   "COMPUTER_BROWSER_MODE",
   "PORT",
   "PROFILES_DIR",
+  "QUARANTINE_DIR",
   "WORKSPACE_DIR",
 ] as const;
 const before: Partial<Record<(typeof SET)[number], string | undefined>> = {};
@@ -78,6 +79,7 @@ beforeAll(async () => {
   process.env.PORT = String(await freePort());
   BASE = `http://127.0.0.1:${process.env.PORT}`;
   process.env.PROFILES_DIR = join(root, "profiles");
+  process.env.QUARANTINE_DIR = join(root, "quarantine");
   process.env.WORKSPACE_DIR = join(root, "workspace");
   /*
    * Imported after the environment is set, because the module reads it while it loads, and under a
