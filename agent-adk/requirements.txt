@@ -1,5 +1,5 @@
 ag-ui-adk
-google-adk
+google-adk==2.9.2
 litellm
 fastapi
 python-multipart
