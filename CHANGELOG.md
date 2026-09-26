@@ -8,6 +8,15 @@ Newest first. `Unreleased` is what is on `main` and not yet tagged.
 
 ## Unreleased
 
+### Shared computers fence stale snapshots across browser resets
+
+In shared-computer mode, each Bot now exposes a browser-run identity in addition to its snapshot
+generation. Resetting that Bot rotates the run, and the server reads it before resolving element
+refs. A snapshot that was still in flight when a reset happened can no longer reinsert the wiped
+page as current, and a fresh browser whose generation restarts from one no longer loses to a higher
+generation left by the previous run. Older shared-computer processes without the run endpoint keep
+the previous behavior until upgraded.
+
 ### The built-in Bot validates a trimmed model name at startup
 
 Direct container or service configuration may include surrounding whitespace in `BOT_MODEL`.
