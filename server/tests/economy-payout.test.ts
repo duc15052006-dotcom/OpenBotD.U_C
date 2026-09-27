@@ -148,8 +148,17 @@ describe("Agent Economy manual Owner payout", () => {
       authorization: {
         decision: "OWNER_CONFIRMATION",
         policyVersion: 1,
-        ownerConfirmed: true,
+        approvalId: "approval-1",
       },
+      loadOwnerApproval: async () => ({
+        id: "approval-1",
+        intentId: "intent-1",
+        agentId: "agent-a",
+        policyVersion: 1,
+        approverKind: "OWNER",
+        approverId: "owner-a",
+        approvedAt: new Date("2026-09-27T00:30:00Z"),
+      }),
     });
     expect(confirmed.receipt.amountMinor).toBe(15_000n);
   });

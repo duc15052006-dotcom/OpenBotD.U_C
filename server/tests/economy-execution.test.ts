@@ -5,6 +5,7 @@ import {
   PaymentExecutionRefusedError,
   withPaymentCredentialAdapter,
   type ExecutablePaymentIntent,
+  type OwnerPaymentApproval,
   type PaymentPolicySnapshot,
 } from "../src/economy/execution";
 import type {
@@ -55,6 +56,21 @@ function snapshot(
     settledBalanceMinor: 100_000n,
     availableDistributableProfitMinor: 20_000n,
     spend: { hourlyMinor: 0n, dailyMinor: 0n, monthlyMinor: 0n },
+    ...overrides,
+  };
+}
+
+function ownerApproval(
+  overrides: Partial<OwnerPaymentApproval> = {},
+): OwnerPaymentApproval {
+  return {
+    id: "approval-id",
+    intentId: "intent-id",
+    agentId: "agent-a",
+    policyVersion: 7,
+    approverKind: "OWNER",
+    approverId: "owner-a",
+    approvedAt: new Date("2026-09-27T15:00:00.000Z"),
     ...overrides,
   };
 }
@@ -156,6 +172,92 @@ describe("Agent Economy execution boundary", () => {
       }),
     ).rejects.toThrow("Owner confirmation is required");
 
+    expect(adapter.executeCalls).toBe(0);
+  });
+
+  test("loads persisted Owner approval before prepare and again before execution", async () => {
+    const adapter = new RecordingAdapter();
+    const largeIntent = { ...intent, amountMinor: 15_000n };
+    let approvalReads = 0;
+
+    const receipt = await executeAuthorizedPayment({
+      intent: largeIntent,
+      authorization: {
+        decision: "OWNER_CONFIRMATION",
+        policyVersion: 7,
+        approvalId: "approval-id",
+      },
+      provider: "mock-provider",
+      adapter,
+      loadPolicySnapshot: async () => snapshot(),
+      loadOwnerApproval: async (approvalId) => {
+        approvalReads += 1;
+        expect(approvalId).toBe("approval-id");
+        return ownerApproval();
+      },
+    });
+
+    expect(approvalReads).toBe(2);
+    expect(adapter.executeCalls).toBe(1);
+    expect(receipt.amountMinor).toBe(15_000n);
+  });
+
+  test("fails closed when Owner approval is missing or bound to another intent", async () => {
+    const largeIntent = { ...intent, amountMinor: 15_000n };
+
+    await expect(
+      executeAuthorizedPayment({
+        intent: largeIntent,
+        authorization: {
+          decision: "OWNER_CONFIRMATION",
+          policyVersion: 7,
+          approvalId: "approval-id",
+        },
+        provider: "mock-provider",
+        adapter: new RecordingAdapter(),
+        loadPolicySnapshot: async () => snapshot(),
+      }),
+    ).rejects.toThrow("persisted Owner approval is required");
+
+    await expect(
+      executeAuthorizedPayment({
+        intent: largeIntent,
+        authorization: {
+          decision: "OWNER_CONFIRMATION",
+          policyVersion: 7,
+          approvalId: "approval-id",
+        },
+        provider: "mock-provider",
+        adapter: new RecordingAdapter(),
+        loadPolicySnapshot: async () => snapshot(),
+        loadOwnerApproval: async () =>
+          ownerApproval({ intentId: "another-intent" }),
+      }),
+    ).rejects.toThrow("Owner approval does not match payment intent");
+  });
+
+  test("fails closed when Owner approval was issued under another policy version", async () => {
+    const largeIntent = { ...intent, amountMinor: 15_000n };
+    const adapter = new RecordingAdapter();
+
+    await expect(
+      executeAuthorizedPayment({
+        intent: largeIntent,
+        authorization: {
+          decision: "OWNER_CONFIRMATION",
+          policyVersion: 7,
+          approvalId: "approval-id",
+        },
+        provider: "mock-provider",
+        adapter,
+        loadPolicySnapshot: async () => snapshot(),
+        loadOwnerApproval: async () => ownerApproval({ policyVersion: 6 }),
+      }),
+    ).rejects.toThrow(
+      "Owner approval policy version does not match execution policy",
+    );
+
+    expect(adapter.prepareCalls).toBe(0);
     expect(adapter.executeCalls).toBe(0);
   });
 
