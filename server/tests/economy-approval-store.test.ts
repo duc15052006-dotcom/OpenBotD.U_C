@@ -31,10 +31,7 @@ describe("Agent Economy Owner approval store policy", () => {
       ),
     ).toThrow(OwnerPaymentApprovalForbiddenError);
     expect(() =>
-      requireOwnerApprovalTarget(
-        { ...target, decision: "DENY" },
-        "other-user",
-      ),
+      requireOwnerApprovalTarget({ ...target, decision: "DENY" }, "other-user"),
     ).toThrow(OwnerPaymentApprovalForbiddenError);
   });
 
