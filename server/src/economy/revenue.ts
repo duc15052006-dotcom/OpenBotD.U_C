@@ -56,7 +56,7 @@ export function validateRevenueEvent(event: NormalizedRevenueEvent): string[] {
  * Pending money is never profit. Non-redeemable compute/internal credits may be valuable to the
  * Agent, but they are not cash-equivalent revenue and therefore do not enter distributable P&L.
  */
-export function settledRevenueLedgerEntry(
+export function revenueLedgerEntry(
   event: NormalizedRevenueEvent,
 ): AgentLedgerEntry | null {
   const errors = validateRevenueEvent(event);
@@ -64,21 +64,25 @@ export function settledRevenueLedgerEntry(
     throw new Error(errors.join("; "));
   }
 
-  if (event.status !== "settled" || !event.redeemable) return null;
+  if (!event.redeemable) return null;
+  if (event.status !== "settled" && event.status !== "reversed") return null;
+
+  const reversed = event.status === "reversed";
+  const idempotencyKey = `revenue:${event.adapterId}:${event.externalEventId}:${event.status}`;
 
   return {
-    id: `revenue:${event.adapterId}:${event.externalEventId}`,
+    id: idempotencyKey,
     agentId: event.agentId,
     accountId: event.accountId,
-    idempotencyKey: `revenue:${event.adapterId}:${event.externalEventId}`,
-    type: "revenue",
-    direction: "credit",
+    idempotencyKey,
+    type: reversed ? "revenue_reversal" : "revenue",
+    direction: reversed ? "debit" : "credit",
     status: "settled",
     amountMinor: event.amountMinor,
     assetCode: event.assetCode,
     assetClass: event.assetClass,
     redeemable: true,
-    occurredAt: event.settledAt ?? event.occurredAt,
+    occurredAt: reversed ? event.occurredAt : (event.settledAt ?? event.occurredAt),
   };
 }
 
