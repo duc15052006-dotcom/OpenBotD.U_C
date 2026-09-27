@@ -259,3 +259,83 @@ export const agentPaymentReceipts = pgTable(
     ),
   ],
 );
+
+/**
+ * One configured source of normalized revenue for an Agent.
+ *
+ * Secrets never live here. credentialId is only a pointer to the encrypted server vault; adapters
+ * receive plaintext inside a scoped server-side factory just like payment adapters.
+ */
+export const revenueAdapters = pgTable(
+  "revenue_adapters",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    agentId: text("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "restrict" }),
+    adapterKey: text("adapter_key").notNull(),
+    kind: text("kind").notNull(),
+    provider: text("provider").notNull(),
+    credentialId: uuid("credential_id").references(() => credentials.id, {
+      onDelete: "restrict",
+    }),
+    enabled: boolean("enabled").notNull().default(true),
+    configuration: jsonb("configuration").notNull().default({}),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex("revenue_adapters_agent_key_idx").on(
+      table.agentId,
+      table.adapterKey,
+    ),
+  ],
+);
+
+/**
+ * Provider evidence normalized into one immutable revenue stream.
+ *
+ * Pending events stay visible for reconciliation but only settled, redeemable events are projected
+ * into the accounting ledger. Provider retries collide on (adapter, external_event_id) instead of
+ * double-counting income.
+ */
+export const revenueEvents = pgTable(
+  "revenue_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    adapterId: uuid("adapter_id")
+      .notNull()
+      .references(() => revenueAdapters.id, { onDelete: "restrict" }),
+    externalEventId: text("external_event_id").notNull(),
+    agentId: text("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "restrict" }),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => agentFinancialAccounts.id, { onDelete: "restrict" }),
+    status: text("status").notNull(),
+    amountMinor: moneyMinor("amount_minor").notNull(),
+    assetCode: text("asset_code").notNull(),
+    assetClass: text("asset_class").notNull(),
+    redeemable: boolean("redeemable").notNull(),
+    source: text("source").notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    settledAt: timestamp("settled_at", { withTimezone: true }),
+    evidence: jsonb("evidence").notNull().default({}),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex("revenue_events_adapter_external_idx").on(
+      table.adapterId,
+      table.externalEventId,
+    ),
+    index("revenue_events_agent_occurred_idx").on(
+      table.agentId,
+      table.occurredAt,
+    ),
+    index("revenue_events_account_occurred_idx").on(
+      table.accountId,
+      table.occurredAt,
+    ),
+  ],
+);
+
