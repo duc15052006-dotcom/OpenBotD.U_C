@@ -79,14 +79,20 @@ function parseCredential(plaintext: string): CirclePaymentCredential {
     }
   }
 
-  if (!/^[0-9a-fA-F]{64}$/.test(candidate.entitySecretHex!)) {
+  const entitySecretHex = candidate.entitySecretHex;
+  if (
+    typeof entitySecretHex !== "string" ||
+    !/^[0-9a-fA-F]{64}$/.test(entitySecretHex)
+  ) {
     throw new Error("Circle entity secret must be a 32-byte hexadecimal value");
   }
 
+  const tokenDecimals = candidate.tokenDecimals;
   if (
-    !Number.isInteger(candidate.tokenDecimals) ||
-    candidate.tokenDecimals! < 0 ||
-    candidate.tokenDecimals! > 30
+    typeof tokenDecimals !== "number" ||
+    !Number.isInteger(tokenDecimals) ||
+    tokenDecimals < 0 ||
+    tokenDecimals > 30
   ) {
     throw new Error("Circle token decimals must be an integer from 0 to 30");
   }
@@ -136,8 +142,8 @@ function circleIdempotencyKey(value: string): string {
   const bytes = new Uint8Array(
     createHash("sha256").update(value).digest().subarray(0, 16),
   );
-  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
-  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40;
+  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
   const hex = Buffer.from(bytes).toString("hex");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
