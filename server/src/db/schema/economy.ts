@@ -162,3 +162,48 @@ export const agentLedgerEntries = pgTable(
     ),
   ],
 );
+
+/**
+ * Immutable record of a requested financial action and the server-side policy decision.
+ *
+ * E2 deliberately stops here: an ALLOW is permission to proceed to a later execution boundary, not
+ * proof that money moved. E3 will add prepared transfers/receipts rather than mutating this record.
+ */
+export const agentPaymentIntents = pgTable(
+  "agent_payment_intents",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    agentId: text("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "restrict" }),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => agentFinancialAccounts.id, { onDelete: "restrict" }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    kind: text("kind").notNull(),
+    amountMinor: moneyMinor("amount_minor").notNull(),
+    destination: text("destination").notNull(),
+    category: text("category").notNull(),
+    x402Domain: text("x402_domain"),
+    decision: text("decision").notNull(),
+    decisionReason: text("decision_reason").notNull(),
+    policyVersion: integer("policy_version").notNull(),
+    initiatorKind: text("initiator_kind").notNull(),
+    initiatorId: text("initiator_id"),
+    metadata: jsonb("metadata").notNull().default({}),
+    requestedAt: timestamp("requested_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex("agent_payment_intents_idempotency_idx").on(
+      table.idempotencyKey,
+    ),
+    index("agent_payment_intents_agent_requested_idx").on(
+      table.agentId,
+      table.requestedAt,
+    ),
+  ],
+);
+
