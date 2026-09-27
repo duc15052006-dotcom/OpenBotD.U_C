@@ -2,6 +2,7 @@ import {
   canOwnerPayout,
   summarizeAgentLedger,
   type AgentLedgerEntry,
+  type AssetClass,
   type TreasuryPolicy,
 } from "./model";
 import type { VerifiedPaymentReceipt } from "./execution";
@@ -27,6 +28,7 @@ export interface OwnerPayoutProof {
   minimumReserveMinor: bigint;
   destination: string;
   assetCode: string;
+  assetClass: AssetClass;
 }
 
 export interface OwnerPayoutPlan {
@@ -43,6 +45,7 @@ export function planManualOwnerPayout(input: {
   amountMinor: bigint;
   destination: string;
   assetCode: string;
+  assetClass: AssetClass;
   settledBalanceMinor: bigint;
   policy: EconomyExecutionPolicy;
   spend: SpendWindow;
@@ -102,6 +105,7 @@ export function planManualOwnerPayout(input: {
       minimumReserveMinor: input.policy.minimumReserveMinor,
       destination: input.destination,
       assetCode: input.assetCode,
+      assetClass: input.assetClass,
     },
   };
 }
@@ -170,7 +174,7 @@ export function ownerPayoutLedgerEntry(
     status: "settled",
     amountMinor: payout.amountMinor,
     assetCode: payout.assetCode,
-    assetClass: payout.assetCode === "USDC" ? "STABLECOIN" : "FIAT",
+    assetClass: payout.proof.assetClass,
     redeemable: true,
     occurredAt: payout.paidAt,
   };
