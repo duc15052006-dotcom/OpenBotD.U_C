@@ -58,6 +58,8 @@ import { configuredAuthProviders, type DeploymentConfig } from "./config";
 import type { CredentialAdminService, CredentialInput } from "./credentials";
 import type { Database } from "./db/client";
 import { withoutStatement } from "./db/query-failure";
+import { createOwnerPaymentApprovalRoutes } from "./economy/approval-routes";
+import type { OwnerPaymentApprovalStore } from "./economy/approval-store";
 import type { HostAccessBroker } from "./host-access/broker";
 import { createHostAccessRoutes } from "./host-access/routes";
 import { createIntelligenceClient } from "./intelligence-client";
@@ -336,6 +338,8 @@ export function createApp(
   agentKnowledge?: AgentKnowledgeStore,
   /** A person's durable multi-step workflows, exposed read/control-only to their dashboard. */
   workflowStore?: WorkflowStore,
+  /** Immutable Owner approvals for financial intents that cross the confirmation threshold. */
+  ownerPaymentApprovals?: OwnerPaymentApprovalStore,
 ) {
   const app = new Hono<{ Variables: AppVariables }>();
 
@@ -1305,6 +1309,13 @@ export function createApp(
     app.route(
       "/api/workflows",
       createWorkflowRoutes(workflowStore, requireUser),
+    );
+  }
+
+  if (ownerPaymentApprovals) {
+    app.route(
+      "/api/economy/payment-intents",
+      createOwnerPaymentApprovalRoutes(ownerPaymentApprovals, requireUser),
     );
   }
 
