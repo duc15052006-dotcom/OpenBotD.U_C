@@ -104,7 +104,10 @@ function decimalToMinor(value: string, decimals: number): bigint {
   }
   return (
     BigInt(whole) * 10n ** BigInt(decimals) +
-    BigInt((fraction.slice(0, decimals) + "0".repeat(decimals)).slice(0, decimals) || "0")
+    BigInt(
+      (fraction.slice(0, decimals) + "0".repeat(decimals)).slice(0, decimals) ||
+        "0",
+    )
   );
 }
 
@@ -130,14 +133,19 @@ function circleIdempotencyKey(value: string): string {
 
   // Circle requires UUID v4. OpenBot idempotency keys are intentionally provider-neutral strings,
   // so map them deterministically rather than generating a fresh UUID on retry.
-  const bytes = new Uint8Array(createHash("sha256").update(value).digest().subarray(0, 16));
+  const bytes = new Uint8Array(
+    createHash("sha256").update(value).digest().subarray(0, 16),
+  );
   bytes[6] = (bytes[6]! & 0x0f) | 0x40;
   bytes[8] = (bytes[8]! & 0x3f) | 0x80;
   const hex = Buffer.from(bytes).toString("hex");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-async function jsonResponse<T>(response: Response, operation: string): Promise<T> {
+async function jsonResponse<T>(
+  response: Response,
+  operation: string,
+): Promise<T> {
   let body: unknown;
   try {
     body = await response.json();
@@ -271,7 +279,9 @@ export class CircleDeveloperWalletAdapter implements PaymentAccountAdapter {
       balance.token?.symbol !== this.credential.tokenSymbol ||
       balance.token?.decimals !== this.credential.tokenDecimals
     ) {
-      throw new Error("Circle token metadata does not match configured account");
+      throw new Error(
+        "Circle token metadata does not match configured account",
+      );
     }
     return {
       assetCode,
