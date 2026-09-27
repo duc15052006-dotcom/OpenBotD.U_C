@@ -64,7 +64,7 @@ describe("Agent Economy child funding", () => {
       summarizeChildEconomy({
         relationship,
         fundingEvents: [
-          { ...event("foreign"), relationshipId: "relationship-2" },
+          { ...event("foreign", 100n), relationshipId: "relationship-2" },
         ],
         grossRevenueMinor: 0n,
         operatingCostMinor: 0n,
