@@ -58,6 +58,11 @@ export const credentialKind = pgEnum("credential_kind", [
    * that speaks for the deployment, and one row per person that speaks for them.
    */
   "mcp_user_token",
+  /*
+   * Private material for an Agent Economy payment account. The secret remains in the server-side
+   * encrypted credential vault and is never copied into an Agent, Computer, plugin or MCP config.
+   */
+  "wallet",
 ]);
 
 export const users = pgTable("users", {
