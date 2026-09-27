@@ -23,6 +23,18 @@ describe("Agent Economy Owner approval store policy", () => {
     );
   });
 
+  test("checks ownership before revealing whether confirmation was required", () => {
+    expect(() =>
+      requireOwnerApprovalTarget(
+        { ...target, decision: "ALLOW" },
+        "other-user",
+      ),
+    ).toThrow(OwnerPaymentApprovalForbiddenError);
+    expect(() =>
+      requireOwnerApprovalTarget({ ...target, decision: "DENY" }, "other-user"),
+    ).toThrow(OwnerPaymentApprovalForbiddenError);
+  });
+
   test("refuses approval when the immutable intent did not require confirmation", () => {
     expect(() =>
       requireOwnerApprovalTarget({ ...target, decision: "ALLOW" }, "owner-a"),

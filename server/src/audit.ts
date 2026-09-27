@@ -61,6 +61,14 @@ export const auditEventTypes = [
   "credential.rotation_refused",
   "credential.revoked",
   /**
+   * A human Owner approved, or was refused while trying to approve, a financial payment intent.
+   *
+   * These are separate from payment execution: approval grants authority, while a later execution
+   * may still be refused by a changed policy, freeze, spend limit or reserve requirement.
+   */
+  "economy.payment_approved",
+  "economy.payment_approval_refused",
+  /**
    * Which coworker an untagged message was routed to, and why.
    *
    * A channel is pinned to one coworker before its first turn, so when the person did not name one

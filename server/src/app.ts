@@ -1315,7 +1315,11 @@ export function createApp(
   if (ownerPaymentApprovals) {
     app.route(
       "/api/economy/payment-intents",
-      createOwnerPaymentApprovalRoutes(ownerPaymentApprovals, requireUser),
+      createOwnerPaymentApprovalRoutes(
+        ownerPaymentApprovals,
+        requireUser,
+        auditStore,
+      ),
     );
   }
 
