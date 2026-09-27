@@ -67,7 +67,20 @@ data plane. The protected environment, repository-specific OIDC subject, Entra f
 and Key Vault permissions remain the signing trust boundary.
 
 An owner of the existing Entra application, or an appropriately authorized
-application administrator, must add the federated credential. From the repo root:
+application administrator, must add the federated credential. The safest path is the idempotent
+helper from the repo root:
+
+```powershell
+pwsh -NoProfile -File desktop/scripts/setup-windows-signing-federation.ps1 -CheckOnly
+pwsh -NoProfile -File desktop/scripts/setup-windows-signing-federation.ps1
+```
+
+The first command only checks. The second checks again, creates the credential only when it is
+missing, refuses to overwrite a same-name credential whose issuer/subject/audience differs, and
+re-reads Entra to verify the exact credential after creation. It requires Azure CLI to already be
+signed in as an application owner or appropriately authorized administrator.
+
+Equivalent raw Azure CLI creation, when you have already checked the existing credential list:
 
 ```sh
 az ad app federated-credential create \
@@ -75,8 +88,7 @@ az ad app federated-credential create \
   --parameters desktop/signing/azure-federation.json
 ```
 
-Check existing credentials first; do not duplicate or replace another repository's
-credential. This repository's immutable GitHub OIDC subject is pinned in the checked-in JSON as
+Do not duplicate or replace another repository's credential. This repository's immutable GitHub OIDC subject is pinned in the checked-in JSON as
 `repo:duc15052006-dotcom@270219086/OpenBotD.U_C@1374258280:environment:windows-signing`.
 Both the account ID and repository ID are part of the trust boundary, so copying the upstream
 CopilotKit/OpenBot subject here will make Azure reject this repository's token. An

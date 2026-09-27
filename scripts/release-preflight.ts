@@ -866,6 +866,9 @@ function checkReleaseWiring(): void {
   const release = workflow(".github/workflows/publish-release.yml");
   const releaseSource = read(".github/workflows/publish-release.yml");
   const federation = json("desktop/signing/azure-federation.json");
+  const federationBootstrap = read(
+    "desktop/scripts/setup-windows-signing-federation.ps1",
+  );
   const expectedFederationSubject =
     "repo:duc15052006-dotcom@270219086/OpenBotD.U_C@1374258280:environment:windows-signing";
   if (federation.subject !== expectedFederationSubject) {
@@ -881,6 +884,23 @@ function checkReleaseWiring(): void {
       JSON.stringify(["api://AzureADTokenExchange"])
   ) {
     fail("signing: Azure federation issuer or audience drifted");
+  }
+  for (const evidence of [
+    "federated-credential', 'list'",
+    "federated-credential create",
+    "Refusing to overwrite it.",
+    "created and verified.",
+    "[switch]$CheckOnly",
+  ]) {
+    if (!federationBootstrap.includes(evidence)) {
+      fail(`signing: federation bootstrap helper is missing ${evidence}`);
+    }
+  }
+  if (
+    federationBootstrap.includes("federated-credential delete") ||
+    federationBootstrap.includes("federated-credential update")
+  ) {
+    fail("signing: federation bootstrap helper must not replace credentials");
   }
 
   if (releaseSource.includes("ghcr.io/copilotkit/")) {
