@@ -1,12 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { encryptSecret } from "../src/credentials";
 import {
+  executeAndPersistAuthorizedPayment,
   executeAuthorizedPayment,
   PaymentExecutionRefusedError,
   withPaymentCredentialAdapter,
   type ExecutablePaymentIntent,
   type OwnerPaymentApproval,
   type PaymentPolicySnapshot,
+  type VerifiedPaymentReceipt,
+  type VerifiedPaymentReceiptStore,
 } from "../src/economy/execution";
 import type {
   Money,
@@ -75,6 +78,28 @@ function ownerApproval(
   };
 }
 
+class MemoryReceiptStore implements VerifiedPaymentReceiptStore {
+  stored: VerifiedPaymentReceipt | null = null;
+  loadCalls = 0;
+  saveCalls = 0;
+
+  async loadByIntent(intentId: string): Promise<VerifiedPaymentReceipt | null> {
+    this.loadCalls += 1;
+    return this.stored?.intentId === intentId ? this.stored : null;
+  }
+
+  async saveVerified(
+    receipt: VerifiedPaymentReceipt,
+  ): Promise<VerifiedPaymentReceipt> {
+    this.saveCalls += 1;
+    if (this.stored && this.stored.intentId === receipt.intentId) {
+      return this.stored;
+    }
+    this.stored = receipt;
+    return receipt;
+  }
+}
+
 class RecordingAdapter implements PaymentAccountAdapter {
   prepareCalls = 0;
   executeCalls = 0;
@@ -116,6 +141,85 @@ class RecordingAdapter implements PaymentAccountAdapter {
     return this.verifyResult;
   }
 }
+
+describe("Agent Economy durable receipt boundary", () => {
+  test("persists the first verified receipt and skips provider execution on retry", async () => {
+    const adapter = new RecordingAdapter();
+    const receiptStore = new MemoryReceiptStore();
+    let policyReads = 0;
+
+    const first = await executeAndPersistAuthorizedPayment({
+      intent,
+      authorization: { decision: "ALLOW", policyVersion: 7 },
+      provider: "mock-provider",
+      adapter,
+      receiptStore,
+      loadPolicySnapshot: async () => {
+        policyReads += 1;
+        return snapshot();
+      },
+    });
+
+    expect(first.externalReference).toBe("provider-transfer-1");
+    expect(receiptStore.saveCalls).toBe(1);
+    expect(adapter.executeCalls).toBe(1);
+    expect(policyReads).toBe(2);
+
+    const second = await executeAndPersistAuthorizedPayment({
+      intent,
+      authorization: { decision: "ALLOW", policyVersion: 7 },
+      provider: "mock-provider",
+      adapter,
+      receiptStore,
+      loadPolicySnapshot: async () => {
+        policyReads += 1;
+        throw new Error("retry must not reload policy after durable receipt");
+      },
+    });
+
+    expect(second).toEqual(first);
+    expect(receiptStore.loadCalls).toBe(2);
+    expect(receiptStore.saveCalls).toBe(1);
+    expect(adapter.executeCalls).toBe(1);
+    expect(adapter.prepareCalls).toBe(1);
+    expect(policyReads).toBe(2);
+  });
+
+  test("refuses a conflicting durable receipt before touching the provider", async () => {
+    const adapter = new RecordingAdapter();
+    const receiptStore = new MemoryReceiptStore();
+    receiptStore.stored = {
+      intentId: intent.id,
+      agentId: intent.agentId,
+      accountId: intent.accountId,
+      provider: "mock-provider",
+      externalReference: "provider-transfer-existing",
+      providerStatus: "verified",
+      assetCode: intent.assetCode,
+      amountMinor: intent.amountMinor,
+      destination: "another-wallet",
+      balanceBeforeMinor: 100_000n,
+      balanceAfterMinor: 99_000n,
+      verifiedAt: new Date("2026-09-27T16:00:00.000Z"),
+    };
+
+    await expect(
+      executeAndPersistAuthorizedPayment({
+        intent,
+        authorization: { decision: "ALLOW", policyVersion: 7 },
+        provider: "mock-provider",
+        adapter,
+        receiptStore,
+        loadPolicySnapshot: async () => snapshot(),
+      }),
+    ).rejects.toThrow("stored payment receipt does not match payment intent terms");
+
+    expect(adapter.balanceCalls).toBe(0);
+    expect(adapter.prepareCalls).toBe(0);
+    expect(adapter.executeCalls).toBe(0);
+    expect(receiptStore.saveCalls).toBe(0);
+  });
+});
 
 describe("Agent Economy execution boundary", () => {
   test("refuses an adapter that rewrites the prepared destination before money can move", async () => {
