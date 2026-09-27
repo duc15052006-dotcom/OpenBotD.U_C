@@ -372,6 +372,13 @@
       "when": 1790511000000,
       "tag": "0052_agent_economy_payout_rules",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1790507400000,
+      "tag": "0053_agent_economy_child_funding",
+      "breakpoints": true
     }
   ]
 }
