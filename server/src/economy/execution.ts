@@ -8,10 +8,7 @@ import {
   type PaymentIntent,
   type SpendWindow,
 } from "./intents";
-import type {
-  PaymentAccountAdapter,
-  TransferReceipt,
-} from "./payment-adapter";
+import type { PaymentAccountAdapter, TransferReceipt } from "./payment-adapter";
 
 export interface ExecutablePaymentIntent extends PaymentIntent {
   id: string;
