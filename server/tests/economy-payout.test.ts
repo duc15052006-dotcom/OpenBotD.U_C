@@ -60,6 +60,7 @@ function plan(amountMinor: bigint, overrides: {
     amountMinor,
     destination: overrides.destination ?? "owner-wallet",
     assetCode: "USDC",
+    assetClass: "STABLECOIN",
     settledBalanceMinor: overrides.settledBalanceMinor ?? 100_000n,
     policy: overrides.policy ?? policy,
     spend: { hourlyMinor: 0n, dailyMinor: 0n, monthlyMinor: 0n },
