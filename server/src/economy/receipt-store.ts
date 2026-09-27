@@ -8,7 +8,9 @@ import type {
 
 export class PaymentReceiptConflictError extends Error {
   constructor(intentId: string) {
-    super(`Payment intent ${intentId} already has a conflicting verified receipt.`);
+    super(
+      `Payment intent ${intentId} already has a conflicting verified receipt.`,
+    );
     this.name = "PaymentReceiptConflictError";
   }
 }
@@ -118,7 +120,8 @@ export function createVerifiedPaymentReceiptStore(
         receipt.amountMinor <= 0n ||
         !receipt.destination.trim() ||
         receipt.balanceBeforeMinor < 0n ||
-        (receipt.balanceAfterMinor !== null && receipt.balanceAfterMinor < 0n) ||
+        (receipt.balanceAfterMinor !== null &&
+          receipt.balanceAfterMinor < 0n) ||
         Number.isNaN(receipt.verifiedAt.getTime())
       ) {
         throw new PaymentReceiptConflictError(receipt.intentId);
