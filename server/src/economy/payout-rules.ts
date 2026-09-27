@@ -36,16 +36,32 @@ export function evaluateAutomatedPayout(input: {
   const { rule } = input;
 
   if (!rule.enabled) {
-    return { eligible: false, amountMinor: 0n, reason: "payout rule is disabled" };
+    return {
+      eligible: false,
+      amountMinor: 0n,
+      reason: "payout rule is disabled",
+    };
   }
   if (rule.thresholdMinor < 0n) {
-    return { eligible: false, amountMinor: 0n, reason: "invalid payout threshold" };
+    return {
+      eligible: false,
+      amountMinor: 0n,
+      reason: "invalid payout threshold",
+    };
   }
   if (rule.maxPayoutMinor !== null && rule.maxPayoutMinor <= 0n) {
-    return { eligible: false, amountMinor: 0n, reason: "invalid maximum payout" };
+    return {
+      eligible: false,
+      amountMinor: 0n,
+      reason: "invalid maximum payout",
+    };
   }
   if (input.minimumReserveMinor < 0n) {
-    return { eligible: false, amountMinor: 0n, reason: "invalid minimum reserve" };
+    return {
+      eligible: false,
+      amountMinor: 0n,
+      reason: "invalid minimum reserve",
+    };
   }
 
   if (rule.mode === "scheduled") {
