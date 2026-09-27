@@ -307,9 +307,7 @@ function requireStoredReceiptMatchesIntent(
     !receipt.externalReference.trim() ||
     Number.isNaN(receipt.verifiedAt.getTime())
   ) {
-    throw new PaymentExecutionRefusedError(
-      "stored payment receipt is invalid",
-    );
+    throw new PaymentExecutionRefusedError("stored payment receipt is invalid");
   }
 }
 
@@ -334,11 +332,7 @@ export async function executeAndPersistAuthorizedPayment(input: {
 }): Promise<VerifiedPaymentReceipt> {
   const existing = await input.receiptStore.loadByIntent(input.intent.id);
   if (existing) {
-    requireStoredReceiptMatchesIntent(
-      input.intent,
-      input.provider,
-      existing,
-    );
+    requireStoredReceiptMatchesIntent(input.intent, input.provider, existing);
     return existing;
   }
 
