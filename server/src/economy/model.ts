@@ -86,9 +86,7 @@ function nonNegative(value: bigint): bigint {
 export function validateTreasuryPolicy(policy: TreasuryPolicy): string[] {
   const errors: string[] = [];
   const shares =
-    policy.ownerShareBps +
-    policy.reinvestmentShareBps +
-    policy.reserveShareBps;
+    policy.ownerShareBps + policy.reinvestmentShareBps + policy.reserveShareBps;
 
   if (shares !== SHARE_BASIS_POINTS) {
     errors.push("profit shares must add up to 10000 basis points");
@@ -103,10 +101,7 @@ export function validateTreasuryPolicy(policy: TreasuryPolicy): string[] {
     ["maxHourlySpendMinor", policy.maxHourlySpendMinor],
     ["maxDailySpendMinor", policy.maxDailySpendMinor],
     ["maxMonthlySpendMinor", policy.maxMonthlySpendMinor],
-    [
-      "ownerConfirmationThresholdMinor",
-      policy.ownerConfirmationThresholdMinor,
-    ],
+    ["ownerConfirmationThresholdMinor", policy.ownerConfirmationThresholdMinor],
   ] as const) {
     if (value < 0n) errors.push(`${name} must not be negative`);
   }
@@ -131,8 +126,7 @@ export function allocateOperatingProfit(
   }
 
   const profit = nonNegative(operatingProfitMinor);
-  const ownerMinor =
-    (profit * policy.ownerShareBps) / SHARE_BASIS_POINTS;
+  const ownerMinor = (profit * policy.ownerShareBps) / SHARE_BASIS_POINTS;
   const reinvestmentMinor =
     (profit * policy.reinvestmentShareBps) / SHARE_BASIS_POINTS;
   // Put rounding remainder into reserve rather than accidentally making it
