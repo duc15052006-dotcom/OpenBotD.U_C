@@ -216,6 +216,39 @@ export const agentPaymentIntents = pgTable(
 );
 
 /**
+ * Immutable Owner approval for one payment intent.
+ *
+ * Approval is separate from the immutable intent because it happens later. The execution boundary
+ * must reload this row before external execution and bind it to the same Agent, intent and policy
+ * version. One intent can have at most one Owner approval.
+ */
+export const agentPaymentApprovals = pgTable(
+  "agent_payment_approvals",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    intentId: uuid("intent_id")
+      .notNull()
+      .references(() => agentPaymentIntents.id, { onDelete: "restrict" }),
+    agentId: text("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "restrict" }),
+    policyVersion: integer("policy_version").notNull(),
+    approverKind: text("approver_kind").notNull(),
+    approverId: text("approver_id").notNull(),
+    approvedAt: timestamp("approved_at", { withTimezone: true }).notNull(),
+    metadata: jsonb("metadata").notNull().default({}),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex("agent_payment_approvals_intent_idx").on(table.intentId),
+    index("agent_payment_approvals_agent_approved_idx").on(
+      table.agentId,
+      table.approvedAt,
+    ),
+  ],
+);
+
+/**
  * One final, verified external payment receipt.
  *
  * The row exists only after an adapter executes and independently verifies the transfer. Failures and
