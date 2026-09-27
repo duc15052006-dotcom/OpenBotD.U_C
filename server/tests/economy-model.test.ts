@@ -68,6 +68,16 @@ describe("Agent Economy accounting foundation", () => {
     expect(pnl.roiBasisPoints).toBe(16_000n);
   });
 
+  test("subtracts a settled revenue reversal from gross revenue", () => {
+    const pnl = summarizeAgentLedger("agent-a", [
+      entry("sale", "revenue", "credit", 50_000n),
+      entry("refund", "revenue_reversal", "debit", 12_500n),
+    ]);
+
+    expect(pnl.grossRevenueMinor).toBe(37_500n);
+    expect(pnl.operatingProfitMinor).toBe(37_500n);
+  });
+
   test("refuses to aggregate finance across agents", () => {
     const foreign = {
       ...entry("foreign", "revenue", "credit", 100n),
