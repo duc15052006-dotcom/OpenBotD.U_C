@@ -61,11 +61,11 @@ describe("OpenBot database schema", () => {
 
   test("names the two kinds of OAuth secret separately from a shared token", () => {
     /*
-     * Three different things, three names. `mcp` is one token an administrator holds for everybody.
-     * An OAuth client belongs to the deployment and reaches nobody's data by itself; a refresh token
-     * belongs to one person and reaches everything they can see. Filing all three under `mcp` would
-     * make "what does this deployment hold" unanswerable without reading the metadata of every row,
-     * and it is the question the vault exists to answer.
+     * Distinct capabilities keep distinct kinds. `mcp` is one token an administrator holds for
+     * everybody; an OAuth client belongs to the deployment; a refresh token belongs to one person;
+     * and `payment` is the separate signing/API secret a finance account may reference without ever
+     * putting that secret into an Economy row. Filing these under a shared kind would make "what does
+     * this deployment hold" unanswerable without reading every row's metadata.
      */
     expect(credentialKind.enumValues).toEqual([
       "model",
@@ -74,6 +74,7 @@ describe("OpenBot database schema", () => {
       "mcp",
       "mcp_oauth_client",
       "mcp_user_token",
+      "payment",
     ]);
   });
 

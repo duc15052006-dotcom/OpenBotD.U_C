@@ -135,6 +135,20 @@ export type ModelCredentialSecretReader = {
   }) => Promise<{ encryptedValue: string } | null>;
 };
 
+export type PaymentCredentialSecretReader = {
+  /**
+   * Read one payment credential by id.
+   *
+   * The kind predicate belongs in the vault query, not in the Economy caller. A wrong credential id
+   * therefore looks unusable rather than handing an unrelated model/connector secret to a payment
+   * adapter.
+   */
+  readPaymentSecret: (id: string) => Promise<{
+    encryptedValue: string;
+    revokedAt: Date | null;
+  } | null>;
+};
+
 type CredentialService = {
   encryptionKey: string;
   store: CredentialStore;
@@ -238,6 +252,18 @@ export async function decryptCredentialForUse(
   return decryptSecret(encodedKey, credential.encryptedValue);
 }
 
+export async function decryptPaymentCredentialForUse(
+  encodedKey: string,
+  reader: PaymentCredentialSecretReader,
+  credentialId: string,
+) {
+  return decryptCredentialForUse(
+    encodedKey,
+    { readSecret: reader.readPaymentSecret },
+    credentialId,
+  );
+}
+
 export async function resolveModelApiKey(input: {
   encryptionKey: string;
   reader: ModelCredentialSecretReader;
@@ -265,7 +291,8 @@ export function createCredentialStore(
 ): CredentialStore &
   CredentialSecretReader &
   CredentialStatusReader &
-  ModelCredentialSecretReader {
+  ModelCredentialSecretReader &
+  PaymentCredentialSecretReader {
   return {
     create: async (value, executor = database) => {
       const [credential] = await executor
@@ -425,6 +452,17 @@ export function createCredentialStore(
         })
         .from(credentials)
         .where(eq(credentials.id, id));
+
+      return credential ?? null;
+    },
+    readPaymentSecret: async (id) => {
+      const [credential] = await database
+        .select({
+          encryptedValue: credentials.encryptedValue,
+          revokedAt: credentials.revokedAt,
+        })
+        .from(credentials)
+        .where(and(eq(credentials.id, id), eq(credentials.kind, "payment")));
 
       return credential ?? null;
     },

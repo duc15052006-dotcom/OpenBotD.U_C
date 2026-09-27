@@ -58,6 +58,11 @@ export const credentialKind = pgEnum("credential_kind", [
    * that speaks for the deployment, and one row per person that speaks for them.
    */
   "mcp_user_token",
+  /*
+   * A payment-provider signing/API secret. Economy accounts may point at one by credential id, but
+   * the secret itself stays in this vault and is never stored in Economy tables or model context.
+   */
+  "payment",
 ]);
 
 export const users = pgTable("users", {

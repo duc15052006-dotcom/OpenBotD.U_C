@@ -9,7 +9,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import { agents } from "./core";
+import { agents, credentials } from "./core";
 import { jsonb } from "./json";
 
 const createdAt = () =>
@@ -36,6 +36,14 @@ export const agentFinancialAccounts = pgTable(
     network: text("network").notNull().default("none"),
     redeemable: boolean("redeemable").notNull().default(false),
     walletReference: text("wallet_reference"),
+    /**
+     * Pointer into the server credential vault for real payment adapters.
+     *
+     * Nullable for internal/mock accounts. The credential secret itself never enters an Economy row.
+     */
+    credentialId: uuid("credential_id").references(() => credentials.id, {
+      onDelete: "restrict",
+    }),
     createdAt: createdAt(),
   },
   (table) => [
@@ -203,6 +211,51 @@ export const agentPaymentIntents = pgTable(
     index("agent_payment_intents_agent_requested_idx").on(
       table.agentId,
       table.requestedAt,
+    ),
+  ],
+);
+
+/**
+ * One final, verified external payment receipt.
+ *
+ * The row exists only after an adapter executes and independently verifies the transfer. Failures and
+ * refusals belong in the audit trail; a receipt must never imply that a payment happened when it did
+ * not. One intent can therefore produce at most one verified receipt.
+ */
+export const agentPaymentReceipts = pgTable(
+  "agent_payment_receipts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    intentId: uuid("intent_id")
+      .notNull()
+      .references(() => agentPaymentIntents.id, { onDelete: "restrict" }),
+    agentId: text("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "restrict" }),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => agentFinancialAccounts.id, { onDelete: "restrict" }),
+    provider: text("provider").notNull(),
+    externalReference: text("external_reference").notNull(),
+    providerStatus: text("provider_status").notNull(),
+    assetCode: text("asset_code").notNull(),
+    amountMinor: moneyMinor("amount_minor").notNull(),
+    destination: text("destination").notNull(),
+    balanceBeforeMinor: moneyMinor("balance_before_minor"),
+    balanceAfterMinor: moneyMinor("balance_after_minor"),
+    verifiedAt: timestamp("verified_at", { withTimezone: true }).notNull(),
+    metadata: jsonb("metadata").notNull().default({}),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex("agent_payment_receipts_intent_idx").on(table.intentId),
+    uniqueIndex("agent_payment_receipts_provider_external_idx").on(
+      table.provider,
+      table.externalReference,
+    ),
+    index("agent_payment_receipts_agent_verified_idx").on(
+      table.agentId,
+      table.verifiedAt,
     ),
   ],
 );
