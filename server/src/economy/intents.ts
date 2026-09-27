@@ -1,4 +1,4 @@
-import type { TreasuryPolicy } from "./model";
+import { validateTreasuryPolicy, type TreasuryPolicy } from "./model";
 
 export type PaymentIntentKind =
   | "OPERATING_EXPENSE"
@@ -46,6 +46,7 @@ function allowedDomain(domain: string, allowlist: readonly string[]): boolean {
   const normalized = normalizeDomain(domain);
   return allowlist.some((candidate) => {
     const allowed = normalizeDomain(candidate);
+    if (!allowed) return false;
     return normalized === allowed || normalized.endsWith(`.${allowed}`);
   });
 }
@@ -58,6 +59,25 @@ export function decidePaymentIntent(input: {
   spend: SpendWindow;
 }): PaymentDecisionResult {
   const { intent, policy } = input;
+
+  const policyErrors = validateTreasuryPolicy(policy);
+  if (policy.maxChildFundingMinor < 0n) {
+    policyErrors.push("maxChildFundingMinor must not be negative");
+  }
+  if (policy.maxX402PaymentMinor < 0n) {
+    policyErrors.push("maxX402PaymentMinor must not be negative");
+  }
+  if (policyErrors.length > 0) {
+    return deny(`invalid financial policy: ${policyErrors.join("; ")}`);
+  }
+
+  if (
+    input.spend.hourlyMinor < 0n ||
+    input.spend.dailyMinor < 0n ||
+    input.spend.monthlyMinor < 0n
+  ) {
+    return deny("invalid spend history");
+  }
 
   if (policy.frozen) return deny("financial activity is frozen");
   if (intent.amountMinor <= 0n) return deny("payment amount must be positive");
