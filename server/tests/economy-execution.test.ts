@@ -212,7 +212,9 @@ describe("Agent Economy durable receipt boundary", () => {
         receiptStore,
         loadPolicySnapshot: async () => snapshot(),
       }),
-    ).rejects.toThrow("stored payment receipt does not match payment intent terms");
+    ).rejects.toThrow(
+      "stored payment receipt does not match payment intent terms",
+    );
 
     expect(adapter.balanceCalls).toBe(0);
     expect(adapter.prepareCalls).toBe(0);
