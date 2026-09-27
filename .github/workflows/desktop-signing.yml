@@ -70,11 +70,12 @@ jobs:
       run:
         shell: pwsh
     env:
-      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
-      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
-      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-      AZURE_KEY_VAULT_URL: ${{ vars.AZURE_KEY_VAULT_URL }}
-      CODE_SIGNING_CERT_NAME: ${{ vars.CODE_SIGNING_CERT_NAME }}
+      # These are public identifiers for the existing signing lane. Environment variables may
+      # override them when infrastructure moves, but an empty new fork no longer fails before OIDC.
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID || 'cb923310-e793-4557-929e-b33e49a42297' }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID || 'c3050389-57ad-4c62-8dcd-fe5e2af4fbce' }}
+      AZURE_KEY_VAULT_URL: ${{ vars.AZURE_KEY_VAULT_URL || 'https://cpk-signing-kv.vault.azure.net' }}
+      CODE_SIGNING_CERT_NAME: ${{ vars.CODE_SIGNING_CERT_NAME || 'code-signing' }}
       SIGNING_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       AZURE_CORE_OUTPUT: none
     steps:
@@ -84,7 +85,7 @@ jobs:
           persist-credentials: false
       - name: Check signing configuration
         run: |
-          foreach ($name in @('AZURE_CLIENT_ID', 'AZURE_TENANT_ID', 'AZURE_SUBSCRIPTION_ID', 'AZURE_KEY_VAULT_URL', 'CODE_SIGNING_CERT_NAME')) {
+          foreach ($name in @('AZURE_CLIENT_ID', 'AZURE_TENANT_ID', 'AZURE_KEY_VAULT_URL', 'CODE_SIGNING_CERT_NAME')) {
             if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
               throw "Missing windows-signing environment variable: $name"
             }
@@ -92,9 +93,11 @@ jobs:
           if ((git rev-parse HEAD) -ne $env:SIGNING_SOURCE_SHA) { throw 'Checkout does not match requested source SHA.' }
       - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          # Signing only needs the tenant identity plus Key Vault data-plane access. Avoid coupling
+          # this repository to a subscription GUID that is not part of the signing trust boundary.
+          allow-no-subscriptions: true
       - name: Check certificate access
         run: |
           az keyvault certificate show --id "$env:AZURE_KEY_VAULT_URL/certificates/$env:CODE_SIGNING_CERT_NAME" --query id --output tsv --only-show-errors
