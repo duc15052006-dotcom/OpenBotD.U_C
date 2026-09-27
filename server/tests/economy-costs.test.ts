@@ -64,9 +64,7 @@ describe("Agent Economy cost attribution", () => {
   test("refuses cross-agent cost attribution", () => {
     const entry = { ...costEntry("foreign", 100n), agentId: "agent-b" };
     expect(() =>
-      summarizeOperatingCosts("agent-a", [
-        { entry, category: "OTHER" },
-      ]),
+      summarizeOperatingCosts("agent-a", [{ entry, category: "OTHER" }]),
     ).toThrow("cross-agent attribution is forbidden");
   });
 });
