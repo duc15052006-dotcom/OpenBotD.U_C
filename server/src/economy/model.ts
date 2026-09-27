@@ -11,6 +11,7 @@ export type AssetClass =
 
 export type LedgerEntryType =
   | "revenue"
+  | "revenue_reversal"
   | "operating_cost"
   | "reserve_allocation"
   | "reinvestment"
@@ -164,6 +165,12 @@ export function summarizeAgentLedger(
           throw new Error(`revenue entry ${entry.id} must be a credit`);
         }
         grossRevenueMinor += entry.amountMinor;
+        break;
+      case "revenue_reversal":
+        if (entry.direction !== "debit") {
+          throw new Error(`revenue reversal entry ${entry.id} must be a debit`);
+        }
+        grossRevenueMinor -= entry.amountMinor;
         break;
       case "operating_cost":
         if (entry.direction !== "debit") {
