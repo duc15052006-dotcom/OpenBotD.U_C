@@ -66,7 +66,10 @@ export function decidePaymentIntent(input: {
   if (intent.amountMinor > policy.maxPaymentPerTransactionMinor) {
     return deny("payment exceeds per-transaction limit");
   }
-  if (input.spend.hourlyMinor + intent.amountMinor > policy.maxHourlySpendMinor) {
+  if (
+    input.spend.hourlyMinor + intent.amountMinor >
+    policy.maxHourlySpendMinor
+  ) {
     return deny("payment exceeds hourly spend limit");
   }
   if (input.spend.dailyMinor + intent.amountMinor > policy.maxDailySpendMinor) {
