@@ -28,6 +28,7 @@ import {
   resolveAgentRuntimeModel,
 } from "./agents/runtime-model";
 import { createApp } from "./app";
+import { createOwnerPaymentApprovalStore } from "./economy/approval-store";
 import {
   type AuditInitiator,
   createAuditReader,
@@ -1578,6 +1579,8 @@ const app = createApp(
   agentKnowledgeStore,
   // Owner-scoped read/control surface for the durable workflow dashboard.
   workflowStore,
+  // Canonical server-side persistence/read boundary for Owner-confirmed payment intents.
+  createOwnerPaymentApprovalStore(database),
 );
 
 /**
