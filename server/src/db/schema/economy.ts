@@ -497,3 +497,40 @@ export const agentChildFundingEvents = pgTable(
     ),
   ],
 );
+
+/**
+ * Immutable observation emitted by a finance heartbeat.
+ *
+ * The event records the controls selected from current balance/reserve state. Scheduling uses the
+ * existing durable work_items queue; this table is history/audit, not a timer.
+ */
+export const agentFinanceStateEvents = pgTable(
+  "agent_finance_state_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    agentId: text("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "restrict" }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    state: text("state").notNull(),
+    settledBalanceMinor: moneyMinor("settled_balance_minor").notNull(),
+    minimumReserveMinor: moneyMinor("minimum_reserve_minor").notNull(),
+    modelCostMode: text("model_cost_mode").notNull(),
+    allowOptionalSpend: boolean("allow_optional_spend").notNull(),
+    allowChildFunding: boolean("allow_child_funding").notNull(),
+    alertOwner: boolean("alert_owner").notNull(),
+    prioritizeRevenueWork: boolean("prioritize_revenue_work").notNull(),
+    reason: text("reason").notNull(),
+    observedAt: timestamp("observed_at", { withTimezone: true }).notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex("agent_finance_state_events_idempotency_idx").on(
+      table.idempotencyKey,
+    ),
+    index("agent_finance_state_events_agent_observed_idx").on(
+      table.agentId,
+      table.observedAt,
+    ),
+  ],
+);

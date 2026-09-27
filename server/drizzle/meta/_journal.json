@@ -379,6 +379,13 @@
       "when": 1790511600000,
       "tag": "0053_agent_economy_child_funding",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1790515200000,
+      "tag": "0054_agent_economy_survival_events",
+      "breakpoints": true
     }
   ]
 }
