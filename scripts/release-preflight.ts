@@ -1001,7 +1001,9 @@ function checkReleaseWiring(): void {
     signingSource.includes("AZURE_SUBSCRIPTION_ID") ||
     signingSource.includes("subscription-id:")
   ) {
-    fail("signing: protected signing must not require an Azure subscription id");
+    fail(
+      "signing: protected signing must not require an Azure subscription id",
+    );
   }
 
   const stageReleaseArtifact = stepNamed(
