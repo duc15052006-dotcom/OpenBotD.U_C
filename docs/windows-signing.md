@@ -50,16 +50,21 @@ These checks do not test SmartScreen reputation or exercise the app UI.
 ## One-time infrastructure setup
 
 Use the protected GitHub environment `windows-signing` with required reviewers.
-Configure these environment **variables**; they contain public identifiers, not
-passwords:
+The workflow pins the existing signing lane's public identifiers in-repository, so a new fork does
+not need to rediscover or copy a subscription GUID before OIDC can start. These optional environment
+**variables** override the checked-in defaults if the signing infrastructure moves:
 
-| Variable | Value |
+| Variable | Checked-in default |
 | --- | --- |
 | `AZURE_CLIENT_ID` | `cb923310-e793-4557-929e-b33e49a42297` |
 | `AZURE_TENANT_ID` | `c3050389-57ad-4c62-8dcd-fe5e2af4fbce` |
-| `AZURE_SUBSCRIPTION_ID` | Subscription containing `cpk-signing-kv` |
 | `AZURE_KEY_VAULT_URL` | `https://cpk-signing-kv.vault.azure.net` |
 | `CODE_SIGNING_CERT_NAME` | `code-signing` |
+
+No Azure subscription id is required by this workflow. `azure/login` runs with
+`allow-no-subscriptions: true`; the certificate read and signing operations use the Key Vault
+data plane. The protected environment, repository-specific OIDC subject, Entra federated credential,
+and Key Vault permissions remain the signing trust boundary.
 
 An owner of the existing Entra application, or an appropriately authorized
 application administrator, must add the federated credential. From the repo root:

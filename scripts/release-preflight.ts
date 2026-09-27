@@ -861,6 +861,7 @@ function checkReleaseWiring(): void {
 
   const ci = workflow(".github/workflows/ci.yml");
   const desktop = workflow(".github/workflows/desktop.yml");
+  const signingSource = read(".github/workflows/desktop-signing.yml");
   const signing = workflow(".github/workflows/desktop-signing.yml");
   const release = workflow(".github/workflows/publish-release.yml");
   const releaseSource = read(".github/workflows/publish-release.yml");
@@ -984,6 +985,25 @@ function checkReleaseWiring(): void {
     : {};
   if (signPermissions["id-token"] !== "write") {
     fail("signing: sign job does not request OIDC id-token: write");
+  }
+  for (const evidence of [
+    "allow-no-subscriptions: true",
+    "cb923310-e793-4557-929e-b33e49a42297",
+    "c3050389-57ad-4c62-8dcd-fe5e2af4fbce",
+    "https://cpk-signing-kv.vault.azure.net",
+    "code-signing",
+  ]) {
+    if (!signingSource.includes(evidence)) {
+      fail(`signing: self-contained OIDC configuration is missing ${evidence}`);
+    }
+  }
+  if (
+    signingSource.includes("AZURE_SUBSCRIPTION_ID") ||
+    signingSource.includes("subscription-id:")
+  ) {
+    fail(
+      "signing: protected signing must not require an Azure subscription id",
+    );
   }
 
   const stageReleaseArtifact = stepNamed(
