@@ -72,7 +72,9 @@ async function requireAuthorization(
   intent: ExecutablePaymentIntent,
   snapshot: PaymentPolicySnapshot,
   authorization: PaymentAuthorization,
-  loadOwnerApproval?: (approvalId: string) => Promise<OwnerPaymentApproval | null>,
+  loadOwnerApproval?: (
+    approvalId: string,
+  ) => Promise<OwnerPaymentApproval | null>,
 ): Promise<void> {
   if (snapshot.version !== authorization.policyVersion) {
     throw new PaymentExecutionRefusedError(
