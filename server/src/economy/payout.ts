@@ -4,6 +4,7 @@ import {
   type AgentLedgerEntry,
   type TreasuryPolicy,
 } from "./model";
+import type { VerifiedPaymentReceipt } from "./execution";
 import {
   decidePaymentIntent,
   type EconomyExecutionPolicy,
@@ -25,6 +26,7 @@ export interface OwnerPayoutProof {
   availableDistributableProfitMinor: bigint;
   minimumReserveMinor: bigint;
   destination: string;
+  assetCode: string;
 }
 
 export interface OwnerPayoutPlan {
@@ -99,6 +101,77 @@ export function planManualOwnerPayout(input: {
         pnl.availableDistributableProfitMinor,
       minimumReserveMinor: input.policy.minimumReserveMinor,
       destination: input.destination,
+      assetCode: input.assetCode,
     },
+  };
+}
+
+export interface CompletedOwnerPayout {
+  agentId: string;
+  accountId: string;
+  intentId: string;
+  externalReference: string;
+  amountMinor: bigint;
+  assetCode: string;
+  destination: string;
+  policyVersion: number;
+  proof: OwnerPayoutProof;
+  paidAt: Date;
+}
+
+export function completeOwnerPayout(input: {
+  plan: OwnerPayoutPlan;
+  receipt: VerifiedPaymentReceipt;
+}): CompletedOwnerPayout {
+  const { plan, receipt } = input;
+  const proof = plan.proof;
+
+  if (receipt.providerStatus !== "verified") {
+    throw new Error("owner payout requires a verified payment receipt");
+  }
+  if (receipt.agentId !== proof.agentId || receipt.accountId !== proof.accountId) {
+    throw new Error("owner payout receipt does not belong to the planned account");
+  }
+  if (receipt.amountMinor !== proof.requestedMinor) {
+    throw new Error("owner payout receipt amount does not match the plan");
+  }
+  if (receipt.assetCode !== proof.assetCode) {
+    throw new Error("owner payout receipt asset does not match the plan");
+  }
+  if (receipt.destination !== proof.destination) {
+    throw new Error("owner payout receipt destination does not match the plan");
+  }
+
+  return {
+    agentId: proof.agentId,
+    accountId: proof.accountId,
+    intentId: receipt.intentId,
+    externalReference: receipt.externalReference,
+    amountMinor: receipt.amountMinor,
+    assetCode: receipt.assetCode,
+    destination: receipt.destination,
+    policyVersion: proof.policyVersion,
+    proof,
+    paidAt: receipt.verifiedAt,
+  };
+}
+
+export function ownerPayoutLedgerEntry(
+  payout: CompletedOwnerPayout,
+): AgentLedgerEntry {
+  const idempotencyKey = `owner-payout:${payout.externalReference}`;
+  return {
+    id: idempotencyKey,
+    agentId: payout.agentId,
+    accountId: payout.accountId,
+    idempotencyKey,
+    type: "owner_payout",
+    direction: "debit",
+    status: "settled",
+    amountMinor: payout.amountMinor,
+    assetCode: payout.assetCode,
+    assetClass: payout.assetCode === "USDC" ? "STABLECOIN" : "FIAT",
+    redeemable: true,
+    occurredAt: payout.paidAt,
   };
 }
