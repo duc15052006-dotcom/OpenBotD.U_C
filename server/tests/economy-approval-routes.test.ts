@@ -43,10 +43,7 @@ function store(
   };
 }
 
-function testApp(
-  approvals: OwnerPaymentApprovalStore,
-  actor: Actor = OWNER,
-) {
+function testApp(approvals: OwnerPaymentApprovalStore, actor: Actor = OWNER) {
   const app = new Hono<{ Variables: AppVariables }>();
   app.route(
     "/api/economy/payment-intents",
