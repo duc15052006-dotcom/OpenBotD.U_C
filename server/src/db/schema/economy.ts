@@ -259,4 +259,3 @@ export const agentPaymentReceipts = pgTable(
     ),
   ],
 );
-
