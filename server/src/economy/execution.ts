@@ -8,7 +8,11 @@ import {
   type PaymentIntent,
   type SpendWindow,
 } from "./intents";
-import type { PaymentAccountAdapter, TransferReceipt } from "./payment-adapter";
+import type {
+  PaymentAccountAdapter,
+  PreparedTransfer,
+  TransferReceipt,
+} from "./payment-adapter";
 
 export interface ExecutablePaymentIntent extends PaymentIntent {
   id: string;
@@ -140,6 +144,32 @@ async function requireAuthorization(
   }
 }
 
+function requireMatchingPreparedTransfer(
+  intent: ExecutablePaymentIntent,
+  prepared: PreparedTransfer,
+): void {
+  if (prepared.request.idempotencyKey !== intent.idempotencyKey) {
+    throw new PaymentExecutionRefusedError(
+      "prepared transfer idempotency key does not match intent",
+    );
+  }
+  if (prepared.request.amount.assetCode !== intent.assetCode) {
+    throw new PaymentExecutionRefusedError(
+      "prepared transfer asset does not match intent",
+    );
+  }
+  if (prepared.request.amount.amountMinor !== intent.amountMinor) {
+    throw new PaymentExecutionRefusedError(
+      "prepared transfer amount does not match intent",
+    );
+  }
+  if (prepared.request.destination !== intent.destination) {
+    throw new PaymentExecutionRefusedError(
+      "prepared transfer destination does not match intent",
+    );
+  }
+}
+
 function requireMatchingReceipt(
   intent: ExecutablePaymentIntent,
   receipt: TransferReceipt,
@@ -192,6 +222,11 @@ export async function executeAuthorizedPayment(input: {
     },
     destination: input.intent.destination,
   });
+
+  // The adapter may normalize provider-specific fields, but it may not widen or rewrite the
+  // immutable financial instruction. Validate before the final policy read and, critically, before
+  // executeTransfer() can move money. Receipt validation after execution remains defense in depth.
+  requireMatchingPreparedTransfer(input.intent, prepared);
 
   // Deliberately re-read state after prepare. No cached decision crosses the actual execution line.
   const executionSnapshot = await input.loadPolicySnapshot();

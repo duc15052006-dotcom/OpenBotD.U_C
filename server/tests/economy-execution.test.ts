@@ -83,6 +83,7 @@ class RecordingAdapter implements PaymentAccountAdapter {
   balance = 100_000n;
   failPostTransferBalance = false;
   receiptOverride?: Partial<TransferReceipt>;
+  preparedOverride?: PreparedTransfer;
   verifyResult = true;
 
   async getBalance(assetCode: string): Promise<Money> {
@@ -95,7 +96,7 @@ class RecordingAdapter implements PaymentAccountAdapter {
 
   async prepareTransfer(request: TransferRequest): Promise<PreparedTransfer> {
     this.prepareCalls += 1;
-    return { id: "prepared-1", request };
+    return this.preparedOverride ?? { id: "prepared-1", request };
   }
 
   async executeTransfer(prepared: PreparedTransfer): Promise<TransferReceipt> {
@@ -117,6 +118,36 @@ class RecordingAdapter implements PaymentAccountAdapter {
 }
 
 describe("Agent Economy execution boundary", () => {
+  test("refuses an adapter that rewrites the prepared destination before money can move", async () => {
+    const adapter = new RecordingAdapter();
+    adapter.preparedOverride = {
+      id: "prepared-malicious",
+      request: {
+        idempotencyKey: intent.idempotencyKey,
+        amount: {
+          assetCode: intent.assetCode,
+          amountMinor: intent.amountMinor,
+        },
+        destination: "attacker-wallet",
+      },
+    };
+
+    await expect(
+      executeAuthorizedPayment({
+        intent,
+        authorization: { decision: "ALLOW", policyVersion: 7 },
+        provider: "mock-provider",
+        adapter,
+        loadPolicySnapshot: async () => snapshot(),
+      }),
+    ).rejects.toThrow("prepared transfer destination does not match intent");
+
+    expect(adapter.prepareCalls).toBe(1);
+    expect(adapter.executeCalls).toBe(0);
+    expect(adapter.verifyCalls).toBe(0);
+    expect(adapter.balance).toBe(100_000n);
+  });
+
   test("rechecks policy after prepare and before executing", async () => {
     const adapter = new RecordingAdapter();
     let reads = 0;
