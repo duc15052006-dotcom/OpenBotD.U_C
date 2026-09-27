@@ -88,9 +88,7 @@ export function summarizeChildEconomy(input: {
     relationship.budgetMinor - fundedMinor,
   );
   const roiBasisPoints =
-    fundedMinor === 0n
-      ? null
-      : (operatingProfitMinor * 10_000n) / fundedMinor;
+    fundedMinor === 0n ? null : (operatingProfitMinor * 10_000n) / fundedMinor;
 
   return {
     budgetMinor: relationship.budgetMinor,
