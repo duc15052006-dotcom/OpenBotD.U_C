@@ -37,9 +37,7 @@ describe("Agent Economy normalized revenue", () => {
     });
 
     expect(
-      revenueLedgerEntry(
-        event({ status: "pending", settledAt: undefined }),
-      ),
+      revenueLedgerEntry(event({ status: "pending", settledAt: undefined })),
     ).toBeNull();
 
     expect(
@@ -72,9 +70,9 @@ describe("Agent Economy normalized revenue", () => {
   });
 
   test("settled revenue must carry reconciliation time", () => {
-    expect(() =>
-      revenueLedgerEntry(event({ settledAt: undefined })),
-    ).toThrow("settled revenue requires settledAt");
+    expect(() => revenueLedgerEntry(event({ settledAt: undefined }))).toThrow(
+      "settled revenue requires settledAt",
+    );
   });
 
   test("deduplicates provider retries and keeps the furthest reconciliation state", () => {
