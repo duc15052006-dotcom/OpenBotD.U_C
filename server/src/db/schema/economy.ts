@@ -418,3 +418,72 @@ export const agentPayoutRules = pgTable(
     ),
   ],
 );
+
+/**
+ * Versioned parent->child funding policy. Spend/revenue/profit are derived from immutable financial
+ * events instead of mutable counters on this row.
+ */
+export const agentFundingRelationships = pgTable(
+  "agent_funding_relationships",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    parentAgentId: text("parent_agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "restrict" }),
+    childAgentId: text("child_agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "restrict" }),
+    relationshipKey: text("relationship_key").notNull(),
+    version: integer("version").notNull(),
+    budgetMinor: moneyMinor("budget_minor").notNull(),
+    active: boolean("active").notNull().default(true),
+    frozen: boolean("frozen").notNull().default(false),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex("agent_funding_relationships_key_version_idx").on(
+      table.parentAgentId,
+      table.childAgentId,
+      table.relationshipKey,
+      table.version,
+    ),
+  ],
+);
+
+/** One verified funding transfer from a parent Agent to a child Agent. */
+export const agentFundingEvents = pgTable(
+  "agent_funding_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    relationshipId: uuid("relationship_id")
+      .notNull()
+      .references(() => agentFundingRelationships.id, {
+        onDelete: "restrict",
+      }),
+    intentId: uuid("intent_id")
+      .notNull()
+      .references(() => agentPaymentIntents.id, { onDelete: "restrict" }),
+    receiptId: uuid("receipt_id")
+      .notNull()
+      .references(() => agentPaymentReceipts.id, { onDelete: "restrict" }),
+    parentAgentId: text("parent_agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "restrict" }),
+    childAgentId: text("child_agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "restrict" }),
+    assetCode: text("asset_code").notNull(),
+    amountMinor: moneyMinor("amount_minor").notNull(),
+    fundedAt: timestamp("funded_at", { withTimezone: true }).notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex("agent_funding_events_intent_idx").on(table.intentId),
+    uniqueIndex("agent_funding_events_receipt_idx").on(table.receiptId),
+    index("agent_funding_events_child_funded_idx").on(
+      table.childAgentId,
+      table.fundedAt,
+    ),
+  ],
+);
+
