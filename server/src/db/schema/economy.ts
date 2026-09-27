@@ -381,3 +381,41 @@ export const agentPayouts = pgTable(
     index("agent_payouts_agent_paid_idx").on(table.agentId, table.paidAt),
   ],
 );
+
+/**
+ * Versioned Owner payout automation rule.
+ *
+ * Historical versions are immutable. A scheduler claims durable work separately and then routes the
+ * eligible amount through E5a, so automation never gets a privileged transfer path.
+ */
+export const agentPayoutRules = pgTable(
+  "agent_payout_rules",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    agentId: text("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "restrict" }),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => agentFinancialAccounts.id, { onDelete: "restrict" }),
+    ruleKey: text("rule_key").notNull(),
+    version: integer("version").notNull(),
+    mode: text("mode").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    thresholdMinor: moneyMinor("threshold_minor").notNull(),
+    maxPayoutMinor: moneyMinor("max_payout_minor"),
+    assetCode: text("asset_code").notNull(),
+    destination: text("destination").notNull(),
+    schedule: text("schedule"),
+    timezone: text("timezone"),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex("agent_payout_rules_agent_key_version_idx").on(
+      table.agentId,
+      table.ruleKey,
+      table.version,
+    ),
+  ],
+);
+
