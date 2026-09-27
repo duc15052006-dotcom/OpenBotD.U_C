@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentLedgerEntry } from "../src/economy/model";
-import { planManualOwnerPayout } from "../src/economy/payout";
+import {
+  completeOwnerPayout,
+  ownerPayoutLedgerEntry,
+  planManualOwnerPayout,
+} from "../src/economy/payout";
 import type { EconomyExecutionPolicy } from "../src/economy/intents";
 
 const policy: EconomyExecutionPolicy = {
@@ -131,6 +135,66 @@ describe("Agent Economy manual Owner payout planning", () => {
     expect(() => plan(5_001n, { ledger })).toThrow(
       "payout exceeds distributable profit",
     );
+  });
+
+  test("marks a payout complete only from a matching verified receipt", () => {
+    const planned = plan(5_000n);
+    const paidAt = new Date("2026-09-27T12:00:00Z");
+    const completed = completeOwnerPayout({
+      plan: planned,
+      receipt: {
+        intentId: "intent-1",
+        agentId: "agent-a",
+        accountId: "account-a",
+        provider: "mock",
+        externalReference: "transfer-1",
+        providerStatus: "verified",
+        assetCode: "USDC",
+        amountMinor: 5_000n,
+        destination: "owner-wallet",
+        balanceBeforeMinor: 100_000n,
+        balanceAfterMinor: 95_000n,
+        verifiedAt: paidAt,
+      },
+    });
+
+    expect(completed).toMatchObject({
+      intentId: "intent-1",
+      externalReference: "transfer-1",
+      amountMinor: 5_000n,
+      policyVersion: 4,
+      paidAt,
+    });
+    expect(ownerPayoutLedgerEntry(completed)).toMatchObject({
+      idempotencyKey: "owner-payout:transfer-1",
+      type: "owner_payout",
+      direction: "debit",
+      status: "settled",
+      amountMinor: 5_000n,
+    });
+  });
+
+  test("refuses a verified receipt that differs from the payout proof", () => {
+    const planned = plan(5_000n);
+    expect(() =>
+      completeOwnerPayout({
+        plan: planned,
+        receipt: {
+          intentId: "intent-1",
+          agentId: "agent-a",
+          accountId: "account-a",
+          provider: "mock",
+          externalReference: "transfer-1",
+          providerStatus: "verified",
+          assetCode: "USDC",
+          amountMinor: 4_999n,
+          destination: "owner-wallet",
+          balanceBeforeMinor: 100_000n,
+          balanceAfterMinor: 95_001n,
+          verifiedAt: new Date(),
+        },
+      }),
+    ).toThrow("owner payout receipt amount does not match the plan");
   });
 
   test("kill switch still fails closed at payout planning", () => {
