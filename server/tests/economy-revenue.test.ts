@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   dedupeRevenueEvents,
-  settledRevenueLedgerEntry,
+  revenueLedgerEntry,
   type NormalizedRevenueEvent,
 } from "../src/economy/revenue";
 
@@ -28,8 +28,8 @@ function event(
 
 describe("Agent Economy normalized revenue", () => {
   test("turns only settled redeemable revenue into ledger revenue", () => {
-    expect(settledRevenueLedgerEntry(event())).toMatchObject({
-      idempotencyKey: "revenue:saas:invoice-1",
+    expect(revenueLedgerEntry(event())).toMatchObject({
+      idempotencyKey: "revenue:saas:invoice-1:settled",
       type: "revenue",
       direction: "credit",
       status: "settled",
@@ -37,13 +37,13 @@ describe("Agent Economy normalized revenue", () => {
     });
 
     expect(
-      settledRevenueLedgerEntry(
+      revenueLedgerEntry(
         event({ status: "pending", settledAt: undefined }),
       ),
     ).toBeNull();
 
     expect(
-      settledRevenueLedgerEntry(
+      revenueLedgerEntry(
         event({
           redeemable: false,
           assetClass: "COMPUTE_CREDIT",
@@ -53,9 +53,27 @@ describe("Agent Economy normalized revenue", () => {
     ).toBeNull();
   });
 
+  test("projects a provider reversal as a compensating revenue debit", () => {
+    expect(
+      revenueLedgerEntry(
+        event({
+          status: "reversed",
+          settledAt: undefined,
+          occurredAt: new Date("2026-09-28T00:00:00Z"),
+        }),
+      ),
+    ).toMatchObject({
+      idempotencyKey: "revenue:saas:invoice-1:reversed",
+      type: "revenue_reversal",
+      direction: "debit",
+      status: "settled",
+      amountMinor: 25_000n,
+    });
+  });
+
   test("settled revenue must carry reconciliation time", () => {
     expect(() =>
-      settledRevenueLedgerEntry(event({ settledAt: undefined })),
+      revenueLedgerEntry(event({ settledAt: undefined })),
     ).toThrow("settled revenue requires settledAt");
   });
 
