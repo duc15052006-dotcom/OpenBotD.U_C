@@ -124,6 +124,9 @@ export const agentLedgerEntries = pgTable(
     assetCode: text("asset_code").notNull(),
     assetClass: text("asset_class").notNull(),
     redeemable: boolean("redeemable").notNull(),
+    costCategory: text("cost_category"),
+    projectId: text("project_id"),
+    revenueAdapterId: text("revenue_adapter_id"),
     source: text("source"),
     destination: text("destination"),
     purpose: text("purpose").notNull(),
@@ -147,6 +150,14 @@ export const agentLedgerEntries = pgTable(
     ),
     index("agent_ledger_entries_account_occurred_idx").on(
       table.accountId,
+      table.occurredAt,
+    ),
+    index("agent_ledger_entries_project_occurred_idx").on(
+      table.projectId,
+      table.occurredAt,
+    ),
+    index("agent_ledger_entries_revenue_adapter_occurred_idx").on(
+      table.revenueAdapterId,
       table.occurredAt,
     ),
   ],
