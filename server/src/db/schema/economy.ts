@@ -418,3 +418,83 @@ export const agentPayoutRules = pgTable(
     ),
   ],
 );
+
+/**
+ * Versioned parent -> child funding policy.
+ *
+ * The relationship grants only a bounded funding path. It does not carry a wallet credential,
+ * payment adapter or signing capability, so a child never inherits unrestricted parent authority.
+ */
+export const agentFundingRelationships = pgTable(
+  "agent_funding_relationships",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    parentAgentId: text("parent_agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "restrict" }),
+    childAgentId: text("child_agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "restrict" }),
+    version: integer("version").notNull(),
+    budgetMinor: moneyMinor("budget_minor").notNull(),
+    assetCode: text("asset_code").notNull(),
+    active: boolean("active").notNull().default(true),
+    frozen: boolean("frozen").notNull().default(false),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex("agent_funding_relationships_pair_version_idx").on(
+      table.parentAgentId,
+      table.childAgentId,
+      table.version,
+    ),
+    index("agent_funding_relationships_child_idx").on(table.childAgentId),
+  ],
+);
+
+/**
+ * Immutable proof that parent funding actually completed through the normal payment boundary.
+ *
+ * Intent + verified receipt references prevent a relationship from claiming spend that never moved.
+ */
+export const agentChildFundingEvents = pgTable(
+  "agent_child_funding_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    relationshipId: uuid("relationship_id")
+      .notNull()
+      .references(() => agentFundingRelationships.id, {
+        onDelete: "restrict",
+      }),
+    intentId: uuid("intent_id")
+      .notNull()
+      .references(() => agentPaymentIntents.id, { onDelete: "restrict" }),
+    receiptId: uuid("receipt_id")
+      .notNull()
+      .references(() => agentPaymentReceipts.id, { onDelete: "restrict" }),
+    parentAgentId: text("parent_agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "restrict" }),
+    childAgentId: text("child_agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "restrict" }),
+    amountMinor: moneyMinor("amount_minor").notNull(),
+    assetCode: text("asset_code").notNull(),
+    policyVersion: integer("policy_version").notNull(),
+    fundedAt: timestamp("funded_at", { withTimezone: true }).notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex("agent_child_funding_events_intent_idx").on(table.intentId),
+    uniqueIndex("agent_child_funding_events_receipt_idx").on(table.receiptId),
+    index("agent_child_funding_events_relationship_funded_idx").on(
+      table.relationshipId,
+      table.fundedAt,
+    ),
+    index("agent_child_funding_events_child_funded_idx").on(
+      table.childAgentId,
+      table.fundedAt,
+    ),
+  ],
+);
+
