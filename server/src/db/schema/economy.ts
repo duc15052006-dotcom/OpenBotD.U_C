@@ -497,4 +497,3 @@ export const agentChildFundingEvents = pgTable(
     ),
   ],
 );
-
