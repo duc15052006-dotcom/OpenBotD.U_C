@@ -25,6 +25,16 @@ export interface PaymentPolicySnapshot {
   spend: SpendWindow;
 }
 
+export interface OwnerPaymentApproval {
+  id: string;
+  intentId: string;
+  agentId: string;
+  policyVersion: number;
+  approverKind: "OWNER";
+  approverId: string;
+  approvedAt: Date;
+}
+
 export type PaymentAuthorization =
   | {
       decision: "ALLOW";
@@ -33,7 +43,7 @@ export type PaymentAuthorization =
   | {
       decision: "OWNER_CONFIRMATION";
       policyVersion: number;
-      ownerConfirmed: true;
+      approvalId: string;
     };
 
 export interface VerifiedPaymentReceipt {
@@ -58,11 +68,12 @@ export class PaymentExecutionRefusedError extends Error {
   }
 }
 
-function requireAuthorization(
+async function requireAuthorization(
   intent: ExecutablePaymentIntent,
   snapshot: PaymentPolicySnapshot,
   authorization: PaymentAuthorization,
-): void {
+  loadOwnerApproval?: (approvalId: string) => Promise<OwnerPaymentApproval | null>,
+): Promise<void> {
   if (snapshot.version !== authorization.policyVersion) {
     throw new PaymentExecutionRefusedError(
       "financial policy changed after authorization",
@@ -82,13 +93,48 @@ function requireAuthorization(
     throw new PaymentExecutionRefusedError(decision.reason);
   }
 
-  if (
-    decision.decision === "OWNER_CONFIRMATION" &&
-    authorization.decision !== "OWNER_CONFIRMATION"
-  ) {
+  if (decision.decision !== "OWNER_CONFIRMATION") return;
+
+  if (authorization.decision !== "OWNER_CONFIRMATION") {
     throw new PaymentExecutionRefusedError(
       "Owner confirmation is required before payment execution",
     );
+  }
+  if (!authorization.approvalId.trim() || !loadOwnerApproval) {
+    throw new PaymentExecutionRefusedError(
+      "persisted Owner approval is required before payment execution",
+    );
+  }
+
+  const approval = await loadOwnerApproval(authorization.approvalId);
+  if (!approval) {
+    throw new PaymentExecutionRefusedError(
+      "persisted Owner approval was not found",
+    );
+  }
+  if (
+    approval.id !== authorization.approvalId ||
+    approval.intentId !== intent.id ||
+    approval.agentId !== intent.agentId
+  ) {
+    throw new PaymentExecutionRefusedError(
+      "Owner approval does not match payment intent",
+    );
+  }
+  if (
+    approval.policyVersion !== authorization.policyVersion ||
+    approval.policyVersion !== snapshot.version
+  ) {
+    throw new PaymentExecutionRefusedError(
+      "Owner approval policy version does not match execution policy",
+    );
+  }
+  if (
+    approval.approverKind !== "OWNER" ||
+    !approval.approverId.trim() ||
+    Number.isNaN(approval.approvedAt.getTime())
+  ) {
+    throw new PaymentExecutionRefusedError("Owner approval record is invalid");
   }
 }
 
@@ -123,9 +169,17 @@ export async function executeAuthorizedPayment(input: {
   provider: string;
   adapter: PaymentAccountAdapter;
   loadPolicySnapshot: () => Promise<PaymentPolicySnapshot>;
+  loadOwnerApproval?: (
+    approvalId: string,
+  ) => Promise<OwnerPaymentApproval | null>;
 }): Promise<VerifiedPaymentReceipt> {
   const initialSnapshot = await input.loadPolicySnapshot();
-  requireAuthorization(input.intent, initialSnapshot, input.authorization);
+  await requireAuthorization(
+    input.intent,
+    initialSnapshot,
+    input.authorization,
+    input.loadOwnerApproval,
+  );
 
   const balanceBefore = await input.adapter.getBalance(input.intent.assetCode);
   const prepared = await input.adapter.prepareTransfer({
@@ -139,7 +193,12 @@ export async function executeAuthorizedPayment(input: {
 
   // Deliberately re-read state after prepare. No cached decision crosses the actual execution line.
   const executionSnapshot = await input.loadPolicySnapshot();
-  requireAuthorization(input.intent, executionSnapshot, input.authorization);
+  await requireAuthorization(
+    input.intent,
+    executionSnapshot,
+    input.authorization,
+    input.loadOwnerApproval,
+  );
 
   const receipt = await input.adapter.executeTransfer(prepared);
   if (!(await input.adapter.verifyTransfer(receipt))) {
