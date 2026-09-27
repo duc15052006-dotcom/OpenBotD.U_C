@@ -111,7 +111,8 @@ export function createOwnerPaymentApprovalStore(
     async approve(input) {
       const intentId = input.intentId.trim();
       const actorUserId = input.actorUserId.trim();
-      if (!intentId) throw new PaymentIntentApprovalNotFoundError(input.intentId);
+      if (!intentId)
+        throw new PaymentIntentApprovalNotFoundError(input.intentId);
       if (!actorUserId) throw new OwnerPaymentApprovalForbiddenError();
 
       return database.transaction(async (transaction) => {
