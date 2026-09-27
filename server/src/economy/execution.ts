@@ -47,7 +47,7 @@ export interface VerifiedPaymentReceipt {
   amountMinor: bigint;
   destination: string;
   balanceBeforeMinor: bigint;
-  balanceAfterMinor: bigint;
+  balanceAfterMinor: bigint | null;
   verifiedAt: Date;
 }
 
@@ -147,7 +147,15 @@ export async function executeAuthorizedPayment(input: {
   }
   requireMatchingReceipt(input.intent, receipt);
 
-  const balanceAfter = await input.adapter.getBalance(input.intent.assetCode);
+  let balanceAfterMinor: bigint | null = null;
+  try {
+    balanceAfterMinor = (
+      await input.adapter.getBalance(input.intent.assetCode)
+    ).amountMinor;
+  } catch {
+    // The transfer is already verified. A balance refresh outage must not erase proof that money
+    // moved; reconciliation can fill this optional evidence later.
+  }
 
   return {
     intentId: input.intent.id,
@@ -160,7 +168,7 @@ export async function executeAuthorizedPayment(input: {
     amountMinor: receipt.amount.amountMinor,
     destination: receipt.destination,
     balanceBeforeMinor: balanceBefore.amountMinor,
-    balanceAfterMinor: balanceAfter.amountMinor,
+    balanceAfterMinor,
     verifiedAt: new Date(),
   };
 }
