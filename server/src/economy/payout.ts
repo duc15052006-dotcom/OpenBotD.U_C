@@ -4,13 +4,14 @@ import {
   type AgentPnl,
 } from "./model";
 import {
-  executeAuthorizedPayment,
+  executeAndPersistAuthorizedPayment,
   PaymentExecutionRefusedError,
   type ExecutablePaymentIntent,
   type OwnerPaymentApproval,
   type PaymentAuthorization,
   type PaymentPolicySnapshot,
   type VerifiedPaymentReceipt,
+  type VerifiedPaymentReceiptStore,
 } from "./execution";
 import type { PaymentAccountAdapter } from "./payment-adapter";
 
@@ -42,6 +43,7 @@ export async function executeManualOwnerPayout(input: {
   authorization: PaymentAuthorization;
   ledgerEntries: readonly AgentLedgerEntry[];
   adapter: PaymentAccountAdapter;
+  receiptStore: VerifiedPaymentReceiptStore;
   loadPolicySnapshot: () => Promise<PaymentPolicySnapshot>;
   loadOwnerApproval?: (
     approvalId: string,
@@ -73,11 +75,12 @@ export async function executeManualOwnerPayout(input: {
     category: "owner_payout",
   };
 
-  const receipt = await executeAuthorizedPayment({
+  const receipt = await executeAndPersistAuthorizedPayment({
     intent,
     authorization: input.authorization,
     provider: input.provider,
     adapter: input.adapter,
+    receiptStore: input.receiptStore,
     loadOwnerApproval: input.loadOwnerApproval,
     loadPolicySnapshot: async () => {
       const snapshot = await input.loadPolicySnapshot();
