@@ -50,11 +50,13 @@ export function requireOwnerApprovalTarget(
   if (!target) {
     throw new PaymentIntentApprovalNotFoundError("unknown");
   }
-  if (target.decision !== "OWNER_CONFIRMATION") {
-    throw new OwnerPaymentApprovalNotRequiredError(target.intentId);
-  }
+  // Ownership is checked before the intent's decision. Otherwise a signed-in stranger can probe
+  // an id and distinguish an existing ALLOW/DENY intent (409) from a missing/private one (404).
   if (!target.ownerUserId || target.ownerUserId !== actorUserId) {
     throw new OwnerPaymentApprovalForbiddenError();
+  }
+  if (target.decision !== "OWNER_CONFIRMATION") {
+    throw new OwnerPaymentApprovalNotRequiredError(target.intentId);
   }
   if (!Number.isInteger(target.policyVersion) || target.policyVersion <= 0) {
     throw new OwnerPaymentApprovalConflictError(target.intentId);
