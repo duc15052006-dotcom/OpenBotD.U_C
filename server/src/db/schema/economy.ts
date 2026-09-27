@@ -324,9 +324,10 @@ export const revenueEvents = pgTable(
     createdAt: createdAt(),
   },
   (table) => [
-    uniqueIndex("revenue_events_adapter_external_idx").on(
+    uniqueIndex("revenue_events_adapter_external_status_idx").on(
       table.adapterId,
       table.externalEventId,
+      table.status,
     ),
     index("revenue_events_agent_occurred_idx").on(
       table.agentId,
