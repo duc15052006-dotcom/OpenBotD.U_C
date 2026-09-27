@@ -9,7 +9,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import { agents } from "./core";
+import { agents, credentials } from "./core";
 import { jsonb } from "./json";
 
 const createdAt = () =>
@@ -36,6 +36,9 @@ export const agentFinancialAccounts = pgTable(
     network: text("network").notNull().default("none"),
     redeemable: boolean("redeemable").notNull().default(false),
     walletReference: text("wallet_reference"),
+    credentialId: uuid("credential_id").references(() => credentials.id, {
+      onDelete: "restrict",
+    }),
     createdAt: createdAt(),
   },
   (table) => [
@@ -45,6 +48,7 @@ export const agentFinancialAccounts = pgTable(
       table.provider,
       table.network,
     ),
+    index("agent_financial_accounts_credential_idx").on(table.credentialId),
   ],
 );
 
