@@ -85,7 +85,9 @@ export class InMemoryPaymentAccountAdapter implements PaymentAccountAdapter {
         existing.request.amount.amountMinor !== request.amount.amountMinor ||
         existing.request.destination !== request.destination
       ) {
-        throw new Error("idempotency key was already used for another transfer");
+        throw new Error(
+          "idempotency key was already used for another transfer",
+        );
       }
       return existing;
     }
