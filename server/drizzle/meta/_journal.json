@@ -344,6 +344,13 @@
       "when": 1790505600000,
       "tag": "0048_agent_economy_payment_intents",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1790506200000,
+      "tag": "0049_agent_economy_wallet_custody",
+      "breakpoints": true
     }
   ]
 }
