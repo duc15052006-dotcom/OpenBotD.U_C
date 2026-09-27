@@ -82,7 +82,9 @@ export function revenueLedgerEntry(
     assetCode: event.assetCode,
     assetClass: event.assetClass,
     redeemable: true,
-    occurredAt: reversed ? event.occurredAt : (event.settledAt ?? event.occurredAt),
+    occurredAt: reversed
+      ? event.occurredAt
+      : (event.settledAt ?? event.occurredAt),
   };
 }
 
