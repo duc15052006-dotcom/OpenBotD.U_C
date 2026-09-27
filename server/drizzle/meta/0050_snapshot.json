@@ -5080,27 +5080,6 @@
         }
       },
       "indexes": {
-        "revenue_events_adapter_external_idx": {
-          "name": "revenue_events_adapter_external_idx",
-          "columns": [
-            {
-              "expression": "adapter_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "external_event_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "with": {},
-          "method": "btree",
-          "concurrently": false
-        },
         "revenue_events_agent_occurred_idx": {
           "name": "revenue_events_agent_occurred_idx",
           "columns": [
@@ -5139,6 +5118,33 @@
             }
           ],
           "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        },
+        "revenue_events_adapter_external_status_idx": {
+          "name": "revenue_events_adapter_external_status_idx",
+          "columns": [
+            {
+              "expression": "adapter_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "external_event_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
           "with": {},
           "method": "btree",
           "concurrently": false
