@@ -65,6 +65,13 @@ export interface VerifiedPaymentReceipt {
   verifiedAt: Date;
 }
 
+export interface VerifiedPaymentReceiptStore {
+  loadByIntent(intentId: string): Promise<VerifiedPaymentReceipt | null>;
+  saveVerified(
+    receipt: VerifiedPaymentReceipt,
+  ): Promise<VerifiedPaymentReceipt>;
+}
+
 export class PaymentExecutionRefusedError extends Error {
   constructor(message: string) {
     super(message);
@@ -266,6 +273,86 @@ export async function executeAuthorizedPayment(input: {
     balanceAfterMinor,
     verifiedAt: new Date(),
   };
+}
+
+function requireStoredReceiptMatchesIntent(
+  intent: ExecutablePaymentIntent,
+  provider: string,
+  receipt: VerifiedPaymentReceipt,
+): void {
+  if (
+    receipt.intentId !== intent.id ||
+    receipt.agentId !== intent.agentId ||
+    receipt.accountId !== intent.accountId
+  ) {
+    throw new PaymentExecutionRefusedError(
+      "stored payment receipt does not match payment intent identity",
+    );
+  }
+  if (receipt.provider !== provider || receipt.providerStatus !== "verified") {
+    throw new PaymentExecutionRefusedError(
+      "stored payment receipt does not match payment provider",
+    );
+  }
+  if (
+    receipt.assetCode !== intent.assetCode ||
+    receipt.amountMinor !== intent.amountMinor ||
+    receipt.destination !== intent.destination
+  ) {
+    throw new PaymentExecutionRefusedError(
+      "stored payment receipt does not match payment intent terms",
+    );
+  }
+  if (
+    !receipt.externalReference.trim() ||
+    Number.isNaN(receipt.verifiedAt.getTime())
+  ) {
+    throw new PaymentExecutionRefusedError(
+      "stored payment receipt is invalid",
+    );
+  }
+}
+
+/**
+ * Execute once and durably persist the verified receipt.
+ *
+ * A retry that already has a matching durable receipt returns it without touching the payment
+ * provider again. Concurrent first attempts still rely on the provider idempotency key at the
+ * external boundary; the receipt store then collapses both verified outcomes onto the one immutable
+ * intent row and rejects any conflicting identity or terms.
+ */
+export async function executeAndPersistAuthorizedPayment(input: {
+  intent: ExecutablePaymentIntent;
+  authorization: PaymentAuthorization;
+  provider: string;
+  adapter: PaymentAccountAdapter;
+  receiptStore: VerifiedPaymentReceiptStore;
+  loadPolicySnapshot: () => Promise<PaymentPolicySnapshot>;
+  loadOwnerApproval?: (
+    approvalId: string,
+  ) => Promise<OwnerPaymentApproval | null>;
+}): Promise<VerifiedPaymentReceipt> {
+  const existing = await input.receiptStore.loadByIntent(input.intent.id);
+  if (existing) {
+    requireStoredReceiptMatchesIntent(
+      input.intent,
+      input.provider,
+      existing,
+    );
+    return existing;
+  }
+
+  const receipt = await executeAuthorizedPayment({
+    intent: input.intent,
+    authorization: input.authorization,
+    provider: input.provider,
+    adapter: input.adapter,
+    loadPolicySnapshot: input.loadPolicySnapshot,
+    loadOwnerApproval: input.loadOwnerApproval,
+  });
+  const stored = await input.receiptStore.saveVerified(receipt);
+  requireStoredReceiptMatchesIntent(input.intent, input.provider, stored);
+  return stored;
 }
 
 /**
