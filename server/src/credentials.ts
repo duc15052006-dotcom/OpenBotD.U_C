@@ -462,12 +462,7 @@ export function createCredentialStore(
           revokedAt: credentials.revokedAt,
         })
         .from(credentials)
-        .where(
-          and(
-            eq(credentials.id, id),
-            eq(credentials.kind, "payment"),
-          ),
-        );
+        .where(and(eq(credentials.id, id), eq(credentials.kind, "payment")));
 
       return credential ?? null;
     },
