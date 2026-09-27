@@ -381,4 +381,3 @@ export const agentPayouts = pgTable(
     index("agent_payouts_agent_paid_idx").on(table.agentId, table.paidAt),
   ],
 );
-
