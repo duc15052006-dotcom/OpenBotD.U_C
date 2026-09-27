@@ -358,6 +358,13 @@
       "when": 1790509500000,
       "tag": "0050_agent_economy_revenue_events",
       "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1790510100000,
+      "tag": "0051_agent_economy_owner_payouts",
+      "breakpoints": true
     }
   ]
 }
