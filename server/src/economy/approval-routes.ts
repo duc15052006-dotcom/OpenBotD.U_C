@@ -1,9 +1,6 @@
 import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
-import {
-  type AuditStore,
-  recordAuditEvent,
-} from "../audit";
+import { type AuditStore, recordAuditEvent } from "../audit";
 import type { AppVariables } from "../auth/guards";
 import {
   OwnerPaymentApprovalConflictError,
