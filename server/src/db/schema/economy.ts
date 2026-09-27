@@ -339,3 +339,46 @@ export const revenueEvents = pgTable(
     ),
   ],
 );
+
+/**
+ * Immutable proof that an Owner payout was completed from distributable profit.
+ *
+ * Manual payout is E5a. Scheduled/threshold rules enqueue the same payout path later; they do not
+ * get a second execution mechanism.
+ */
+export const agentPayouts = pgTable(
+  "agent_payouts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    intentId: uuid("intent_id")
+      .notNull()
+      .references(() => agentPaymentIntents.id, { onDelete: "restrict" }),
+    receiptId: uuid("receipt_id")
+      .notNull()
+      .references(() => agentPaymentReceipts.id, { onDelete: "restrict" }),
+    agentId: text("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "restrict" }),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => agentFinancialAccounts.id, { onDelete: "restrict" }),
+    mode: text("mode").notNull().default("manual"),
+    assetCode: text("asset_code").notNull(),
+    amountMinor: moneyMinor("amount_minor").notNull(),
+    destination: text("destination").notNull(),
+    distributableProfitBeforeMinor: moneyMinor(
+      "distributable_profit_before_minor",
+    ).notNull(),
+    reserveBeforeMinor: moneyMinor("reserve_before_minor").notNull(),
+    policyVersion: integer("policy_version").notNull(),
+    requestedBy: text("requested_by").notNull(),
+    paidAt: timestamp("paid_at", { withTimezone: true }).notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex("agent_payouts_intent_idx").on(table.intentId),
+    uniqueIndex("agent_payouts_receipt_idx").on(table.receiptId),
+    index("agent_payouts_agent_paid_idx").on(table.agentId, table.paidAt),
+  ],
+);
+
