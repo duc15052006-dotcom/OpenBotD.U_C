@@ -16,12 +16,7 @@ const policy: EconomyExecutionPolicy = {
   maxMonthlySpendMinor: 1_000_000n,
   ownerConfirmationThresholdMinor: 10_000n,
   allowedPaymentAddresses: ["owner-wallet", "vendor-wallet", "child-wallet"],
-  allowedPaymentCategories: [
-    "owner_payout",
-    "api",
-    "child_funding",
-    "x402",
-  ],
+  allowedPaymentCategories: ["owner_payout", "api", "child_funding", "x402"],
   maxChildFundingMinor: 20_000n,
   maxX402PaymentMinor: 5_000n,
   allowedX402Domains: ["example.com", "api.vendor.test"],
@@ -64,9 +59,7 @@ describe("Agent Economy payment intent policy", () => {
   });
 
   test("kill switch denies every financial action before approval", () => {
-    expect(
-      decide(intent(), { policy: { ...policy, frozen: true } }),
-    ).toEqual({
+    expect(decide(intent(), { policy: { ...policy, frozen: true } })).toEqual({
       decision: "DENY",
       reason: "financial activity is frozen",
     });
