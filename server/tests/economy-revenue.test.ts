@@ -71,10 +71,7 @@ describe("Agent Economy normalized revenue", () => {
 
   test("refuses provider identity reuse with conflicting financial terms", () => {
     expect(() =>
-      dedupeRevenueEvents([
-        event(),
-        event({ amountMinor: 99_000n }),
-      ]),
+      dedupeRevenueEvents([event(), event({ amountMinor: 99_000n })]),
     ).toThrow(
       "revenue event identity was reused for conflicting financial terms",
     );
