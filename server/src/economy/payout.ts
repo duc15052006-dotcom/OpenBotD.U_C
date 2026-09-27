@@ -7,6 +7,7 @@ import {
   executeAuthorizedPayment,
   PaymentExecutionRefusedError,
   type ExecutablePaymentIntent,
+  type OwnerPaymentApproval,
   type PaymentAuthorization,
   type PaymentPolicySnapshot,
   type VerifiedPaymentReceipt,
@@ -42,6 +43,9 @@ export async function executeManualOwnerPayout(input: {
   ledgerEntries: readonly AgentLedgerEntry[];
   adapter: PaymentAccountAdapter;
   loadPolicySnapshot: () => Promise<PaymentPolicySnapshot>;
+  loadOwnerApproval?: (
+    approvalId: string,
+  ) => Promise<OwnerPaymentApproval | null>;
   occurredAt?: Date;
 }): Promise<ManualOwnerPayoutResult> {
   const pnl = summarizeAgentLedger(input.agentId, input.ledgerEntries);
@@ -74,6 +78,7 @@ export async function executeManualOwnerPayout(input: {
     authorization: input.authorization,
     provider: input.provider,
     adapter: input.adapter,
+    loadOwnerApproval: input.loadOwnerApproval,
     loadPolicySnapshot: async () => {
       const snapshot = await input.loadPolicySnapshot();
       return {
