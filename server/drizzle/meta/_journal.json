@@ -330,6 +330,13 @@
       "when": 1790505000000,
       "tag": "0046_agent_economy_foundation",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1790505900000,
+      "tag": "0047_agent_economy_cost_attribution",
+      "breakpoints": true
     }
   ]
 }
