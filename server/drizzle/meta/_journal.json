@@ -365,6 +365,13 @@
       "when": 1790510400000,
       "tag": "0051_agent_economy_owner_payouts",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1790511000000,
+      "tag": "0052_agent_economy_payout_rules",
+      "breakpoints": true
     }
   ]
 }
