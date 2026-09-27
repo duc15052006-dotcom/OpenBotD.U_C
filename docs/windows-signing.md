@@ -1,14 +1,17 @@
 # Windows desktop signing
 
-Builds use the root OpenBot release number plus `-internal.g<commit>`. The workflow verifies
-that both the packaged app and installer embed that version, and includes `build-version.json`
-with the binaries. See [desktop build versions](releasing.md#desktop-build-versions).
+Validation builds use the root OpenBot release number plus `-internal.g<commit>`; a trusted
+release call uses the plain release version. The workflow verifies that both the packaged app and
+installer embed the selected version, and includes `build-version.json` with the binaries. See
+[desktop build versions](releasing.md#desktop-build-versions).
 
 The [Desktop Windows signing workflow](../.github/workflows/desktop-signing.yml)
 builds OpenBot and its NSIS installer with the existing DigiCert certificate in
 Azure Key Vault. It retains verified binaries and signature evidence as Actions
-artifacts for 14 days. It does not create or publish a release. Desktop version
-`0.0.0` remains a validation build.
+artifacts for 14 days. Manual and PR-triggered runs remain validation builds. When
+`publish-release.yml` calls the same workflow for a trusted release commit, the verified NSIS
+installer and `signatures.json` are carried into that GitHub Release after environment approval.
+Desktop version `0.0.0` remains a validation build.
 
 Ordinary Desktop CI and fork PR builds remain unsigned. The
 `tauri.windows-signing.conf.json` overlay is passed explicitly to Tauri only by
@@ -35,7 +38,11 @@ installer using Windows Authenticode and
 publisher `Tawkit, Inc.`. Any warning or nonzero SignTool exit fails the job.
 `signatures.json` records the source SHA, artifact SHA-256 hashes, signer and
 timestamp certificates; the companion text files retain verbose SignTool output.
-The binaries upload only after both pass. The extracted app is retained from
+
+After those cryptographic checks, the workflow runs the **exact signed NSIS installer** through the
+same fresh Users-only acceptance harness used by Desktop CI. The signed artifact must still install,
+launch OpenBot for the first time, expose the desktop shortcut, uninstall cleanly, and remove that
+shortcut without ever relying on an administrator token. Only then are the binaries retained. The extracted app is retained from
 `desktop/signed-app/`: Tauri restores the unsigned build executable after bundling,
 so verifying `target/release/openbot-desktop.exe` would inspect the wrong copy.
 These checks do not test SmartScreen reputation or exercise the app UI.
@@ -43,19 +50,37 @@ These checks do not test SmartScreen reputation or exercise the app UI.
 ## One-time infrastructure setup
 
 Use the protected GitHub environment `windows-signing` with required reviewers.
-Configure these environment **variables**; they contain public identifiers, not
-passwords:
+The workflow pins the existing signing lane's public identifiers in-repository, so a new fork does
+not need to rediscover or copy a subscription GUID before OIDC can start. These optional environment
+**variables** override the checked-in defaults if the signing infrastructure moves:
 
-| Variable | Value |
+| Variable | Checked-in default |
 | --- | --- |
 | `AZURE_CLIENT_ID` | `cb923310-e793-4557-929e-b33e49a42297` |
 | `AZURE_TENANT_ID` | `c3050389-57ad-4c62-8dcd-fe5e2af4fbce` |
-| `AZURE_SUBSCRIPTION_ID` | Subscription containing `cpk-signing-kv` |
 | `AZURE_KEY_VAULT_URL` | `https://cpk-signing-kv.vault.azure.net` |
 | `CODE_SIGNING_CERT_NAME` | `code-signing` |
 
+No Azure subscription id is required by this workflow. `azure/login` runs with
+`allow-no-subscriptions: true`; the certificate read and signing operations use the Key Vault
+data plane. The protected environment, repository-specific OIDC subject, Entra federated credential,
+and Key Vault permissions remain the signing trust boundary.
+
 An owner of the existing Entra application, or an appropriately authorized
-application administrator, must add the federated credential. From the repo root:
+application administrator, must add the federated credential. The safest path is the idempotent
+helper from the repo root:
+
+```powershell
+pwsh -NoProfile -File desktop/scripts/setup-windows-signing-federation.ps1 -CheckOnly
+pwsh -NoProfile -File desktop/scripts/setup-windows-signing-federation.ps1
+```
+
+The first command only checks. The second checks again, creates the credential only when it is
+missing, refuses to overwrite a same-name credential whose issuer/subject/audience differs, and
+re-reads Entra to verify the exact credential after creation. It requires Azure CLI to already be
+signed in as an application owner or appropriately authorized administrator.
+
+Equivalent raw Azure CLI creation, when you have already checked the existing credential list:
 
 ```sh
 az ad app federated-credential create \
@@ -63,9 +88,10 @@ az ad app federated-credential create \
   --parameters desktop/signing/azure-federation.json
 ```
 
-Check existing credentials first; do not duplicate or replace another repository's
-credential. The subject in the checked-in JSON is OpenBot's verified immutable
-subject, including owner and repository IDs, scoped to this environment. An
+Do not duplicate or replace another repository's credential. This repository's immutable GitHub OIDC subject is pinned in the checked-in JSON as
+`repo:duc15052006-dotcom@270219086/OpenBotD.U_C@1374258280:environment:windows-signing`.
+Both the account ID and repository ID are part of the trust boundary, so copying the upstream
+CopilotKit/OpenBot subject here will make Azure reject this repository's token. An
 `Insufficient privileges` response requires an authorized app owner/administrator
 to run the command; GitHub environment approval does not grant Entra permissions.
 

@@ -31,6 +31,18 @@ describe("coworker form validation", () => {
     ).toBe("Expense Manager");
   });
 
+  test("omitted resource profile keeps existing forms compatible and defaults to Normal", () => {
+    const parsed = agentFormSchema.parse({
+      name: "Expense Manager",
+      title: "Finance Operations",
+      roleDescription: "Review receipts.",
+      visibility: "private",
+      endpoint: "",
+      authValue: "",
+    });
+    expect(parsed.computerResourceProfile).toBe("normal");
+  });
+
   test("an endpoint is optional, and must look like a web address", () => {
     const valid = {
       name: "Expense Manager",

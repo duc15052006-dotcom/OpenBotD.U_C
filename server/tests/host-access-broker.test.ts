@@ -358,4 +358,63 @@ describe("host access broker", () => {
       actorId: "user-a",
     });
   });
+  test("quarantine export is bound to exact Bot, digest, and live native operation", async () => {
+    const broker = createHostAccessBroker();
+    const pending = broker.requestQuarantineExport({
+      botId: "bot-a",
+      actorId: "user-a",
+      quarantineId: "download-1",
+      suggestedName: "report.pdf",
+      sha256: "a".repeat(64),
+      sizeBytes: 123,
+      dangerous: false,
+    });
+
+    const operation = broker.nextDesktopOperation()?.operations[0];
+    expect(operation).toMatchObject({
+      kind: "export_quarantine",
+      botId: "bot-a",
+      actorId: "user-a",
+      quarantineId: "download-1",
+      suggestedName: "report.pdf",
+      sha256: "a".repeat(64),
+      sizeBytes: 123,
+      dangerous: false,
+    });
+    expect(broker.quarantineExportSource(operation!.operationId)).toEqual({
+      botId: "bot-a",
+      quarantineId: "download-1",
+      sha256: "a".repeat(64),
+    });
+
+    broker.resolveDesktopOperation({
+      operationId: operation!.operationId,
+      ok: true,
+      result: { exported: true },
+    });
+    await expect(pending).resolves.toEqual({ exported: true });
+    expect(broker.quarantineExportSource(operation!.operationId)).toBeNull();
+  });
+
+  test("failed native quarantine export never resolves as exported", async () => {
+    const broker = createHostAccessBroker();
+    const pending = broker.requestQuarantineExport({
+      botId: "bot-a",
+      actorId: "user-a",
+      quarantineId: "download-2",
+      suggestedName: "tool.exe",
+      sha256: "b".repeat(64),
+      sizeBytes: 456,
+      dangerous: true,
+    });
+    const operation = broker.nextDesktopOperation()?.operations[0];
+    broker.resolveDesktopOperation({
+      operationId: operation!.operationId,
+      ok: false,
+      error: "The local owner denied this operation.",
+    });
+
+    await expect(pending).rejects.toThrow("denied");
+    expect(broker.quarantineExportSource(operation!.operationId)).toBeNull();
+  });
 });

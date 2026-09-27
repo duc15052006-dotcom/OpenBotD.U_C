@@ -46,11 +46,8 @@ export type SavedConfiguration = {
 };
 
 export type HeldConfiguration = {
-  INTELLIGENCE_API_KEY?: string;
   INTELLIGENCE_API_URL?: string;
   INTELLIGENCE_GATEWAY_WS_URL?: string;
-  OPENAI_API_KEY?: string;
-  ANTHROPIC_API_KEY?: string;
   OPENAI_BASE_URL?: string;
   OPENAI_CONTAINER_BASE_URL?: string;
   BOT_MODEL?: string;
@@ -98,18 +95,20 @@ export function ProviderPicker({
   root,
   onChoose,
   onBack,
+  requireConnectionTest = false,
 }: {
   chosen: ModelChoice | null;
   /**
-   * Credentials a previous run already wrote, by environment name.
+   * Non-secret connection metadata plus presence-only saved credential indicators.
    *
-   * Used to fill the key field for whichever provider is chosen, so somebody who has set this up
-   * before is not sent to find a key they already produced. Their own file, on their own machine.
+   * A saved secret stays native-side; choosing it records reuse intent and Start resolves it from
+   * the selected installation's vault.
    */
   held: HeldConfiguration;
   root: string;
   onChoose: (choice: ModelChoice) => void;
   onBack: () => void;
+  requireConnectionTest?: boolean;
 }) {
   const initialChoice = chosen ?? recordedModel(held);
   const [reuse, setReuse] = useState(
@@ -160,6 +159,11 @@ export function ProviderPicker({
   // A problem, not a string: a sign-in failure carries the container's own output, and
   // stringifying it printed "[object Object]" where the diagnosis should have been.
   const [failure, setFailure] = useState<Problem | null>(null);
+  const [testingConnection, setTestingConnection] = useState(false);
+  const [connectionCheck, setConnectionCheck] = useState<{
+    fingerprint: string;
+    detail: string;
+  } | null>(null);
   const openRef = useRef(open);
   const signInRunRef = useRef(0);
 
@@ -296,14 +300,14 @@ export function ProviderPicker({
       containerBaseUrlIsValid &&
       model.trim().length > 0);
 
-  function continueWithChoice() {
-    if (!row || !login || !ready) return;
+  function currentChoice(): ModelChoice | null {
+    if (!row || !login || !ready) return null;
     const trimmedApiKey = apiKey.trim();
     const trimmedToken = token.trim();
     const trimmedBaseUrl = baseUrl.trim();
     const trimmedModel = model.trim();
     const trimmedContainerBaseUrl = containerBaseUrl.trim();
-    onChoose({
+    return {
       provider: row.id,
       login,
       ...((login === "api-key" || login === "endpoint") && trimmedApiKey
@@ -320,7 +324,41 @@ export function ProviderPicker({
         ? { containerBaseUrl: trimmedContainerBaseUrl }
         : {}),
       ...(trimmedModel ? { model: trimmedModel } : {}),
-    });
+    };
+  }
+
+  const choice = currentChoice();
+  // Keep only a small change detector, not a second copy of the credential. The original key already
+  // has to exist in the input state until Continue; the test marker itself must not retain it.
+  const choiceFingerprint = choice ? connectionFingerprint(choice) : null;
+  const connectionIsCurrent =
+    choiceFingerprint !== null &&
+    connectionCheck?.fingerprint === choiceFingerprint;
+
+  async function testConnection() {
+    const candidate = currentChoice();
+    if (!candidate) return;
+    const fingerprint = connectionFingerprint(candidate);
+    setTestingConnection(true);
+    setFailure(null);
+    try {
+      const result = await invoke<{ detail: string }>("test_model_connection", {
+        root: root.trim(),
+        model: candidate,
+      });
+      setConnectionCheck({ fingerprint, detail: result.detail });
+    } catch (error) {
+      setConnectionCheck(null);
+      setFailure(asProblem(error));
+    } finally {
+      setTestingConnection(false);
+    }
+  }
+
+  function continueWithChoice() {
+    const candidate = currentChoice();
+    if (!candidate || (requireConnectionTest && !connectionIsCurrent)) return;
+    onChoose(candidate);
   }
 
   return (
@@ -357,14 +395,9 @@ export function ProviderPicker({
                 setProgress(null);
                 // The first way in is the default, which is the plan wherever there is one.
                 setLogin(r.logins[0] ?? null);
-                // Fill from what is already on this machine, if anything.
-                const kept =
-                  r.id === "openai"
-                    ? held.OPENAI_API_KEY
-                    : r.id === "anthropic"
-                      ? held.ANTHROPIC_API_KEY
-                      : undefined;
-                setApiKey(kept ?? "");
+                // Saved keys are presence-only here. Never rehydrate a vault secret into WebView
+                // state; a blank field plus the saved indicator becomes { saved: true }.
+                setApiKey("");
                 setReuseEndpointKey(
                   r.id === "openai-compatible" &&
                     held.saved?.modelApiKeys?.compatible === true,
@@ -624,6 +657,16 @@ export function ProviderPicker({
           {/* Said before it happens rather than diagnosed after the Bots stop answering. */}
           {failure && <InlineFailure problem={failure} />}
 
+          {connectionIsCurrent && connectionCheck ? (
+            <p className="lede" role="status">
+              ✓ {connectionCheck.detail}
+            </p>
+          ) : connectionCheck ? (
+            <p className="footnote" role="status">
+              Connection settings changed. Test the current connection again.
+            </p>
+          ) : null}
+
           {row.caution && (
             <p className="caution">
               {row.caution.says}{" "}
@@ -645,7 +688,20 @@ export function ProviderPicker({
         </button>
         <button
           type="button"
-          disabled={!row || !login || !ready}
+          className="quiet"
+          disabled={!choice || busy || testingConnection}
+          onClick={() => void testConnection()}
+        >
+          {testingConnection ? "Testing…" : "Test connection"}
+        </button>
+        <button
+          type="button"
+          disabled={
+            !choice ||
+            busy ||
+            testingConnection ||
+            (requireConnectionTest && !connectionIsCurrent)
+          }
           onClick={continueWithChoice}
         >
           Continue
@@ -653,4 +709,16 @@ export function ProviderPicker({
       </div>
     </div>
   );
+}
+
+function connectionFingerprint(choice: ModelChoice): string {
+  const source = JSON.stringify(choice);
+  // FNV-1a is a change detector here, not a security primitive. Its only job is making a successful
+  // test stale when any field changes, without storing the credential again in component state.
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < source.length; index += 1) {
+    hash ^= source.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `${choice.provider}:${choice.login}:${(hash >>> 0).toString(16)}`;
 }

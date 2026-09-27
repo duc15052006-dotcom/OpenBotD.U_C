@@ -21,6 +21,7 @@ function serve(handler: (request: Request) => Response | Promise<Response>) {
 
 type FakeAgentComputerHandler = {
   health?: (request: Request) => Response | Promise<Response>;
+  run?: (request: Request) => Response | Promise<Response>;
   computers?: (request: Request) => Response | Promise<Response>;
   stop?: (request: Request) => Response | Promise<Response>;
   reset?: (request: Request) => Response | Promise<Response>;
@@ -45,6 +46,11 @@ function serveAgentComputer(
     if (url.pathname === "/health" && request.method === "GET") {
       if (handlers.health) return handlers.health(request);
       return Response.json({ status: "ok", browser: true });
+    }
+
+    if (url.pathname === "/run" && request.method === "GET") {
+      if (handlers.run) return handlers.run(request);
+      return Response.json({ error: "Not found." }, { status: 404 });
     }
 
     if (url.pathname === "/computers" && request.method === "GET") {
@@ -95,6 +101,36 @@ describe("shared computer provider", () => {
       baseUrl: "http://computer:4100/",
     });
     expect(await provider.locate("sales")).toBe("http://computer:4100/");
+  });
+
+  test("reads the shared browser run with Bot identity and token", async () => {
+    const requests: Array<{ botId: string | null; token: string | null }> = [];
+    const baseUrl = serveAgentComputer(
+      {
+        run: (request) => {
+          requests.push({
+            botId: request.headers.get("x-openbot-bot-id"),
+            token: request.headers.get("x-openbot-computer-token"),
+          });
+          return Response.json({ run: "run-42" });
+        },
+      },
+      { token: "computer-secret" },
+    );
+    const provider = createSharedComputerProvider({
+      baseUrl,
+      token: "computer-secret",
+    });
+
+    expect(await provider.sessionOf?.("sales")).toBe("run-42");
+    expect(requests).toEqual([{ botId: "sales", token: "computer-secret" }]);
+  });
+
+  test("treats a shared computer without /run as an unknown run", async () => {
+    const baseUrl = serveAgentComputer();
+    const provider = createSharedComputerProvider({ baseUrl });
+
+    expect(await provider.sessionOf?.("sales")).toBeUndefined();
   });
 
   test("reports a healthy shared computer as ready", async () => {

@@ -44,6 +44,8 @@ export type StagedFile = {
   name: string;
   size?: number;
   loading: boolean;
+  /** The model may read only the bounded prefix of a larger text file. */
+  mayTruncate?: boolean;
 };
 
 export function AttachmentStrip({
@@ -120,7 +122,7 @@ export function AttachmentStrip({
             className="flex h-20 w-40 flex-col justify-between rounded-xl border border-border bg-muted/40 p-2"
             key={file.id}
           >
-            <IconFile className="size-5 text-muted-foreground" />
+            <IconFile className="size-5 shrink-0 text-muted-foreground" />
             <div className="min-w-0">
               <p className="truncate font-medium text-xs" title={file.name}>
                 {file.name}
@@ -128,8 +130,16 @@ export function AttachmentStrip({
               {file.loading ? (
                 <p className="text-muted-foreground text-xs">Uploading…</p>
               ) : file.size === undefined ? null : (
-                <p className="text-muted-foreground text-xs">
+                <p
+                  className="truncate text-muted-foreground text-xs"
+                  title={
+                    file.mayTruncate === true
+                      ? "The model reads the first 120,000 characters of this file."
+                      : undefined
+                  }
+                >
                   {formatBytes(file.size)}
+                  {file.mayTruncate === true ? " · may be cut" : null}
                 </p>
               )}
             </div>

@@ -50,6 +50,7 @@ function boundary(id: string, refusal?: "unauthenticated" | "forbidden") {
     deletedAt: null,
     endpoint: null,
     hasAuth: false,
+    computerResourceProfile: "normal",
     hasCallbackToken: false,
   };
   const record = (operation: string, receivedId: string, value?: unknown) => {
@@ -98,6 +99,9 @@ function boundary(id: string, refusal?: "unauthenticated" | "forbidden") {
     },
     async agentForCallbackToken() {
       throw new Error("unexpected callback lookup");
+    },
+    async computerResourceProfile() {
+      return "normal";
     },
   };
   const auth: Parameters<typeof createAgentRoutes>[1] = async (

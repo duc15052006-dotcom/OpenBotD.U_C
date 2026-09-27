@@ -15,6 +15,7 @@ export type RoutineRecord = {
   /** Which Bot carries it out, so a Bot's own dialog can show only its routines. */
   agentId: string;
   schedule: string;
+  scheduleKind: "recurring" | "once";
   timezone: string;
   instruction: string;
   channel: { id: string; name: string | null; gone: boolean };

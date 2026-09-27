@@ -18,7 +18,7 @@ def _model_id() -> str:
     """`provider:model`, which is the form Pydantic AI names a model in."""
     provider = (os.environ.get("BOT_PROVIDER") or "openai").strip()
     model = (os.environ.get("BOT_MODEL") or "gpt-4o-mini").strip()
-    return model if ":" in model else f"{provider}:{model}"
+    return model if model.startswith(f"{provider}:") else f"{provider}:{model}"
 
 
 agent = Agent(_model_id())

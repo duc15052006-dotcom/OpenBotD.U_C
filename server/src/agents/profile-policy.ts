@@ -22,6 +22,21 @@ export function canManageAgent(
   return agent.ownerUserId === actor.id || actor.role === "admin";
 }
 
+/**
+ * Management rule for deployment-owned runtime overrides such as Model/API and Instructions.
+ *
+ * Package-owned Agents keep their identity immutable, but an administrator still needs to tune
+ * how this deployment runs them. User-owned Agents keep the ordinary owner/admin profile rule.
+ */
+export function canManageAgentRuntimeSettings(
+  actor: AgentActor,
+  agent: AgentProfile,
+): boolean {
+  if (agent.deletedAt !== null) return false;
+  if (agent.systemOwned) return actor.role === "admin";
+  return canManageAgent(actor, agent);
+}
+
 export const canRunAgent = canAccessAgent;
 
 /**

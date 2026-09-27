@@ -77,8 +77,17 @@ export type HandoffDesk = {
 export function createHandoffDesk(options: {
   queue: WorkQueue;
   profiles: AgentProfileStore;
-  /** Whether the asking Bot has been granted the Bot it is addressing. Read per hop, never cached. */
-  mayAddress: (fromBotId: string, toBotId: string) => Promise<boolean>;
+  /**
+   * Whether the asking Bot may address the target in this run.
+   *
+   * Durable Bot grants are one answer. A group channel may also grant the same ability only inside
+   * that conversation, which is why the signed run's actor/thread context travels with the check.
+   */
+  mayAddress: (
+    fromBotId: string,
+    toBotId: string,
+    context: { actorId: string; threadId?: string },
+  ) => Promise<boolean>;
   /**
    * Who the person is, as the roster is decided for them. Null when that cannot be established.
    *
@@ -265,12 +274,17 @@ export function createHandoffDesk(options: {
 
       // Read per hop and never held, so revoking a grant applies to the next hop rather than after a
       // restart.
-      if (!(await mayAddress(from.botId, found.id))) {
+      if (
+        !(await mayAddress(from.botId, found.id, {
+          actorId: from.actorId,
+          ...(from.threadId ? { threadId: from.threadId } : {}),
+        }))
+      ) {
         return refuse(
           from,
           target,
           "not_granted",
-          `You have not been given ${found.name} to hand work to. An administrator grants that.`,
+          `You cannot hand work to ${found.name} from this conversation. Add both Bots to the same group channel or ask an administrator to grant that Bot.`,
         );
       }
 

@@ -67,6 +67,7 @@ function harness(options: {
   failures?: number;
   runTurn?: TurnRunner;
   recordActivity?: () => Promise<void>;
+  routinePresent?: boolean;
 }) {
   const recorded: Recorded = {
     finished: [],
@@ -83,6 +84,18 @@ function harness(options: {
     dueRoutines: () => unreachable("dueRoutines"),
     advanceNextRun: () => unreachable("advanceNextRun"),
     insertRun: () => unreachable("insertRun"),
+    async routineForFiring(id) {
+      expect(id).toBe(CONTEXT.routineId);
+      return options.routinePresent === false
+        ? null
+        : {
+            id,
+            enabled: true,
+            scheduleKind: "recurring",
+            nextRunAt: new Date("2026-09-21T09:00:00.000Z"),
+            lastRunAt: null,
+          };
+    },
 
     async runContext(runId) {
       expect(runId).toBe(RUN_ID);
@@ -154,6 +167,7 @@ describe("createRoutineRunner", () => {
         routineId: CONTEXT.routineId,
         agentId: CONTEXT.agentId,
         threadId: CHANNEL.threadId,
+        continuationGuard: expect.any(Function),
         instruction: CONTEXT.instruction,
       },
     ]);
@@ -168,6 +182,32 @@ describe("createRoutineRunner", () => {
     expect(recorded.finished).toEqual([
       { runId: RUN_ID, status: "succeeded", error: undefined },
     ]);
+    expect(recorded.enabled).toEqual([]);
+  });
+
+  test("records durable revocation as skipped without fatigue or activity", async () => {
+    const cancellation = new Error(
+      "The routine continuation was cancelled while it was running.",
+    );
+    cancellation.name = "HeadlessContinuationCancelled";
+    const { runner, recorded } = harness({
+      routinePresent: false,
+      runTurn: async (input) => {
+        expect(await input.continuationGuard?.()).toBe(false);
+        throw cancellation;
+      },
+    });
+
+    await runner.run(RUN_ID);
+
+    expect(recorded.finished).toEqual([
+      {
+        runId: RUN_ID,
+        status: "skipped",
+        error: cancellation.message,
+      },
+    ]);
+    expect(recorded.activity).toEqual([]);
     expect(recorded.enabled).toEqual([]);
   });
 

@@ -110,8 +110,12 @@ services:
       # minutes; closing a browser costs only a relaunch, because the profile is on the volume below.
       COMPUTER_MAX_BROWSERS: ${COMPUTER_MAX_BROWSERS:-}
       COMPUTER_BROWSER_IDLE_MS: ${COMPUTER_BROWSER_IDLE_MS:-}
+      # Logical file-tool quota for /workspace. Browser downloads use a separate quarantine volume.
+      COMPUTER_WORKSPACE_MAX_BYTES: ${COMPUTER_WORKSPACE_MAX_BYTES:-4294967296}
     volumes:
       - agent-workspace:/workspace
+      # Browser downloads are untrusted and stay separate from the Agent's normal workspace.
+      - agent-quarantine:/quarantine
       # Chromium's user-data directory is volume-backed so logins survive container restarts.
       - agent-profiles:/profiles
     # Gives Chromium time to flush its profile after SIGTERM before Docker sends SIGKILL.
@@ -213,6 +217,15 @@ services:
       # Set to runsc to run every computer under gVisor, when the host has it. Left unset each
       # computer is an ordinary container and shares the host kernel.
       COMPUTER_RUNTIME: ${COMPUTER_RUNTIME:-}
+      # Windows-first defaults sized for ordinary Browser/Files work. Operators can override both,
+      # but an unset desktop install must not let one Agent consume the whole host.
+      COMPUTER_MEMORY_BYTES: ${COMPUTER_MEMORY_BYTES:-2147483648}
+      COMPUTER_NANO_CPUS: ${COMPUTER_NANO_CPUS:-2000000000}
+      # On the 16 GiB Windows-first target, three active Computers is the safety ceiling. More Bots
+      # may exist; stopped/idle Computers keep their volumes and wake on demand.
+      COMPUTER_MAX_ACTIVE: ${COMPUTER_MAX_ACTIVE:-3}
+      # Forward the per-Agent workspace quota into every Computer container.
+      COMPUTER_WORKSPACE_MAX_BYTES: ${COMPUTER_WORKSPACE_MAX_BYTES:-4294967296}
       # Identity, when SPIRE is part of this deployment. The supervisor registers an entry per Bot
       # and mounts the agent's socket into that Bot's computer so it can fetch its own SVID.
       SPIRE_SOCKET: /tmp/spire-server/private/api.sock
@@ -393,6 +406,7 @@ networks:
 volumes:
   postgres-data:
   agent-workspace:
+  agent-quarantine:
   spire-server-data:
   spire-server-socket:
   spire-agent-socket:

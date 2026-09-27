@@ -4253,6 +4253,16 @@ export function createPluginStore(options: PluginStoreOptions) {
       return row !== undefined;
     },
 
+    async serverExists(serverId: string): Promise<boolean> {
+      if (!serverId) return false;
+      const [row] = await database
+        .select({ id: mcpServers.id })
+        .from(mcpServers)
+        .where(eq(mcpServers.id, serverId))
+        .limit(1);
+      return row !== undefined;
+    },
+
     async agentOwner(agentId: string): Promise<string | null | undefined> {
       const [row] = await database
         .select({ ownerUserId: agentProfiles.ownerUserId })

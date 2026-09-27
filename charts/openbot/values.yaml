@@ -121,6 +121,10 @@ config:
   publicUrl: ""
   # Administrators by email address, comma-separated. Required unless singleUser is on.
   initialAdminEmails: ""
+  # Email domains admitted at sign-in, comma-separated. Empty keeps the provider's
+  # existing behaviour. Exact matches only: example.com does not include sub.example.com.
+  # This is an additional filter, not proof that a provider verified the address.
+  allowedEmailDomains: ""
   # Every request is one fixed administrator. Local trials only; the deployment refuses to start
   # with no identity provider unless this says somebody meant it.
   singleUser: false
@@ -199,6 +203,20 @@ computers:
   # do not agree: GKE has managed gVisor, AKS offers Kata and gVisor, and on EKS it is bring your own
   # node configuration. A chart that assumed a RuntimeClass would fail to install without one.
   runtimeClassName: ""
+
+  # Who a Kubernetes computer pod runs as. The all-in-one image already creates pwuser at 1001;
+  # computer pods override the image's s6 entrypoint, so without this they run as root.
+  #
+  # fsGroup makes persistent volumes writable where the storage driver supports it. On hostPath-like
+  # storage that ignores fsGroup, the computer now refuses to start instead of silently using a
+  # throwaway browser profile. Set this value to null only when the cluster cannot support it and the
+  # operator has deliberately chosen to run the computer pod as root.
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1001
+    runAsGroup: 1001
+    fsGroup: 1001
+    fsGroupChangePolicy: OnRootMismatch
 
   # How many browsers one computer holds at once, and how long an untouched one is kept. Empty means
   # the process default, which is a handful and thirty minutes.

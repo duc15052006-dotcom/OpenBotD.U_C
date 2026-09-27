@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
+import { createAuditStore } from "../src/audit";
 import { and, eq, like } from "drizzle-orm";
 import type {
   ComputerLocation,
@@ -25,6 +26,7 @@ import { TEST_POOL, testDatabaseUrl } from "./support/database";
  */
 const database = createDatabase(testDatabaseUrl(), TEST_POOL);
 const queue = createWorkQueue(database);
+const auditStore = createAuditStore(database);
 const suite = randomUUID().slice(0, 8);
 const botOf = (name: string) => `cull-${suite}-${name}`;
 
@@ -88,6 +90,7 @@ describe("suspending computers nobody is using", () => {
       database,
       queue,
       provider,
+      auditStore,
       idleAfterMs,
       owner: "replica-1",
       now,
@@ -98,6 +101,17 @@ describe("suspending computers nobody is using", () => {
 
     expect(report.suspended).toEqual([botId]);
     expect(stopped).toEqual([botId]);
+    const slept = await database
+      .select({ eventType: auditEvents.eventType })
+      .from(auditEvents)
+      .where(
+        and(
+          eq(auditEvents.targetId, botId),
+          eq(auditEvents.eventType, "computer.slept"),
+        ),
+      )
+      .limit(1);
+    expect(slept).toEqual([{ eventType: "computer.slept" }]);
   });
 
   test("a computer used a minute ago is left alone", async () => {
@@ -111,6 +125,7 @@ describe("suspending computers nobody is using", () => {
       database,
       queue,
       provider,
+      auditStore,
       idleAfterMs,
       owner: "replica-1",
       now,
@@ -135,6 +150,7 @@ describe("suspending computers nobody is using", () => {
       database,
       queue,
       provider,
+      auditStore,
       idleAfterMs,
       owner: "replica-1",
       now,
@@ -149,6 +165,101 @@ describe("suspending computers nobody is using", () => {
     expect(report.skipped[0]?.reason).toContain("used again");
   });
 
+  test("activity that lands while idle sleep is stopping the Computer restores it", async () => {
+    const botId = botOf("race-restored");
+    await database.insert(auditEvents).values(ran(botId, minutesAgo(45)));
+    const stopped: string[] = [];
+    const located: string[] = [];
+    const provider: ComputerProvider = {
+      name: "race",
+      isolation: "per-bot",
+      locate: async (id) => {
+        located.push(id);
+        return "http://unused";
+      },
+      status: async (id) => ({ botId: id, state: "ready" }),
+      stop: async (id) => {
+        stopped.push(id);
+        // A Start/Wake or governed action was recorded after the culler's last idle check but
+        // before the stop completed.
+        await database.insert(auditEvents).values(ran(id, now()));
+        return { wasRunning: true };
+      },
+      reset: async () => ({ cleared: false }),
+      list: async () => [{ botId, status: "running", url: "http://c" }],
+    };
+    const options = {
+      database,
+      queue,
+      provider,
+      auditStore,
+      idleAfterMs,
+      owner: "replica-1",
+      now,
+    };
+
+    await offerIdleComputers(options);
+    const report = await suspendClaimedComputers(options);
+
+    expect(stopped).toEqual([botId]);
+    expect(located).toEqual([botId]);
+    expect(report.suspended).toEqual([]);
+    expect(report.skipped[0]?.reason).toContain("restored");
+    const woke = await database
+      .select({ eventType: auditEvents.eventType })
+      .from(auditEvents)
+      .where(
+        and(
+          eq(auditEvents.targetId, botId),
+          eq(auditEvents.eventType, "computer.woke"),
+        ),
+      )
+      .limit(1);
+    expect(woke).toEqual([{ eventType: "computer.woke" }]);
+  });
+
+  test("a manual Stop racing the culler is never undone as activity", async () => {
+    const botId = botOf("manual-stop-race");
+    await database.insert(auditEvents).values(ran(botId, minutesAgo(45)));
+    const located: string[] = [];
+    const provider: ComputerProvider = {
+      name: "manual-stop-race",
+      isolation: "per-bot",
+      locate: async (id) => {
+        located.push(id);
+        return "http://unused";
+      },
+      status: async (id) => ({ botId: id, state: "ready" }),
+      stop: async (id) => {
+        await database.insert(auditEvents).values({
+          eventType: "computer.stopped",
+          targetType: "computer",
+          targetId: id,
+          payload: { bot: id, reason: "manual stop raced culler" },
+          createdAt: now(),
+        });
+        return { wasRunning: true };
+      },
+      reset: async () => ({ cleared: false }),
+      list: async () => [{ botId, status: "running", url: "http://c" }],
+    };
+    const options = {
+      database,
+      queue,
+      provider,
+      auditStore,
+      idleAfterMs,
+      owner: "replica-1",
+      now,
+    };
+
+    await offerIdleComputers(options);
+    const report = await suspendClaimedComputers(options);
+
+    expect(located).toEqual([]);
+    expect(report.suspended).toEqual([botId]);
+  });
+
   test("a computer nothing is known about is left alone", async () => {
     // No audit row and no start time. Suspending on no evidence is how a session disappears.
     const botId = botOf("unknown");
@@ -160,6 +271,7 @@ describe("suspending computers nobody is using", () => {
       database,
       queue,
       provider,
+      auditStore,
       idleAfterMs,
       owner: "replica-1",
       now,
@@ -182,6 +294,7 @@ describe("suspending computers nobody is using", () => {
           database,
           queue,
           provider,
+          auditStore,
           idleAfterMs,
           owner: "replica-1",
           now,
@@ -202,7 +315,7 @@ describe("suspending computers nobody is using", () => {
         url: "http://c",
       })),
     );
-    const base = { database, queue, provider, idleAfterMs, now };
+    const base = { database, queue, provider, auditStore, idleAfterMs, now };
 
     await offerIdleComputers({ ...base, owner: "replica-1" });
     const [first, second] = await Promise.all([
@@ -236,6 +349,7 @@ describe("suspending computers nobody is using", () => {
         database,
         queue,
         provider,
+        auditStore,
         idleAfterMs,
         owner: "replica-1",
         now: at(whenIso),

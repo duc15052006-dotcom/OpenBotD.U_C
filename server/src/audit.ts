@@ -254,8 +254,20 @@ export const auditEventTypes = [
   // The computer itself being stopped or wiped. `reset` destroys every login the Bot had, which is
   // both the recovery path and the most consequential button on the admin page, so who pressed it and
   // when is exactly the sort of thing an investigator needs and nothing else records.
+  "computer.started",
+  "computer.woke",
+  "computer.restarted",
+  "computer.slept",
   "computer.stopped",
+  "computer.snapshot_created",
+  "computer.snapshot_restored",
   "computer.reset",
+  // Untrusted downloads stay quarantined through scanning and explicit human approval. These rows
+  // record the security decision without copying file contents or scanner output into the trail.
+  "computer.quarantine_scanned",
+  "computer.quarantine_approved",
+  "computer.quarantine_released",
+  "computer.quarantine_deleted",
   /**
    * The boundary this deployment booted with.
    *
@@ -411,6 +423,7 @@ export const auditEventTypes = [
    */
   "agent.handoff_delivered",
   "agent.handoff_failed",
+  "agent.handoff_cancelled",
   "agent.handoff_retried",
   /*
    * A Bot asking a person instead.
@@ -444,6 +457,7 @@ export type AuditInitiator =
   | { kind: "person" }
   | { kind: "deployment" }
   | { kind: "routine"; id: string }
+  | { kind: "workflow"; id: string }
   | { kind: "handoff"; id: string };
 
 export const PERSON_INITIATOR: AuditInitiator = { kind: "person" };
@@ -462,6 +476,7 @@ export const auditInitiatorKinds = [
   "person",
   "deployment",
   "routine",
+  "workflow",
   "handoff",
 ] as const;
 

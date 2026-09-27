@@ -6,14 +6,20 @@ use serde::Deserialize;
 
 use crate::deployment;
 
-const LATEST_RELEASE: &str = "https://api.github.com/repos/CopilotKit/OpenBot/releases/latest";
+fn latest_release_url() -> Result<String, String> {
+    let repository = crate::update::release_repository()?;
+    Ok(format!(
+        "https://api.github.com/repos/{repository}/releases/latest"
+    ))
+}
 
 /// Only new deployments consult GitHub. The fetcher records the exact tag after the source and
 /// image manifest have both downloaded successfully; restarts and repairs retain that pin.
 /// Uses blocking HTTP, so callers in an async runtime must use a blocking task.
 pub fn resolve_version(root: &Path) -> Result<String, String> {
     resolve_version_with(root, || {
-        let body = deployment::get(LATEST_RELEASE)
+        let latest = latest_release_url()?;
+        let body = deployment::get(&latest)
             .map_err(|error| format!("could not find the latest OpenBot release: {error}"))?;
         release_tag(&body)
     })
@@ -52,6 +58,15 @@ mod tests {
         let root = temp_root(label);
         std::fs::create_dir_all(&root).unwrap();
         root
+    }
+
+    #[test]
+    fn latest_release_uses_the_repository_baked_into_this_desktop_build() {
+        let repository = crate::update::release_repository().unwrap();
+        assert_eq!(
+            latest_release_url().unwrap(),
+            format!("https://api.github.com/repos/{repository}/releases/latest")
+        );
     }
 
     #[test]

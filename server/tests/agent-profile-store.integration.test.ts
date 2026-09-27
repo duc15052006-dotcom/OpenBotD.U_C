@@ -1,6 +1,6 @@
 import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { authFromConfiguration } from "../src/agents/auth-header";
 import {
   AgentNotFoundError,
@@ -25,7 +25,11 @@ import {
   channels,
   deploymentPackages,
   intelligenceChannelMappings,
+  routines,
   users,
+  workItems,
+  workflowRuns,
+  workflowSteps,
 } from "../src/db/schema";
 import { TEST_POOL, testDatabaseUrl } from "./support/database";
 
@@ -41,8 +45,14 @@ const createdUserIds: string[] = [];
 const createdAgentIds: string[] = [];
 const createdChannelIds: string[] = [];
 const createdPackageIds: string[] = [];
+const createdWorkItemKeys: string[] = [];
 
 afterEach(async () => {
+  for (const key of createdWorkItemKeys.splice(0)) {
+    await database
+      .delete(workItems)
+      .where(and(eq(workItems.kind, "bot.message"), eq(workItems.key, key)));
+  }
   for (const channelId of createdChannelIds.splice(0)) {
     await database.delete(channels).where(eq(channels.id, channelId));
   }
@@ -808,6 +818,160 @@ describe("agent profile store integration", () => {
     await expect(
       store.setHidden(owner, source.agentId, true),
     ).rejects.toBeInstanceOf(AgentNotFoundError);
+  });
+
+  test("soft delete revokes routines, workflows and handoffs for that Bot", async () => {
+    const owner = await createUser();
+    const source = await createProfileFixture({ owner });
+
+    const routineId = id("routine");
+    await database.insert(routines).values({
+      id: routineId,
+      ownerUserId: owner.id,
+      agentId: source.agentId,
+      channelId: id("routine-channel"),
+      instruction: "Continue unattended work.",
+      cron: "0 9 * * *",
+      timezone: "UTC",
+      enabled: true,
+      nextRunAt: new Date("2026-09-21T09:00:00.000Z"),
+    });
+
+    const fromHandoffKey = id("handoff-from");
+    const toHandoffKey = id("handoff-to");
+    const unrelatedHandoffKey = id("handoff-unrelated");
+    createdWorkItemKeys.push(fromHandoffKey, toHandoffKey, unrelatedHandoffKey);
+    await database.insert(workItems).values([
+      {
+        kind: "bot.message",
+        key: fromHandoffKey,
+        payload: {
+          fromBotId: source.agentId,
+          toBotId: "peer-agent",
+          actorId: owner.id,
+          threadId: id("thread-from"),
+          runId: id("run-from"),
+          depth: 1,
+          task: "claimed handoff from the Bot being deleted",
+        },
+        claimedBy: "replica-a",
+        leaseUntil: new Date(Date.now() + 60_000),
+      },
+      {
+        kind: "bot.message",
+        key: toHandoffKey,
+        payload: {
+          fromBotId: "peer-agent",
+          toBotId: source.agentId,
+          actorId: owner.id,
+          threadId: id("thread-to"),
+          runId: id("run-to"),
+          depth: 1,
+          task: "queued handoff to the Bot being deleted",
+        },
+      },
+      {
+        kind: "bot.message",
+        key: unrelatedHandoffKey,
+        payload: {
+          fromBotId: "peer-agent-a",
+          toBotId: "peer-agent-b",
+          actorId: owner.id,
+          threadId: id("thread-unrelated"),
+          runId: id("run-unrelated"),
+          depth: 1,
+          task: "unrelated work must survive",
+        },
+        claimedBy: "replica-b",
+        leaseUntil: new Date(Date.now() + 60_000),
+      },
+    ]);
+
+    const workflowId = id("workflow");
+    await database.insert(workflowRuns).values({
+      id: workflowId,
+      ownerUserId: owner.id,
+      agentId: source.agentId,
+      channelId: id("workflow-channel"),
+      title: "Deletion cancellation",
+      status: "active",
+    });
+    await database.insert(workflowSteps).values([
+      {
+        id: id("workflow-step-running"),
+        workflowId,
+        key: "running",
+        position: 0,
+        instruction: "Keep working.",
+        status: "running",
+        attempts: 1,
+      },
+      {
+        id: id("workflow-step-done"),
+        workflowId,
+        key: "done",
+        position: 1,
+        instruction: "Already done.",
+        dependsOn: ["running"],
+        status: "succeeded",
+        attempts: 1,
+        finishedAt: new Date("2026-09-20T08:00:00.000Z"),
+      },
+    ]);
+
+    await store.softDelete(owner, source.agentId);
+
+    const [routine] = await database
+      .select()
+      .from(routines)
+      .where(eq(routines.id, routineId));
+    expect(routine?.enabled).toBe(false);
+
+    const handoffs = await database
+      .select()
+      .from(workItems)
+      .where(
+        and(
+          eq(workItems.kind, "bot.message"),
+          inArray(workItems.key, [
+            fromHandoffKey,
+            toHandoffKey,
+            unrelatedHandoffKey,
+          ]),
+        ),
+      );
+    const fromHandoff = handoffs.find((row) => row.key === fromHandoffKey);
+    const toHandoff = handoffs.find((row) => row.key === toHandoffKey);
+    const unrelatedHandoff = handoffs.find(
+      (row) => row.key === unrelatedHandoffKey,
+    );
+    for (const revoked of [fromHandoff, toHandoff]) {
+      expect(revoked?.finishedAt).toBeInstanceOf(Date);
+      expect(revoked?.claimedBy).toBeNull();
+      expect(revoked?.leaseUntil).toBeNull();
+      expect(revoked?.lastError).toBe("agent deleted before handoff completed");
+    }
+    expect(unrelatedHandoff?.finishedAt).toBeNull();
+    expect(unrelatedHandoff?.claimedBy).toBe("replica-b");
+    expect(unrelatedHandoff?.leaseUntil).toBeInstanceOf(Date);
+    expect(unrelatedHandoff?.lastError).toBeNull();
+
+    const [workflow] = await database
+      .select()
+      .from(workflowRuns)
+      .where(eq(workflowRuns.id, workflowId));
+    expect(workflow?.status).toBe("cancelled");
+    expect(workflow?.finishedAt).toBeInstanceOf(Date);
+
+    const steps = await database
+      .select()
+      .from(workflowSteps)
+      .where(eq(workflowSteps.workflowId, workflowId));
+    const running = steps.find((row) => row.key === "running");
+    const done = steps.find((row) => row.key === "done");
+    expect(running?.status).toBe("cancelled");
+    expect(running?.finishedAt).toBeInstanceOf(Date);
+    expect(done?.status).toBe("succeeded");
   });
 
   test("rolls back canonical creation when the profile insert fails", async () => {

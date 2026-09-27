@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
+import { createOpenAI } from "@ai-sdk/openai";
 import {
   CopilotKitIntelligence,
   IntelligenceAgentRunner,
 } from "@copilotkit/runtime/v2";
 import { serve } from "bun";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { COMPUTER_GUIDANCE } from "../../shared/bot-prompt";
 import { workOwner } from "../../shared/work-owner";
 import { mintRunAssertion, readRunAssertion } from "./agents/callback-token";
@@ -15,9 +16,17 @@ import { createHandoffDelivery } from "./agents/handoff-delivery";
 import { createHandoffRunner } from "./agents/handoff-runner";
 import { signHandoffDeliveryRun } from "./agents/handoff-signing";
 import { handoffTool } from "./agents/handoff-tool";
+import { createAgentInstructionsStore } from "./agents/instructions-store";
+import { createAgentKnowledgeStore } from "./agents/knowledge-store";
+import { createAgentModelConfigStore } from "./agents/model-config-store";
+import { createAgentModelConnectionService } from "./agents/model-connection-service";
 import { createAgentProfileStore } from "./agents/profile-store";
 import type { AgentActor } from "./agents/profile-types";
 import { createRuntimeAgentLoader } from "./agents/runtime-agents";
+import {
+  createProviderApiKeyResolver,
+  resolveAgentRuntimeModel,
+} from "./agents/runtime-model";
 import { createApp } from "./app";
 import {
   type AuditInitiator,
@@ -54,6 +63,7 @@ import { createChannelTitler } from "./channels/titler";
 import { createSandboxedStore } from "./components/sandboxed";
 import { createComponentStore } from "./components/store";
 import { createComputerGateway } from "./computer/gateway";
+import { createComputerLifecycleReader } from "./computer/lifecycle";
 import { createPageFrameStore } from "./computer/page-frames";
 import { startPolicyListener } from "./computer/policy-listener";
 import {
@@ -70,6 +80,7 @@ import {
   type IdentifyActor,
   type IdentifyUser,
   mountCopilotRuntime,
+  normalizeModelBaseUrls,
   resolveRuntimeAgents,
   runtimeModelForEnvironment,
   type ToolSelection,
@@ -80,12 +91,19 @@ import {
   resolveModelApiKey,
 } from "./credentials";
 import { createDatabase } from "./db/client";
-import { intelligenceChannelMappings } from "./db/schema";
+import {
+  agentProfiles,
+  channelAgents,
+  channelMemberships,
+  channels,
+  intelligenceChannelMappings,
+} from "./db/schema";
 import { createHostAccessBroker } from "./host-access/broker";
 import { hostAccessTools } from "./host-access/tools";
 import { createOnboardingStore } from "./people/onboarding";
 import { createPeopleStore } from "./people/store";
 import { useRoutineTools } from "./plugins/builtin-routines";
+import { useWorkflowTools } from "./plugins/builtin-workflows";
 import { useComposioClient } from "./plugins/composio";
 import { createComposioClient } from "./plugins/composio-adapter";
 import { redirectUriFor } from "./plugins/oauth";
@@ -94,6 +112,10 @@ import { grantedSkills, grantedTools, REFUSAL_MARKER } from "./plugins/tools";
 import { createTurnRunner } from "./routines/run-turn";
 import { createRoutineRunner } from "./routines/runner";
 import { createRoutineStore } from "./routines/store";
+import { sweepReadyWorkflowSteps } from "./workflows/ready";
+import { createWorkflowRunner } from "./workflows/runner";
+import { createWorkflowStore } from "./workflows/store";
+import { sweepWorkflowWaits } from "./workflows/wake";
 import { createIntentRouter } from "./routing/classify";
 import { createModelCompleter } from "./routing/model";
 import {
@@ -185,6 +207,19 @@ const agentProfileStore = createAgentProfileStore(
   database,
   config.managedAgent?.endpoint,
   agentVault,
+);
+const agentModelStore = createAgentModelConfigStore(
+  database,
+  agentProfileStore,
+  agentVault,
+);
+const agentInstructionsStore = createAgentInstructionsStore(
+  database,
+  agentProfileStore,
+);
+const agentKnowledgeStore = createAgentKnowledgeStore(
+  database,
+  agentProfileStore,
 );
 // Read here rather than beside the synchronise below, because the package names the deployment and
 // the channel store needs that name before it can mint a thread id.
@@ -310,6 +345,10 @@ const computerGateway = computerProvider
       // So wiping a profile takes the pictures of its signed-in pages with it, which is what the
       // sentence on that button already promised.
       pageFrames: pageFrameStore,
+      lifecycleReader: createComputerLifecycleReader(database),
+      // Resolve only the persisted bounded preset; callers never provide raw CPU/RAM numbers.
+      resourceProfile: (botId) =>
+        agentProfileStore.computerResourceProfile(botId),
       allowPrivateHosts: config.computer?.allowPrivateHosts,
       token: config.computer?.token,
     })
@@ -384,6 +423,56 @@ const pluginStore = createPluginStore({
  */
 const routineStore = createRoutineStore(database);
 useRoutineTools(routineStore);
+const workflowStore = createWorkflowStore(database);
+useWorkflowTools(workflowStore);
+
+/**
+ * Other Bots this person deliberately put in the same live channel as this Bot.
+ *
+ * Group membership is a conversation-scoped permission, not a durable grant: it lets the coordinator
+ * hand one message to a peer while this run is in this thread and nowhere else. The actor membership
+ * join prevents a thread id from becoming a way to borrow somebody else's group.
+ */
+const groupPeersFor = async ({
+  actorId,
+  threadId,
+  botId,
+}: {
+  actorId: string;
+  threadId?: string;
+  botId: string;
+}): Promise<string[]> => {
+  if (!threadId) return [];
+
+  const rows = await database
+    .select({ agentId: channelAgents.agentId })
+    .from(intelligenceChannelMappings)
+    .innerJoin(
+      channelMemberships,
+      and(
+        eq(channelMemberships.channelId, intelligenceChannelMappings.channelId),
+        eq(channelMemberships.userId, actorId),
+      ),
+    )
+    .innerJoin(
+      channels,
+      and(
+        eq(channels.id, intelligenceChannelMappings.channelId),
+        isNull(channels.deletedAt),
+      ),
+    )
+    .innerJoin(
+      channelAgents,
+      eq(channelAgents.channelId, intelligenceChannelMappings.channelId),
+    )
+    .where(eq(intelligenceChannelMappings.threadId, threadId));
+
+  const ids = rows.map((row) => row.agentId);
+  // The run must itself belong to this group. Without this guard a stale/mismatched run assertion
+  // carrying a valid thread could borrow that channel's peer list.
+  if (!ids.includes(botId)) return [];
+  return ids.filter((agentId) => agentId !== botId);
+};
 
 /**
  * Where a Bot handing work to another gets decided.
@@ -396,16 +485,24 @@ useRoutineTools(routineStore);
 const handoffDesk = createHandoffDesk({
   queue: createWorkQueue(database),
   profiles: agentProfileStore,
-  // Read per hop and never held, so revoking a grant applies to the next hop rather than after a
-  // restart.
-  mayAddress: async (fromBotId, toBotId) =>
-    (
-      await pluginStore
-        .botsReachableFrom(fromBotId)
-        // A grant that cannot be read is not a grant. Failing closed here costs a hop; failing open
-        // would let a Bot address one nobody gave it because the database blinked.
-        .catch(() => [] as string[])
-    ).includes(toBotId),
+  // Durable grants and same-group peers are the two ways one Bot may address another.
+  // Both are read per hop so a revoked grant or a changed channel applies immediately.
+  mayAddress: async (fromBotId, toBotId, context) => {
+    const granted = await pluginStore
+      .botsReachableFrom(fromBotId)
+      // A grant that cannot be read is not a grant. Failing closed here costs a hop; failing open
+      // would let a Bot address one nobody gave it because the database blinked.
+      .catch(() => [] as string[]);
+    if (granted.includes(toBotId)) return true;
+
+    return (
+      await groupPeersFor({
+        actorId: context.actorId,
+        threadId: context.threadId,
+        botId: fromBotId,
+      }).catch(() => [] as string[])
+    ).includes(toBotId);
+  },
   /*
    * Deferred rather than passed directly, because `actorFor` is defined further down with the rest
    * of the run-building collaborators. It is only ever called during a hop, long after this module
@@ -506,6 +603,7 @@ const stallGuard = createStallGuard({
   auditStore: bootAuditStore,
 });
 
+normalizeModelBaseUrls();
 const runtimeModel = runtimeModelForEnvironment(tenantPackage.model);
 
 const intentRouter = createIntentRouter({
@@ -515,7 +613,7 @@ const intentRouter = createIntentRouter({
       resolveModelApiKey({
         encryptionKey: config.keyEncryptionKey,
         reader: credentialStore,
-        provider: tenantPackage.model.provider,
+        provider: runtimeModel.provider,
         keyId: tenantPackage.model.credentialSecretRef,
         environment: process.env,
       }),
@@ -534,7 +632,7 @@ const chooseSkills = createModelCompleter({
     resolveModelApiKey({
       encryptionKey: config.keyEncryptionKey,
       reader: credentialStore,
-      provider: tenantPackage.model.provider,
+      provider: runtimeModel.provider,
       keyId: tenantPackage.model.credentialSecretRef,
       environment: process.env,
     }),
@@ -556,9 +654,22 @@ const resolveRuntimeModelApiKey = () =>
   resolveModelApiKey({
     encryptionKey: config.keyEncryptionKey,
     reader: credentialStore,
-    provider: tenantPackage.model.provider,
+    provider: runtimeModel.provider,
     keyId: tenantPackage.model.credentialSecretRef,
     environment: process.env,
+  });
+
+const resolveProviderApiKey = createProviderApiKeyResolver({
+  deploymentProvider: tenantPackage.model.provider,
+  resolveDeploymentApiKey: resolveRuntimeModelApiKey,
+});
+
+const resolveAgentModel = (agentId: string) =>
+  resolveAgentRuntimeModel({
+    agentId,
+    deployment: runtimeModel,
+    modelConfigs: agentModelStore,
+    resolveProviderApiKey,
   });
 
 const hostAccessBroker = createHostAccessBroker();
@@ -743,6 +854,37 @@ const agentFetch = createAgentFetch({
   },
 });
 
+const compatibleModel = ({
+  baseUrl,
+  apiKey,
+  model,
+}: {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}) =>
+  createOpenAI({
+    baseURL: baseUrl,
+    apiKey,
+    // Apply the same first-hop, redirect and credential-scope checks used for remote Agents.
+    fetch: ((input, init) => {
+      const address =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      return agentFetch(address, init);
+    }) as typeof fetch,
+  })(model);
+
+const agentModelConnections = createAgentModelConnectionService({
+  deployment: runtimeModel,
+  modelConfigs: agentModelStore,
+  resolveProviderApiKey,
+  guardedFetch: agentFetch,
+});
+
 /**
  * Who a routine acts as, resolved the way {@link resolveRequestActor} resolves it.
  *
@@ -813,6 +955,8 @@ const buildAgentFor = async ({
     // And the same recorder, so the files on a routine's own message stop counting as staged the
     // moment it sends them, exactly as a person's do.
     markAttachmentsSentForActor(actor.id),
+    resolveAgentModel,
+    compatibleModel,
   );
   const agent = agents[agentId];
   if (!agent) {
@@ -857,14 +1001,22 @@ const routineAgentRunner = new IntelligenceAgentRunner({
   authToken: routineIntelligence.ɵgetRunnerAuthToken(),
 });
 
+const headlessTurnRunner = createTurnRunner({
+  intelligence: routineIntelligence,
+  runner: routineAgentRunner,
+  buildAgentFor,
+});
+
 const routineRunner = createRoutineRunner({
   routineStore,
   channelStore,
-  runTurn: createTurnRunner({
-    intelligence: routineIntelligence,
-    runner: routineAgentRunner,
-    buildAgentFor,
-  }),
+  runTurn: headlessTurnRunner,
+});
+
+const workflowRunner = createWorkflowRunner({
+  workflowStore,
+  channelStore,
+  runTurn: headlessTurnRunner,
 });
 
 /**
@@ -928,6 +1080,17 @@ const copilotRuntime = mountCopilotRuntime(
       config.handoff.maxPerRun > 0 &&
       run.depth < config.handoff.maxDepth;
 
+    const [grantedPeers, channelPeers] = couldHandOn
+      ? await Promise.all([
+          pluginStore.botsReachableFrom(botId).catch(() => [] as string[]),
+          groupPeersFor({
+            actorId,
+            threadId: input.threadId,
+            botId,
+          }).catch(() => [] as string[]),
+        ])
+      : [[], []];
+
     const passing = couldHandOn
       ? handoffTool({
           desk: handoffDesk,
@@ -941,14 +1104,10 @@ const copilotRuntime = mountCopilotRuntime(
            * wrong Bot's grants.
            */
           from: run,
-          // Read now rather than at boot, so a grant made a minute ago counts and one revoked a
-          // minute ago stops counting.
-          hasSomebodyToAsk:
-            (
-              await pluginStore
-                .botsReachableFrom(botId)
-                .catch(() => [] as string[])
-            ).length > 0,
+          // A durable grant OR a peer deliberately put in this group means the tool is worth
+          // offering. The desk re-checks the exact target at call time; this only decides whether
+          // the model sees the tool at all.
+          hasSomebodyToAsk: grantedPeers.length > 0 || channelPeers.length > 0,
           maxDepth: config.handoff.maxDepth,
           maxPerRun: config.handoff.maxPerRun,
         })
@@ -981,6 +1140,8 @@ const copilotRuntime = mountCopilotRuntime(
   // And that those files went out in a send, written by the person who sent them and only for rows
   // they uploaded. See markAttachmentsSentForActor.
   markAttachmentsSentForActor,
+  resolveAgentModel,
+  compatibleModel,
 );
 
 /**
@@ -1037,6 +1198,55 @@ if (config.handoff.maxDepth > 0 && config.handoff.maxPerRun > 0) {
           botId,
           initiator: { kind: "handoff", id: fromBotId },
         });
+      },
+      /*
+       * Durable revocation check for unattended handoff work.
+       *
+       * The asking channel must still exist for this actor, and both Bots named by the hop must still
+       * be live. This is checked before the delivery starts and again on the delivery heartbeat, so
+       * deleting the channel or either Bot revokes an already-running hop instead of merely hiding
+       * the place where its answer would have landed.
+       */
+      continuationGuard: async (work) => {
+        const [activeChannel] = await database
+          .select({ threadId: intelligenceChannelMappings.threadId })
+          .from(intelligenceChannelMappings)
+          .innerJoin(
+            channels,
+            and(
+              eq(channels.id, intelligenceChannelMappings.channelId),
+              isNull(channels.deletedAt),
+            ),
+          )
+          .innerJoin(
+            channelMemberships,
+            and(
+              eq(
+                channelMemberships.channelId,
+                intelligenceChannelMappings.channelId,
+              ),
+              eq(channelMemberships.userId, work.actorId),
+            ),
+          )
+          .where(
+            and(
+              eq(intelligenceChannelMappings.threadId, work.threadId),
+              eq(intelligenceChannelMappings.userId, work.actorId),
+            ),
+          )
+          .limit(1);
+        if (!activeChannel) return false;
+
+        const liveBots = await database
+          .select({ agentId: agentProfiles.agentId })
+          .from(agentProfiles)
+          .where(
+            and(
+              inArray(agentProfiles.agentId, [work.fromBotId, work.toBotId]),
+              isNull(agentProfiles.deletedAt),
+            ),
+          );
+        return new Set(liveBots.map((profile) => profile.agentId)).size === 2;
       },
       history: copilotRuntime.history,
       lock: copilotRuntime.threadLock,
@@ -1138,6 +1348,74 @@ if (config.handoff.maxDepth > 0 && config.handoff.maxPerRun > 0) {
   );
   repeatAfterEach(kick, 2_000);
 }
+
+/*
+ * Durable workflow ready-step execution.
+ *
+ * Creating a workflow and promoting dependencies only changes durable state. This bridge turns
+ * exact ready versions into headless Agent turns through the same shared work_items queue used by
+ * other background work. The ready timestamp and attempt form a compare-and-set token, so a manual
+ * start, retry, pause/resume re-arm or newer dependency transition makes older queue work harmless.
+ */
+const workflowReady = {
+  store: workflowStore,
+  queue: createWorkQueue(database),
+  owner: workOwner("workflow-ready"),
+  dispatch: (input: Parameters<typeof workflowRunner.run>[0]) =>
+    workflowRunner.run(input),
+};
+
+repeatAfterEach(async () => {
+  try {
+    const report = await sweepReadyWorkflowSteps(workflowReady);
+    if (
+      report.queued > 0 ||
+      report.started.length > 0 ||
+      report.skipped.length > 0
+    ) {
+      console.info(JSON.stringify({ type: "workflow-ready", ...report }));
+    }
+  } catch (error) {
+    console.warn(
+      "[workflows] ready steps could not be dispatched:",
+      error instanceof Error ? error.message : error,
+    );
+  }
+}, 5_000);
+
+/*
+ * Durable workflow waits.
+ *
+ * This is a recovery/execution bridge, not a second scheduler or lease system. The workflow store
+ * decides which exact persisted waits are due using Postgres' clock; the shared work_items queue
+ * owns claiming, leases, retries and idempotency. A stale wake is harmless because resumption
+ * compare-and-sets the exact wait timestamp before changing the step.
+ */
+const workflowWake = {
+  store: workflowStore,
+  queue: createWorkQueue(database),
+  owner: workOwner("workflow-wake"),
+  dispatch: (input: Parameters<typeof workflowRunner.run>[0]) =>
+    workflowRunner.run(input),
+};
+
+repeatAfterEach(async () => {
+  try {
+    const report = await sweepWorkflowWaits(workflowWake);
+    if (
+      report.queued > 0 ||
+      report.resumed.length > 0 ||
+      report.skipped.length > 0
+    ) {
+      console.info(JSON.stringify({ type: "workflow-wake", ...report }));
+    }
+  } catch (error) {
+    console.warn(
+      "[workflows] due waits could not be resumed:",
+      error instanceof Error ? error.message : error,
+    );
+  }
+}, 5_000);
 
 /*
  * And dropping the hops that are over, whether or not the capability is switched on.
@@ -1294,6 +1572,12 @@ const app = createApp(
   // Absent without a key, which leaves the routes reporting no broker rather than listing apps
   // nobody could connect.
   composio ? { broker: composio.broker } : undefined,
+  agentModelStore,
+  agentModelConnections,
+  agentInstructionsStore,
+  agentKnowledgeStore,
+  // Owner-scoped read/control surface for the durable workflow dashboard.
+  workflowStore,
 );
 
 /**

@@ -28,6 +28,11 @@ const progressListeners = new Set<
 mock.module("@tauri-apps/api/core", () => ({
   invoke: (command: string, args?: unknown) => {
     invokeCalls.push({ command, args });
+    if (command === "test_model_connection") {
+      return Promise.resolve({
+        detail: "Synthetic model connection accepted.",
+      });
+    }
     return invokeHandler(command, args);
   },
 }));
@@ -76,6 +81,24 @@ async function renderApp(strictMode = false) {
   return view;
 }
 
+async function continueSetup(view: Awaited<ReturnType<typeof renderApp>>) {
+  const continueButton = view.getByRole("button", { name: "Continue" });
+  const testConnection = view.queryByRole("button", {
+    name: "Test connection",
+  });
+  if (
+    continueButton.hasAttribute("disabled") &&
+    testConnection &&
+    !testConnection.hasAttribute("disabled")
+  ) {
+    await userEvent.click(testConnection);
+    await waitFor(() =>
+      expect(continueButton).toHaveProperty("disabled", false),
+    );
+  }
+  await userEvent.click(continueButton);
+}
+
 function setupEvents() {
   return invokeCalls
     .filter((call) => call.command === "record_setup_event")
@@ -84,7 +107,7 @@ function setupEvents() {
 
 async function enterInstallation(view: Awaited<ReturnType<typeof renderApp>>) {
   await userEvent.click(view.getByRole("button", { name: "Set up OpenBot" }));
-  await userEvent.click(view.getByRole("button", { name: "Continue" }));
+  await continueSetup(view);
 }
 
 async function completeInstallation(
@@ -321,7 +344,7 @@ test("changing the Bot invalidates its completed installation", async () => {
     view.getByLabelText("AG-UI endpoint"),
     "https://agent.example/ag-ui",
   );
-  await userEvent.click(view.getByRole("button", { name: "Continue" }));
+  await continueSetup(view);
   expect(
     view.queryByRole("button", { name: "Continue to sign in" }),
   ).toBeNull();
@@ -510,7 +533,7 @@ test("setup records telemetry without a consent gate and deduplicates viewed ste
     { event: { kind: "step_viewed", step: "welcome" } },
   ]);
   await userEvent.click(view.getByRole("button", { name: "Set up OpenBot" }));
-  await userEvent.click(view.getByRole("button", { name: "Continue" }));
+  await continueSetup(view);
 
   expect(setupEvents()).toEqual([
     { event: { kind: "step_viewed", step: "welcome" } },
@@ -534,7 +557,7 @@ test("setup records only model categories and reaches Ask when telemetry is unav
   const privateUrl = "https://private-model.example/v1";
   const privateKey = "synthetic-secret-endpoint-key";
   const view = await enterCompatibleEndpoint(privateUrl, privateKey);
-  await userEvent.click(view.getByRole("button", { name: "Continue" }));
+  await continueSetup(view);
   expect(setupEvents()).toContainEqual({
     event: {
       kind: "model_chosen",
@@ -791,11 +814,8 @@ test("disabled Virtual Machine Platform displays its feature-specific fix and bl
 });
 
 type ExistingConfigurationValues = {
-  INTELLIGENCE_API_KEY?: string;
   INTELLIGENCE_API_URL?: string;
   INTELLIGENCE_GATEWAY_WS_URL?: string;
-  OPENAI_API_KEY?: string;
-  ANTHROPIC_API_KEY?: string;
   OPENAI_BASE_URL?: string;
 };
 
@@ -868,7 +888,7 @@ async function enterCompatibleEndpoint(
   await userEvent.click(
     await view.findByRole("button", { name: "Set up OpenBot" }),
   );
-  await userEvent.click(await view.findByRole("button", { name: "Continue" }));
+  await continueSetup(view);
   await completeInstallation(view);
   await userEvent.click(
     await view.findByRole("radio", { name: /OpenAI-compatible/ }),
@@ -900,7 +920,7 @@ async function startWithCompatibleEndpoint(
     endpointKey,
     containerBaseUrl,
   );
-  await userEvent.click(view.getByRole("button", { name: "Continue" }));
+  await continueSetup(view);
   await userEvent.click(
     await view.findByRole("button", { name: "Start OpenBot" }),
   );
@@ -943,7 +963,7 @@ test.each([true, false])(
     useSavedCompatibleEndpointSetup(undefined, undefined, keyed);
     const view = await renderApp();
     await userEvent.click(view.getByRole("button", { name: "Set up OpenBot" }));
-    await userEvent.click(view.getByRole("button", { name: "Continue" }));
+    await continueSetup(view);
     await completeInstallation(view);
     expect(view.getByLabelText("Base URL")).toHaveProperty(
       "value",
@@ -956,7 +976,7 @@ test.each([true, false])(
     expect(
       view.getByLabelText("API key, if the endpoint needs one"),
     ).toHaveProperty("value", "");
-    await userEvent.click(view.getByRole("button", { name: "Continue" }));
+    await continueSetup(view);
     expect(view.getByRole("button", { name: "Start OpenBot" })).toHaveProperty(
       "disabled",
       false,
@@ -994,13 +1014,13 @@ test.each([
     useSavedCompatibleEndpointSetup(baseUrl, model);
     const view = await renderApp();
     await userEvent.click(view.getByRole("button", { name: "Set up OpenBot" }));
-    await userEvent.click(view.getByRole("button", { name: "Continue" }));
+    await continueSetup(view);
     await completeInstallation(view);
     expect(view.getByRole("button", { name: "Continue" })).toHaveProperty(
       "disabled",
       true,
     );
-    await userEvent.click(view.getByRole("button", { name: "Continue" }));
+    await continueSetup(view);
     expect(view.queryByRole("button", { name: "Start OpenBot" })).toBeNull();
     expect(invokeCalls.some((call) => call.command === "start_stack")).toBe(
       false,
@@ -1017,7 +1037,7 @@ test("an unsupported saved model kind does not become a startable endpoint", asy
   );
   const view = await renderApp();
   await userEvent.click(view.getByRole("button", { name: "Set up OpenBot" }));
-  await userEvent.click(view.getByRole("button", { name: "Continue" }));
+  await continueSetup(view);
   await completeInstallation(view);
   expect(view.getByRole("button", { name: "Continue" })).toHaveProperty(
     "disabled",
@@ -1043,10 +1063,7 @@ test("Change the model after an Ask failure stops the stack and reaches the prov
     if (command === "default_root") return "/tmp/openbot-app-test";
     if (command === "already_configured") {
       return {
-        values: {
-          INTELLIGENCE_API_KEY: "ck-test",
-          OPENAI_API_KEY: "sk-test",
-        },
+        values: {},
         saved: {
           intelligenceApiKey: true,
           modelApiKeys: { openai: true, anthropic: false },
@@ -1097,10 +1114,10 @@ test("Change the model after an Ask failure stops the stack and reaches the prov
   await userEvent.click(
     await view.findByRole("button", { name: "Set up OpenBot" }),
   );
-  await userEvent.click(await view.findByRole("button", { name: "Continue" }));
+  await continueSetup(view);
   await completeInstallation(view);
   await userEvent.click(await view.findByRole("radio", { name: /OpenAI/ }));
-  await userEvent.click(view.getByRole("button", { name: "Continue" }));
+  await continueSetup(view);
   await waitFor(() =>
     expect(view.getByRole("button", { name: "Start OpenBot" })).toHaveProperty(
       "disabled",
@@ -1124,9 +1141,9 @@ test("Change the model after an Ask failure stops the stack and reaches the prov
   expect(view.queryByRole("button", { name: "Stop OpenBot" })).toBeNull();
 });
 
-test("empty Intelligence projects keep sign-in retryable while Start waits for a project key", async () => {
+test("project selection keeps the provisioned Intelligence key out of WebView state", async () => {
   let projectLists = 0;
-  invokeHandler = async (command) => {
+  invokeHandler = async (command, args) => {
     if (command === "prepare_installation") return null;
     if (command === "detect_engine") {
       return {
@@ -1139,9 +1156,7 @@ test("empty Intelligence projects keep sign-in retryable while Start waits for a
     if (command === "default_root") return "/tmp/openbot-app-test";
     if (command === "already_configured") {
       return {
-        values: {
-          OPENAI_API_KEY: "sk-test",
-        },
+        values: {},
         saved: {
           intelligenceApiKey: false,
           modelApiKeys: { openai: true, anthropic: false },
@@ -1187,6 +1202,14 @@ test("empty Intelligence projects keep sign-in retryable while Start waits for a
       if (projectLists === 1) return [];
       return [{ id: "project-1", name: "Project One" }];
     }
+    if (command === "intelligence_key_for") {
+      expect(args).toEqual({
+        root: "/tmp/openbot-app-test",
+        project: "project-1",
+      });
+      return null;
+    }
+    if (command === "start_stack") return null;
     throw new Error(`unexpected command ${command}`);
   };
 
@@ -1195,10 +1218,10 @@ test("empty Intelligence projects keep sign-in retryable while Start waits for a
   await userEvent.click(
     await view.findByRole("button", { name: "Set up OpenBot" }),
   );
-  await userEvent.click(await view.findByRole("button", { name: "Continue" }));
+  await continueSetup(view);
   await completeInstallation(view);
   await userEvent.click(await view.findByRole("radio", { name: /OpenAI/ }));
-  await userEvent.click(view.getByRole("button", { name: "Continue" }));
+  await continueSetup(view);
   await userEvent.click(
     await view.findByRole("button", { name: "Sign in to CopilotKit" }),
   );
@@ -1215,17 +1238,138 @@ test("empty Intelligence projects keep sign-in retryable while Start waits for a
 
   await userEvent.click(view.getByRole("button", { name: "Sign in again" }));
 
-  expect(await view.findByRole("button", { name: "Project One" })).toBeTruthy();
-
   await userEvent.click(
-    view.getByText("Point at your own Intelligence server"),
+    await view.findByRole("button", { name: "Project One" }),
   );
-  await userEvent.type(view.getByLabelText("Project key"), "ck-test");
+
   await waitFor(() =>
     expect(view.getByRole("button", { name: "Start OpenBot" })).toHaveProperty(
       "disabled",
       false,
     ),
+  );
+  expect(view.getByText("Connected to CopilotKit.")).toBeTruthy();
+  expect(view.getByLabelText("Project key")).toHaveProperty("value", "");
+
+  await userEvent.click(view.getByRole("button", { name: "Start OpenBot" }));
+  expect(getStartStackPayload().apiKey).toBe("");
+  expect(
+    invokeCalls.filter((call) => call.command === "intelligence_key_for"),
+  ).toEqual([
+    {
+      command: "intelligence_key_for",
+      args: {
+        root: "/tmp/openbot-app-test",
+        project: "project-1",
+      },
+    },
+  ]);
+});
+
+test("leftover database recovery requires confirmation and keeps setup ready to retry", async () => {
+  useCompatibleEndpointSetup({});
+  const previous = invokeHandler;
+  const reset = deferred<void>();
+  let starts = 0;
+  invokeHandler = async (command, args) => {
+    if (command === "start_stack" && ++starts === 1)
+      throw {
+        said: "A previous OpenBot database remains without its encryption key.",
+        database_reset: "fixture_postgres-data",
+      };
+    if (command === "reset_leftover_database") return reset.promise;
+    return previous(command, args);
+  };
+  const view = await enterCompatibleEndpoint(
+    "https://model.example/v1",
+    "synthetic-key",
+  );
+  await continueSetup(view);
+  await userEvent.click(view.getByRole("button", { name: "Start OpenBot" }));
+  const resets = () =>
+    invokeCalls.filter((call) => call.command === "reset_leftover_database");
+
+  await userEvent.click(
+    await view.findByRole("button", { name: "Reset leftover database" }),
+  );
+  expect(view.getByText(/permanently deletes/)).toBeTruthy();
+  expect(resets()).toHaveLength(0);
+
+  await userEvent.click(view.getByRole("button", { name: "Keep saved data" }));
+  expect(resets()).toHaveLength(0);
+  expect(view.queryByRole("button", { name: "Delete saved data" })).toBeNull();
+
+  await userEvent.click(
+    view.getByRole("button", { name: "Reset leftover database" }),
+  );
+  await userEvent.click(
+    view.getByRole("button", { name: "Delete saved data" }),
+  );
+  expect(resets()).toEqual([
+    {
+      command: "reset_leftover_database",
+      args: {
+        root: "/tmp/openbot-app-test",
+        volume: "fixture_postgres-data",
+        confirmed: true,
+      },
+    },
+  ]);
+  expect(
+    view.getByRole("button", { name: "Deleting saved data…" }),
+  ).toHaveProperty("disabled", true);
+  expect(view.getByRole("button", { name: "Working…" })).toHaveProperty(
+    "disabled",
+    true,
+  );
+
+  await act(async () => reset.resolve());
+  expect(
+    view.queryByRole("button", { name: "Reset leftover database" }),
+  ).toBeNull();
+  expect(view.queryByRole("alert")).toBeNull();
+  expect(starts).toBe(1);
+
+  await userEvent.click(view.getByRole("button", { name: "Start OpenBot" }));
+  await view.findByRole("button", { name: "Ask" });
+  expect(installationCalls()).toHaveLength(1);
+});
+
+test("database recovery failure is shown without restarting services", async () => {
+  useCompatibleEndpointSetup({});
+  const previous = invokeHandler;
+  invokeHandler = async (command, args) => {
+    if (command === "start_stack")
+      throw {
+        said: "A previous database remains.",
+        database_reset: "fixture-postgres-data",
+      };
+    if (command === "reset_leftover_database")
+      throw {
+        said: "The database is still in use. Close the other OpenBot installation first.",
+      };
+    return previous(command, args);
+  };
+  const view = await enterCompatibleEndpoint(
+    "https://model.example/v1",
+    "synthetic-key",
+  );
+  await continueSetup(view);
+  await userEvent.click(view.getByRole("button", { name: "Start OpenBot" }));
+  await userEvent.click(
+    await view.findByRole("button", { name: "Reset leftover database" }),
+  );
+  await userEvent.click(
+    view.getByRole("button", { name: "Delete saved data" }),
+  );
+
+  expect(await view.findByText(/database is still in use/)).toBeTruthy();
+  expect(
+    invokeCalls.filter((call) => call.command === "start_stack"),
+  ).toHaveLength(1);
+  expect(view.getByRole("button", { name: "Start OpenBot" })).toHaveProperty(
+    "disabled",
+    false,
   );
 });
 
@@ -1355,10 +1499,10 @@ test("saved startup credentials enable Start without raw protected secrets on mo
   await userEvent.click(
     await view.findByRole("button", { name: "Set up OpenBot" }),
   );
-  await userEvent.click(await view.findByRole("button", { name: "Continue" }));
+  await continueSetup(view);
   await completeInstallation(view);
   await userEvent.click(await view.findByRole("radio", { name: /OpenAI/ }));
-  await userEvent.click(view.getByRole("button", { name: "Continue" }));
+  await continueSetup(view);
 
   await waitFor(() =>
     expect(view.getByRole("button", { name: "Start OpenBot" })).toHaveProperty(
@@ -1380,7 +1524,7 @@ async function chooseModelAfterRootEdit(
   await userEvent.click(await view.findByRole("radio", { name: /OpenAI/ }));
   if (apiKey)
     await userEvent.type(view.getByLabelText("OpenAI API key"), apiKey);
-  await userEvent.click(view.getByRole("button", { name: "Continue" }));
+  await continueSetup(view);
 }
 
 test("root edits reload saved configuration for that root and ignore stale saved responses", async () => {
@@ -1406,11 +1550,11 @@ test("root edits reload saved configuration for that root and ignore stale saved
   await userEvent.click(
     await view.findByRole("button", { name: "Set up OpenBot" }),
   );
-  await userEvent.click(await view.findByRole("button", { name: "Continue" }));
+  await continueSetup(view);
   await completeInstallation(view);
   await userEvent.click(await view.findByRole("radio", { name: /OpenAI/ }));
   expect(view.getByText(/A saved OpenAI API key will be used/)).toBeTruthy();
-  await userEvent.click(view.getByRole("button", { name: "Continue" }));
+  await continueSetup(view);
   await waitFor(() =>
     expect(view.getByRole("button", { name: "Start OpenBot" })).toHaveProperty(
       "disabled",
@@ -1498,14 +1642,14 @@ test("same-process setup remount prefers the retained selected root", async () =
   await userEvent.click(
     await view.findByRole("button", { name: "Set up OpenBot" }),
   );
-  await userEvent.click(await view.findByRole("button", { name: "Continue" }));
+  await continueSetup(view);
   expect(view.getByLabelText("Where OpenBot lives")).toHaveProperty(
     "value",
     rootB,
   );
   await completeInstallation(view);
   await userEvent.click(await view.findByRole("radio", { name: /OpenAI/ }));
-  await userEvent.click(view.getByRole("button", { name: "Continue" }));
+  await continueSetup(view);
   await userEvent.click(
     await view.findByRole("button", { name: "Start OpenBot" }),
   );
@@ -1556,7 +1700,7 @@ test.each([
     await user.click(
       await view.findByRole("button", { name: "Set up OpenBot" }),
     );
-    await user.click(await view.findByRole("button", { name: "Continue" }));
+    await continueSetup(view);
     await completeInstallation(view);
     await user.click(await view.findByRole("radio", { name: /OpenAI/ }));
     expect(
@@ -1568,7 +1712,7 @@ test.each([
         "sk-synthetic-current-model",
       );
     }
-    await user.click(view.getByRole("button", { name: "Continue" }));
+    await continueSetup(view);
     const previousStart = view.getByRole("button", { name: "Start OpenBot" });
     expect(previousStart).toHaveProperty("disabled", !savedModel);
     await user.click(view.getByRole("button", { name: "Change installation" }));
@@ -1607,7 +1751,6 @@ test.each([
       pending.response.resolve({
         ...savedOpenAiConfiguration(),
         values: {
-          INTELLIGENCE_API_KEY: "ck-synthetic-stale",
           INTELLIGENCE_API_URL: "https://stale.example/api",
           INTELLIGENCE_GATEWAY_WS_URL: "wss://stale.example/ws",
         },
@@ -1654,7 +1797,7 @@ test.each([
         view.getByRole("button", { name: "Continue to sign in" }),
       );
       await user.click(await view.findByRole("radio", { name: /OpenAI/ }));
-      await user.click(view.getByRole("button", { name: "Continue" }));
+      await continueSetup(view);
     } else {
       await chooseModelAfterRootEdit(view, "sk-synthetic-current-model");
     }
@@ -1837,7 +1980,7 @@ test.each([
       "https://provider.example/v1",
     );
     await userEvent.type(view.getByLabelText("Model name"), "local-model");
-    await userEvent.click(view.getByRole("button", { name: "Continue" }));
+    await continueSetup(view);
     await userEvent.click(
       await view.findByRole("button", { name: "Start OpenBot" }),
     );
@@ -1886,9 +2029,7 @@ test.each([
 test.each(["http://localhost:11434/v1", "https://models.example/v1"])(
   "custom compatible endpoint startup for URL %s does not submit a saved OpenAI API key",
   async (baseUrl) => {
-    useCompatibleEndpointSetup({
-      OPENAI_API_KEY: "sk-synthetic-openai",
-    });
+    useCompatibleEndpointSetup({});
 
     await startWithCompatibleEndpoint("", baseUrl);
 
@@ -1944,13 +2085,13 @@ test("saved compatible endpoint restores the optional container URL", async () =
 
   const view = await renderApp();
   await userEvent.click(view.getByRole("button", { name: "Set up OpenBot" }));
-  await userEvent.click(view.getByRole("button", { name: "Continue" }));
+  await continueSetup(view);
   await completeInstallation(view);
 
   expect(
     view.getByLabelText("Container Base URL, if different"),
   ).toHaveProperty("value", "http://ollama:11434/v1");
-  await userEvent.click(view.getByRole("button", { name: "Continue" }));
+  await continueSetup(view);
   await userEvent.click(
     await view.findByRole("button", { name: "Start OpenBot" }),
   );
@@ -1965,9 +2106,7 @@ test("saved compatible endpoint restores the optional container URL", async () =
 });
 
 test("custom compatible endpoint startup submits an explicitly typed endpoint key", async () => {
-  useCompatibleEndpointSetup({
-    OPENAI_API_KEY: "sk-synthetic-openai",
-  });
+  useCompatibleEndpointSetup({});
 
   await startWithCompatibleEndpoint("endpoint-key");
 
@@ -2025,9 +2164,7 @@ for (const provider of [
       await userEvent.click(
         await view.findByRole("button", { name: "Set up OpenBot" }),
       );
-      await userEvent.click(
-        await view.findByRole("button", { name: "Continue" }),
-      );
+      await continueSetup(view);
       await completeInstallation(view);
       await userEvent.click(
         await view.findByRole("radio", { name: new RegExp(provider.name) }),
@@ -2061,7 +2198,7 @@ for (const provider of [
             : `Signed in to ${provider.name}`,
         ),
       );
-      await userEvent.click(view.getByRole("button", { name: "Continue" }));
+      await continueSetup(view);
       await userEvent.click(
         await view.findByRole("button", { name: "Start OpenBot" }),
       );
@@ -2141,9 +2278,7 @@ for (const provider of [
     await userEvent.click(
       await view.findByRole("button", { name: "Set up OpenBot" }),
     );
-    await userEvent.click(
-      await view.findByRole("button", { name: "Continue" }),
-    );
+    await continueSetup(view);
     await completeInstallation(view);
     await userEvent.click(
       await view.findByRole("radio", { name: new RegExp(provider.name) }),
@@ -2153,7 +2288,7 @@ for (const provider of [
         new RegExp(`A saved ${provider.name} sign-in will be checked`),
       ),
     ).toBeTruthy();
-    await userEvent.click(view.getByRole("button", { name: "Continue" }));
+    await continueSetup(view);
 
     await waitFor(() =>
       expect(
@@ -2223,9 +2358,7 @@ for (const provider of [
       await userEvent.click(
         await view.findByRole("button", { name: "Set up OpenBot" }),
       );
-      await userEvent.click(
-        await view.findByRole("button", { name: "Continue" }),
-      );
+      await continueSetup(view);
       await completeInstallation(view);
       await userEvent.click(
         await view.findByRole("radio", { name: new RegExp(provider.name) }),
@@ -2242,7 +2375,7 @@ for (const provider of [
               : `Use a saved ${provider.name} API key`,
         }),
       );
-      await userEvent.click(view.getByRole("button", { name: "Continue" }));
+      await continueSetup(view);
       expect(
         view.getByRole("button", { name: "Start OpenBot" }),
       ).toHaveProperty("disabled", true);
@@ -2254,9 +2387,7 @@ for (const provider of [
       await userEvent.click(
         view.getByRole("button", { name: "Change AI connection" }),
       );
-      await userEvent.click(
-        await view.findByRole("button", { name: "Continue" }),
-      );
+      await continueSetup(view);
       expect(
         invokeCalls.some((call) =>
           /sign_in|start_stack|ask_the_bot/.test(call.command),
@@ -2280,9 +2411,7 @@ for (const provider of [
 }
 
 test("Start credential failures do not expose a restore action", async () => {
-  useCompatibleEndpointSetup({
-    INTELLIGENCE_API_KEY: "synthetic-intelligence",
-  });
+  useCompatibleEndpointSetup({});
   const previous = invokeHandler;
   invokeHandler = async (command, args) => {
     if (command === "start_stack")
@@ -2304,7 +2433,7 @@ test("Start credential failures do not expose a restore action", async () => {
     "https://models.example/v1",
     "synthetic-model-key",
   );
-  await userEvent.click(view.getByRole("button", { name: "Continue" }));
+  await continueSetup(view);
   await userEvent.click(view.getByRole("button", { name: "Start OpenBot" }));
 
   expect(
@@ -2323,6 +2452,29 @@ test("Start credential failures do not expose a restore action", async () => {
   ).toEqual([]);
 });
 
+test("a successful setup hands directly into the first coworker creator", async () => {
+  useCompatibleEndpointSetup({});
+  const previous = invokeHandler;
+  invokeHandler = async (command, args) => {
+    if (command === "ask_the_bot") return "391";
+    if (command === "show_agent_creator") return null;
+    return previous(command, args);
+  };
+
+  const view = await enterCompatibleEndpoint("https://models.example/v1");
+  await continueSetup(view);
+  await userEvent.click(view.getByRole("button", { name: "Start OpenBot" }));
+  await userEvent.click(await view.findByRole("button", { name: "Ask" }));
+
+  expect(await view.findByText("391")).toBeTruthy();
+  await userEvent.click(
+    view.getByRole("button", { name: "Create a coworker" }),
+  );
+
+  expect(invokeCalls).toContainEqual({ command: "show_agent_creator" });
+  expect(view.getByRole("button", { name: "Open OpenBot" })).toBeTruthy();
+});
+
 test("the Enter that finishes a composed character does not ask the Bot", async () => {
   useCompatibleEndpointSetup({});
   const previous = invokeHandler;
@@ -2331,7 +2483,7 @@ test("the Enter that finishes a composed character does not ask the Bot", async 
     return previous(command, args);
   };
   const view = await enterCompatibleEndpoint("https://models.example/v1");
-  await userEvent.click(view.getByRole("button", { name: "Continue" }));
+  await continueSetup(view);
   await userEvent.click(view.getByRole("button", { name: "Start OpenBot" }));
   const question = await view.findByLabelText("Your question");
   // Keys land on the focused field.

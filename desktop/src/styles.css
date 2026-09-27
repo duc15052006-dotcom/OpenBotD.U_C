@@ -607,6 +607,23 @@ details > summary:hover {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+/* Support snapshot beside a failure. Quiet because the failure itself remains the headline. */
+.diagnostics {
+  margin-top: 0.8rem;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+}
+
+.diagnostics.compact {
+  margin-top: 0.55rem;
+}
+
+.diagnostics .detail-of {
+  width: 100%;
+}
+
 /*
  * The answer on the last screen. Given weight on purpose: it is the one piece of text in the whole
  * wizard that was produced rather than written, and it is the proof the install actually worked.

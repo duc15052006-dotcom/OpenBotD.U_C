@@ -42,6 +42,7 @@ const SNAPSHOT: SnapshotResult = {
 function fakeComputer(options?: {
   stopResult?: { wasRunning: boolean };
   resetResult?: { cleared: boolean };
+  restoreResult?: { restored: boolean };
   locations?: ComputerLocation[];
   routes?: Record<string, (init?: RequestInit) => Response | Promise<Response>>;
   /** Which run of the computer this stands for. Absent means a provider that cannot say. */
@@ -49,9 +50,11 @@ function fakeComputer(options?: {
 }) {
   const calls: string[] = [];
   const addressedAs: string[] = [];
+  const locateOptions: Parameters<ComputerProvider["locate"]>[1][] = [];
   const requests: Array<{ url: string; init?: RequestInit }> = [];
   const stopResult = options?.stopResult ?? { wasRunning: true };
   const resetResult = options?.resetResult ?? { cleared: true };
+  const restoreResult = options?.restoreResult ?? { restored: true };
   const locations = options?.locations ?? [];
   const result = (action: string) => ({
     action,
@@ -61,8 +64,9 @@ function fakeComputer(options?: {
   const provider: ComputerProvider = {
     name: "test",
     isolation: "per-bot",
-    locate: async (botId) => {
+    locate: async (botId, resourceOptions) => {
       addressedAs.push(botId);
+      locateOptions.push(resourceOptions);
       return "http://agent-computer:4100";
     },
     ...(options?.session ? { sessionOf: async () => options.session?.() } : {}),
@@ -74,6 +78,10 @@ function fakeComputer(options?: {
     reset: async (botId) => {
       calls.push(`reset:${botId}`);
       return resetResult;
+    },
+    restoreSnapshot: async (botId) => {
+      calls.push(`restore:${botId}`);
+      return restoreResult;
     },
     list: async () => locations,
   };
@@ -182,7 +190,7 @@ function fakeComputer(options?: {
         );
     }
   }) as unknown as typeof fetch;
-  return { provider, fetchImpl, calls, addressedAs, requests };
+  return { provider, fetchImpl, calls, addressedAs, locateOptions, requests };
 }
 
 function fakeAudit() {
@@ -224,6 +232,119 @@ async function gatewayWith(
 }
 
 describe("the computer gateway", () => {
+  test("adds CPU RAM and disk metrics for running computers without changing fleet state", async () => {
+    const { gateway, requests } = await gatewayWith(PERMISSIVE, {
+      locations: [
+        {
+          botId: "bot-1",
+          status: "running",
+          url: "http://agent-computer:4100",
+          startedAt: "2026-09-18T00:00:00.000Z",
+        },
+      ],
+      routes: {
+        "/metrics": () =>
+          Response.json({
+            metrics: {
+              capturedAt: "2026-09-18T02:00:00.000Z",
+              cpuPercent: 12.5,
+              memoryUsedBytes: 536870912,
+              memoryLimitBytes: 1073741824,
+              diskUsedBytes: 2147483648,
+              diskTotalBytes: 4294967296,
+            },
+          }),
+      },
+    });
+
+    const fleet = await gateway.computers();
+
+    expect(fleet.computers[0]?.metrics).toEqual({
+      capturedAt: "2026-09-18T02:00:00.000Z",
+      cpuPercent: 12.5,
+      memoryUsedBytes: 536870912,
+      memoryLimitBytes: 1073741824,
+      diskUsedBytes: 2147483648,
+      diskTotalBytes: 4294967296,
+    });
+    expect(
+      requests.some((request) => new URL(request.url).pathname === "/metrics"),
+    ).toBe(true);
+  });
+
+  test("never sends the computer token to an unsafe provider metrics address", async () => {
+    const { gateway, requests } = await gatewayWith(PERMISSIVE, {
+      token: "secret-computer-token",
+      locations: [
+        {
+          botId: "bot-1",
+          status: "running",
+          url: "http://169.254.169.254/latest/meta-data",
+        },
+      ],
+    });
+
+    const before = requests.length;
+    const fleet = await gateway.computers();
+
+    expect(fleet.computers[0]?.metrics).toBeUndefined();
+    expect(requests).toHaveLength(before);
+  });
+
+  test("restarts a computer without resetting its saved profile", async () => {
+    const { gateway, calls, rows, addressedAs } = await gatewayWith(PERMISSIVE);
+
+    const result = await gateway.restartComputer("bot-1", ACTOR);
+
+    expect(result.restarted).toBe(true);
+    expect(result.url).toBe("http://agent-computer:4100/");
+    expect(calls).toContain("stop:bot-1");
+    expect(calls.some((call) => call.startsWith("reset:"))).toBe(false);
+    // One locate happened for the setup snapshot and one for the restart wake.
+    expect(
+      addressedAs.filter((botId) => botId === "bot-1").length,
+    ).toBeGreaterThanOrEqual(2);
+    expect(rows.at(-1)?.eventType).toBe("computer.restarted");
+  });
+
+  test("uses the provider atomic restart primitive when it is available", async () => {
+    const { provider, fetchImpl, calls } = fakeComputer();
+    let restartOptions: unknown;
+    provider.restart = async (botId, options) => {
+      calls.push(`restart:${botId}`);
+      restartOptions = options;
+      return "http://agent-computer:4100";
+    };
+    const { store, rows } = fakeAudit();
+    const gateway = createComputerGateway({
+      provider,
+      fetchImpl,
+      auditStore: store,
+      policy: () => PERMISSIVE,
+      resourceProfile: async () => "heavy",
+    });
+
+    const result = await gateway.restartComputer("bot-1", ACTOR);
+
+    expect(result).toEqual({
+      restarted: true,
+      url: "http://agent-computer:4100/",
+    });
+    expect(calls).toEqual(["restart:bot-1"]);
+    expect(restartOptions).toEqual({ resourceProfile: "heavy" });
+    expect(rows.at(-1)?.eventType).toBe("computer.restarted");
+  });
+
+  test("starting an already-ready computer is idempotent and audited", async () => {
+    const { gateway, calls, rows } = await gatewayWith(PERMISSIVE);
+
+    const result = await gateway.startComputer("bot-1", ACTOR);
+
+    expect(result.started).toBe(false);
+    expect(calls.some((call) => call.startsWith("reset:"))).toBe(false);
+    expect(rows.at(-1)?.eventType).toBe("computer.started");
+  });
+
   test("carries out an allowed action and records it", async () => {
     const { gateway, calls, rows } = await gatewayWith(PERMISSIVE);
     await gateway.click("bot-1", ACTOR, {
@@ -682,6 +803,65 @@ describe("the computer gateway", () => {
     expect(rows[0]?.targetId).toBe("bot-2");
   });
 
+  test("restoreComputerSnapshot records the restore even when clearing stale refs fails", async () => {
+    const { provider, fetchImpl, calls } = fakeComputer({
+      restoreResult: { restored: true },
+    });
+    const { store, rows } = fakeAudit();
+    const snapshots: SnapshotStore = {
+      ...createInMemorySnapshotStore(),
+      clear: async () => {
+        throw new Error("connection reset by peer");
+      },
+    };
+    const gateway = createComputerGateway({
+      provider,
+      fetchImpl,
+      auditStore: store,
+      policy: () => PERMISSIVE,
+      snapshots,
+    });
+
+    await expect(
+      gateway.restoreComputerSnapshot("bot-1", ACTOR),
+    ).rejects.toThrow("connection reset by peer");
+
+    expect(calls).toContain("restore:bot-1");
+    expect(rows.map((row) => row.eventType)).toContain(
+      "computer.snapshot_restored",
+    );
+    expect(rows[0]?.targetId).toBe("bot-1");
+  });
+
+  test("restoreComputerSnapshot records the restore even when clearing screenshots fails", async () => {
+    const { provider, fetchImpl, calls } = fakeComputer({
+      restoreResult: { restored: true },
+    });
+    const { store, rows } = fakeAudit();
+    const gateway = createComputerGateway({
+      provider,
+      fetchImpl,
+      auditStore: store,
+      policy: () => PERMISSIVE,
+      pageFrames: {
+        clear: async () => {
+          throw new Error("statement timeout");
+        },
+      } as unknown as NonNullable<
+        Parameters<typeof createComputerGateway>[0]["pageFrames"]
+      >,
+    });
+
+    await expect(
+      gateway.restoreComputerSnapshot("bot-1", ACTOR),
+    ).rejects.toThrow("statement timeout");
+
+    expect(calls).toContain("restore:bot-1");
+    expect(rows.map((row) => row.eventType)).toContain(
+      "computer.snapshot_restored",
+    );
+  });
+
   test("resetComputer returns true when state was cleared and audits with the bot id as target", async () => {
     const { gateway, calls, rows } = await gatewayWith(PERMISSIVE, {
       resetResult: { cleared: true },
@@ -803,18 +983,21 @@ describe("the computer gateway", () => {
         {
           botId: "bot-proxied",
           running: true,
+          lifecycle: "running",
           startedAt: "2026-08-20T12:00:00.000Z",
           egress: "198.51.100.42",
         },
         {
           botId: "bot-direct",
           running: false,
+          lifecycle: "stopped",
           startedAt: "2026-08-20T11:00:00.000Z",
           egress: null,
         },
         {
           botId: "bot-unknown-egress",
           running: false,
+          lifecycle: "stopped",
           startedAt: "2026-08-20T10:00:00.000Z",
           egress: undefined,
         },
@@ -1285,6 +1468,35 @@ describe("resolving a ref across replicas", () => {
  * supervisor replaces a computer whose image has changed without telling the server, so the row
  * outlives the run that wrote it and nothing notices.
  */
+describe("snapshot run ordering", () => {
+  test("stamps the snapshot with the run read before capture", async () => {
+    const snapshots = createInMemorySnapshotStore();
+    let run = "run-1";
+    const { provider, fetchImpl } = fakeComputer({
+      session: () => run,
+      routes: {
+        "/snapshot": () => {
+          // A reset/replacement lands while the snapshot request is in flight.
+          run = "run-2";
+          return Response.json(SNAPSHOT);
+        },
+      },
+    });
+    const { store } = fakeAudit();
+    const gateway = createComputerGateway({
+      provider,
+      fetchImpl,
+      auditStore: store,
+      policy: () => PERMISSIVE,
+      snapshots,
+    });
+
+    await gateway.snapshot("bot-1");
+
+    expect((await snapshots.load("bot-1"))?.session).toBe("run-1");
+  });
+});
+
 describe("a ref that outlived its computer", () => {
   test("does not resolve against the dead run's page", async () => {
     const snapshots = createInMemorySnapshotStore();
@@ -1401,5 +1613,25 @@ describe("acting on a ref the server cannot resolve", () => {
     await gateway.scroll("bot-1", ACTOR, { deltaY: 200 });
 
     expect(calls).toEqual(["scroll"]);
+  });
+});
+
+describe("per-Agent Computer resource profiles", () => {
+  test("resolves the saved preset before locating the Computer", async () => {
+    const { provider, fetchImpl, locateOptions } = fakeComputer();
+    const { store } = fakeAudit();
+    const gateway = createComputerGateway({
+      provider,
+      fetchImpl,
+      auditStore: store,
+      policy: () => PERMISSIVE,
+      resourceProfile: async (botId) => {
+        expect(botId).toBe("sales");
+        return "heavy";
+      },
+    });
+
+    await gateway.read("sales");
+    expect(locateOptions).toEqual([{ resourceProfile: "heavy" }]);
   });
 });

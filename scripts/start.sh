@@ -47,6 +47,7 @@ SERVER_PORT="$(setting SERVER_PORT 3001)"
 COMPUTER_PORT="$(setting COMPUTER_PORT 4100)"
 BOT_PORT="$(setting BOT_PORT 4200)"
 LANGGRAPH_PORT="$(setting LANGGRAPH_PORT 4201)"
+BOT_PROVIDER="$(setting BOT_PROVIDER openai | tr '[:upper:]' '[:lower:]' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
 SUPERVISOR_PORT="$(setting SUPERVISOR_PORT 4500)"
 ONE_COMPUTER_EACH="${OPENBOT_ONE_COMPUTER_EACH:-true}"
 export APP_PORT SERVER_PORT
@@ -237,9 +238,13 @@ fi
 # `docker compose up -d` is declarative and does nothing for a service whose configuration has not
 # changed, so naming them all costs a comparison and buys the guarantee that what is running is what
 # this run configured.
-for svc in agent-computer agent-bot agent-langgraph; do
-  SERVICES+=("$svc")
-done
+SERVICES+=(agent-computer)
+if [ "$BOT_PROVIDER" = "anthropic" ]; then
+  info "  agent-bot: skipped for Anthropic (OpenAI-only sample)"
+else
+  SERVICES+=(agent-bot)
+fi
+SERVICES+=(agent-langgraph)
 
 export SUPERVISOR_TOKEN COMPUTER_TOKEN WORKER_SHARED_SECRET
 export COMPUTER_PORT BOT_PORT LANGGRAPH_PORT SUPERVISOR_PORT
@@ -250,7 +255,9 @@ if ! docker compose run --rm --build migrate >"$LOGS/migrate.log" 2>&1; then
   exit 1
 fi
 wait_for "http://localhost:$COMPUTER_PORT/health" "agent-computer"
-wait_for "http://localhost:$BOT_PORT/health" "agent-bot"
+if [ "$BOT_PROVIDER" != "anthropic" ]; then
+  wait_for "http://localhost:$BOT_PORT/health" "agent-bot"
+fi
 wait_for "http://localhost:$LANGGRAPH_PORT/health" "agent-langgraph"
 
 for table in agent_profiles agent_preferences; do

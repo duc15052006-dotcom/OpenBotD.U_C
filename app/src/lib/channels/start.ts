@@ -40,8 +40,8 @@ export function useStartChannel() {
   const navigate = useNavigate();
   const createChannel = useMutation(createChannelMutationOptions(queryClient));
 
-  const start = async (agentId: string, text: string) => {
-    const channel = await createChannel.mutateAsync([agentId]);
+  const startMany = async (agentIds: string[], text: string) => {
+    const channel = await createChannel.mutateAsync(agentIds);
     queryClient.setQueryData(channelKeys.detail(channel.id), channel);
     stashFirstMessage(channel.id, text);
     await navigate({
@@ -51,11 +51,26 @@ export function useStartChannel() {
     });
   };
 
+  const start = (agentId: string, text: string) => startMany([agentId], text);
+
+  const startChosenMany = async (agentIds: string[], text: string) => {
+    // A group is a person choosing every member explicitly. Record each choice independently so
+    // the audit trail never looks like the router silently added the other participants.
+    await Promise.all(
+      agentIds.map((agentId) =>
+        routeMessage(text, agentId).catch(() => undefined),
+      ),
+    );
+    await startMany(agentIds, text);
+  };
+
   return {
     pending: createChannel.isPending,
     start,
+    startMany,
     /** `start`, for a coworker the person chose: the choice is recorded first. */
     startChosen: (agentId: string, text: string) =>
       startWithChosen({ agentId, text, record: routeMessage, start }),
+    startChosenMany,
   };
 }

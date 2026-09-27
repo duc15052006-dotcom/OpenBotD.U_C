@@ -107,6 +107,8 @@ function harness(options: {
   abortGraceMs?: number;
   heartbeatMs?: number;
   lockTtlSeconds?: number;
+  workflow?: boolean;
+  continuationGuard?: () => Promise<boolean>;
 }) {
   const order: string[] = [];
   const calls = {
@@ -221,13 +223,29 @@ function harness(options: {
   });
 
   const run = () =>
-    runTurn({
-      ownerUserId: OWNER,
-      routineId: ROUTINE_ID,
-      agentId: AGENT_ID,
-      threadId: THREAD_ID,
-      instruction: INSTRUCTION,
-    });
+    runTurn(
+      options.workflow
+        ? {
+            ownerUserId: OWNER,
+            workflowId: "workflow_video",
+            agentId: AGENT_ID,
+            threadId: THREAD_ID,
+            instruction: INSTRUCTION,
+            ...(options.continuationGuard
+              ? { continuationGuard: options.continuationGuard }
+              : {}),
+          }
+        : {
+            ownerUserId: OWNER,
+            routineId: ROUTINE_ID,
+            agentId: AGENT_ID,
+            threadId: THREAD_ID,
+            instruction: INSTRUCTION,
+            ...(options.continuationGuard
+              ? { continuationGuard: options.continuationGuard }
+              : {}),
+          },
+    );
 
   return { run, agent, calls, order, builtFor };
 }
@@ -259,6 +277,51 @@ describe("a routine's headless turn", () => {
     const { run } = harness({});
 
     expect(await run()).toEqual({ replyText: "Three things happened." });
+  });
+
+  test("stops an in-flight workflow turn when its durable continuation guard is revoked", async () => {
+    let checks = 0;
+    const { run, calls, agent } = harness({
+      workflow: true,
+      heartbeatMs: 2,
+      continuationGuard: async () => {
+        checks += 1;
+        return checks === 1;
+      },
+      drive: ({ agent: driven, observer }) => {
+        driven.onAbort = () => observer.complete();
+      },
+    });
+
+    await expect(run()).rejects.toThrow(
+      "workflow continuation was cancelled while it was running",
+    );
+
+    expect(agent.aborts).toBe(1);
+    expect(calls.stops).toHaveLength(1);
+    expect(calls.cleaned).toHaveLength(1);
+  });
+
+  test("stops an in-flight routine turn when its durable guard is revoked", async () => {
+    let checks = 0;
+    const { run, calls, agent } = harness({
+      heartbeatMs: 2,
+      continuationGuard: async () => {
+        checks += 1;
+        return checks === 1;
+      },
+      drive: ({ agent: driven, observer }) => {
+        driven.onAbort = () => observer.complete();
+      },
+    });
+
+    await expect(run()).rejects.toThrow(
+      "routine continuation was cancelled while it was running",
+    );
+
+    expect(agent.aborts).toBe(1);
+    expect(calls.stops).toHaveLength(1);
+    expect(calls.cleaned).toHaveLength(1);
   });
 
   test("does not leak history into the reply: the before-set must be taken after seeding, not before", async () => {
@@ -888,6 +951,20 @@ describe("a RUN_ERROR through next", () => {
 });
 
 describe("what the trail is told started the turn", () => {
+  test("a workflow continuation keeps workflow provenance and does not use the routine frame", async () => {
+    const { run, builtFor, calls } = harness({ workflow: true });
+
+    await run();
+
+    expect(builtFor[0]?.initiator).toEqual({
+      kind: "workflow",
+      id: "workflow_video",
+    });
+    const message = calls.runs[0]?.persistedInputMessages?.[0];
+    expect(message?.content).toBe(INSTRUCTION);
+    expect(String(message?.content)).not.toContain(FRAME_MARK);
+  });
+
   test("the Bot is built for the routine, not for the owner acting by hand", async () => {
     const { run, builtFor } = harness({});
 

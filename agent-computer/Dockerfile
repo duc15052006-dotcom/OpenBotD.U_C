@@ -16,7 +16,7 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 COPY --from=node-toolchain /usr/local /usr/local
 COPY --from=bun-toolchain /usr/local/bin/bun /usr/local/bin/bun
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl unzip xz-utils \
+      ca-certificates curl unzip xz-utils clamav \
   && ln -s bun /usr/local/bin/bunx \
   && bunx --bun "playwright@${PLAYWRIGHT_VERSION}" install --with-deps chromium \
   && rm -rf /root/.cache /tmp/* /var/lib/apt/lists/*
@@ -29,9 +29,11 @@ RUN bun install --frozen-lockfile
 
 COPY agent-computer/src ./src
 
-# Durable working directory. Bot-produced files that must survive replacement live here.
-RUN mkdir -p /workspace
+# Durable working directory plus a separate untrusted-download holding area. Browser downloads do
+# not land in /workspace and therefore cannot become ordinary Agent files merely by being downloaded.
+RUN mkdir -p /workspace /quarantine
 ENV WORKSPACE_DIR=/workspace
+ENV QUARANTINE_DIR=/quarantine
 
 ENV PORT=4100
 EXPOSE 4100

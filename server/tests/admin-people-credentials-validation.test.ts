@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createApp } from "../src/app";
 import { loadConfig } from "../src/config";
-import { decodeCursor } from "../src/people/store";
+import { PeopleCursorError, decodeCursor } from "../src/people/store";
 import { testEnvironment } from "./support/environment";
 
 const ADMIN = {
@@ -128,27 +128,66 @@ describe("POST /api/admin/credentials input", () => {
   });
 });
 
-/**
- * A well-formed cursor carrying a non-date `lastSignedInAt` used to reach
- * `${cursor.lastSignedInAt}::timestamptz` in SQL and answer 500. It now falls back to the
- * first page like any other stale cursor.
- */
-describe("decodeCursor", () => {
+describe("people page cursors", () => {
   function encode(value: unknown): string {
     return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
   }
 
-  test("falls back on a non-date lastSignedInAt", () => {
-    expect(
-      decodeCursor(encode({ email: "a@x.test", lastSignedInAt: "not-a-date" })),
-    ).toBeUndefined();
+  test.each([
+    "not-a-cursor",
+    encode(null),
+    encode([]),
+    encode({}),
+    encode({ email: "", lastSignedInAt: null }),
+    encode({ email: "a@x.test", lastSignedInAt: "not-a-date" }),
+    encode({ email: "a@x.test", lastSignedInAt: 2020 }),
+  ])("refuses malformed cursor %p", (cursor) => {
+    expect(() => decodeCursor(cursor)).toThrow(PeopleCursorError);
+    expect(() => decodeCursor(cursor)).toThrow(
+      "cursor must be a valid people page cursor",
+    );
   });
 
-  test("keeps a valid cursor", () => {
+  test("keeps a valid cursor and drops extra fields", () => {
     expect(
       decodeCursor(
-        encode({ email: "a@x.test", lastSignedInAt: "2026-01-01T00:00:00Z" }),
+        encode({
+          email: "a@x.test",
+          lastSignedInAt: "2026-01-01T00:00:00Z",
+          injected: "ignored",
+        }),
       ),
     ).toEqual({ email: "a@x.test", lastSignedInAt: "2026-01-01T00:00:00Z" });
+  });
+
+  test("GET /api/admin/people returns 400 before the store for a bad cursor", async () => {
+    const { app, calls } = appWith({});
+    const response = await app.request(
+      "http://openbot.test/api/admin/people?cursor=not-a-cursor",
+    );
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: "cursor must be a valid people page cursor",
+    });
+    expect(calls.people).toEqual([]);
+  });
+
+  test("maps a store-level cursor refusal to 400", async () => {
+    const cursor = encode({
+      email: "a@x.test",
+      lastSignedInAt: "2026-01-01T00:00:00Z",
+    });
+    const { app } = appWith({
+      peopleList: async () => {
+        throw new PeopleCursorError();
+      },
+    });
+    const response = await app.request(
+      `http://openbot.test/api/admin/people?cursor=${encodeURIComponent(cursor)}`,
+    );
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: "cursor must be a valid people page cursor",
+    });
   });
 });
