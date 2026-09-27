@@ -167,4 +167,42 @@ describe("Agent Economy payment intent policy", () => {
       reason: "payment destination is not whitelisted",
     });
   });
+
+  test("invalid policy and spend state fail closed", () => {
+    expect(
+      decide(intent(), {
+        policy: { ...policy, maxX402PaymentMinor: -1n },
+      }),
+    ).toEqual({
+      decision: "DENY",
+      reason:
+        "invalid financial policy: maxX402PaymentMinor must not be negative",
+    });
+
+    expect(
+      decide(intent(), {
+        spend: { hourlyMinor: -1n, dailyMinor: 0n, monthlyMinor: 0n },
+      }),
+    ).toEqual({
+      decision: "DENY",
+      reason: "invalid spend history",
+    });
+  });
+
+  test("an empty x402 allowlist entry does not match every domain", () => {
+    expect(
+      decide(
+        intent({
+          kind: "X402_PAYMENT",
+          amountMinor: 1_000n,
+          category: "x402",
+          x402Domain: "evil.test",
+        }),
+        { policy: { ...policy, allowedX402Domains: [""] } },
+      ),
+    ).toEqual({
+      decision: "DENY",
+      reason: "x402 destination domain is not allowed",
+    });
+  });
 });
