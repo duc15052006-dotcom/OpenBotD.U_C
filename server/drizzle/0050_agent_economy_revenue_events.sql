@@ -44,7 +44,7 @@ ALTER TABLE "revenue_events" ADD CONSTRAINT "revenue_events_account_id_agent_fin
 --> statement-breakpoint
 CREATE UNIQUE INDEX "revenue_adapters_agent_key_idx" ON "revenue_adapters" USING btree ("agent_id","adapter_key");
 --> statement-breakpoint
-CREATE UNIQUE INDEX "revenue_events_adapter_external_idx" ON "revenue_events" USING btree ("adapter_id","external_event_id");
+CREATE UNIQUE INDEX "revenue_events_adapter_external_status_idx" ON "revenue_events" USING btree ("adapter_id","external_event_id","status");
 --> statement-breakpoint
 CREATE INDEX "revenue_events_agent_occurred_idx" ON "revenue_events" USING btree ("agent_id","occurred_at");
 --> statement-breakpoint
