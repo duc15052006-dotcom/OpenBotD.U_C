@@ -63,11 +63,17 @@ class RecordingAdapter implements PaymentAccountAdapter {
   prepareCalls = 0;
   executeCalls = 0;
   verifyCalls = 0;
+  balanceCalls = 0;
   balance = 100_000n;
+  failPostTransferBalance = false;
   receiptOverride?: Partial<TransferReceipt>;
   verifyResult = true;
 
   async getBalance(assetCode: string): Promise<Money> {
+    this.balanceCalls += 1;
+    if (this.failPostTransferBalance && this.executeCalls > 0) {
+      throw new Error("provider balance endpoint unavailable");
+    }
     return { assetCode, amountMinor: this.balance };
   }
 
@@ -178,6 +184,25 @@ describe("Agent Economy execution boundary", () => {
       balanceBeforeMinor: 100_000n,
       balanceAfterMinor: 99_000n,
     });
+  });
+
+  test("keeps a verified receipt when the post-transfer balance refresh fails", async () => {
+    const adapter = new RecordingAdapter();
+    adapter.failPostTransferBalance = true;
+
+    const receipt = await executeAuthorizedPayment({
+      intent,
+      authorization: { decision: "ALLOW", policyVersion: 7 },
+      provider: "mock-provider",
+      adapter,
+      loadPolicySnapshot: async () => snapshot(),
+    });
+
+    expect(adapter.executeCalls).toBe(1);
+    expect(adapter.verifyCalls).toBe(1);
+    expect(receipt.externalReference).toBe("provider-transfer-1");
+    expect(receipt.balanceBeforeMinor).toBe(100_000n);
+    expect(receipt.balanceAfterMinor).toBeNull();
   });
 
   test("fails closed when adapter verification fails", async () => {
