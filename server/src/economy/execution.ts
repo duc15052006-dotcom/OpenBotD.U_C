@@ -8,7 +8,11 @@ import {
   type PaymentIntent,
   type SpendWindow,
 } from "./intents";
-import type { PaymentAccountAdapter, TransferReceipt } from "./payment-adapter";
+import type {
+  PaymentAccountAdapter,
+  PreparedTransfer,
+  TransferReceipt,
+} from "./payment-adapter";
 
 export interface ExecutablePaymentIntent extends PaymentIntent {
   id: string;
@@ -142,11 +146,7 @@ async function requireAuthorization(
 
 function requireMatchingPreparedTransfer(
   intent: ExecutablePaymentIntent,
-  prepared: { request: {
-    idempotencyKey: string;
-    amount: { assetCode: string; amountMinor: bigint };
-    destination: string;
-  } },
+  prepared: PreparedTransfer,
 ): void {
   if (prepared.request.idempotencyKey !== intent.idempotencyKey) {
     throw new PaymentExecutionRefusedError(
