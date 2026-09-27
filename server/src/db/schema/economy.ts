@@ -418,4 +418,3 @@ export const agentPayoutRules = pgTable(
     ),
   ],
 );
-
