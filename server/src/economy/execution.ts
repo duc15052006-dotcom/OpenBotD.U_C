@@ -149,9 +149,8 @@ export async function executeAuthorizedPayment(input: {
 
   let balanceAfterMinor: bigint | null = null;
   try {
-    balanceAfterMinor = (
-      await input.adapter.getBalance(input.intent.assetCode)
-    ).amountMinor;
+    balanceAfterMinor = (await input.adapter.getBalance(input.intent.assetCode))
+      .amountMinor;
   } catch {
     // The transfer is already verified. A balance refresh outage must not erase proof that money
     // moved; reconciliation can fill this optional evidence later.
