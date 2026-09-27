@@ -351,6 +351,13 @@
       "when": 1790506200000,
       "tag": "0049_agent_economy_verified_receipts",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1790509500000,
+      "tag": "0050_agent_economy_revenue_events",
+      "breakpoints": true
     }
   ]
 }
