@@ -339,3 +339,79 @@ export const revenueEvents = pgTable(
     ),
   ],
 );
+
+/**
+ * Versioned Owner payout automation settings.
+ *
+ * The destination is a credential-vault pointer rather than a wallet address stored in ordinary
+ * product data. Rules are immutable: changing a destination, threshold or schedule creates the next
+ * version so a historical payout can name exactly which rule authorized it.
+ */
+export const agentPayoutRules = pgTable(
+  "agent_payout_rules",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    agentId: text("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "restrict" }),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => agentFinancialAccounts.id, { onDelete: "restrict" }),
+    version: integer("version").notNull(),
+    mode: text("mode").notNull(),
+    destinationCredentialId: uuid("destination_credential_id")
+      .notNull()
+      .references(() => credentials.id, { onDelete: "restrict" }),
+    thresholdMinor: moneyMinor("threshold_minor"),
+    schedule: text("schedule"),
+    enabled: boolean("enabled").notNull().default(true),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex("agent_payout_rules_agent_version_idx").on(
+      table.agentId,
+      table.version,
+    ),
+  ],
+);
+
+/**
+ * A completed Owner payout, written only after the payment receipt has been independently verified.
+ *
+ * Intent and receipt are both unique so retries cannot turn one external transfer into two payouts.
+ */
+export const agentPayouts = pgTable(
+  "agent_payouts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    agentId: text("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "restrict" }),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => agentFinancialAccounts.id, { onDelete: "restrict" }),
+    ruleId: uuid("rule_id")
+      .notNull()
+      .references(() => agentPayoutRules.id, { onDelete: "restrict" }),
+    intentId: uuid("intent_id")
+      .notNull()
+      .references(() => agentPaymentIntents.id, { onDelete: "restrict" }),
+    receiptId: uuid("receipt_id")
+      .notNull()
+      .references(() => agentPaymentReceipts.id, { onDelete: "restrict" }),
+    amountMinor: moneyMinor("amount_minor").notNull(),
+    assetCode: text("asset_code").notNull(),
+    assetClass: text("asset_class").notNull(),
+    destination: text("destination").notNull(),
+    policyVersion: integer("policy_version").notNull(),
+    proof: jsonb("proof").notNull(),
+    paidAt: timestamp("paid_at", { withTimezone: true }).notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex("agent_payouts_intent_idx").on(table.intentId),
+    uniqueIndex("agent_payouts_receipt_idx").on(table.receiptId),
+    index("agent_payouts_agent_paid_idx").on(table.agentId, table.paidAt),
+  ],
+);
+
