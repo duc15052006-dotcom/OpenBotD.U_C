@@ -6,6 +6,8 @@ import {
 import {
   PaymentExecutionRefusedError,
   type PaymentPolicySnapshot,
+  type VerifiedPaymentReceipt,
+  type VerifiedPaymentReceiptStore,
 } from "../src/economy/execution";
 import { InMemoryPaymentAccountAdapter } from "../src/economy/payment-adapter";
 import type { AgentLedgerEntry } from "../src/economy/model";
@@ -58,6 +60,19 @@ const ledger: AgentLedgerEntry[] = [
   ledgerEntry("reinvest", "reinvestment", "debit", 12_000n),
 ];
 
+function memoryReceiptStore(): VerifiedPaymentReceiptStore {
+  let stored: VerifiedPaymentReceipt | null = null;
+  return {
+    loadByIntent: async (intentId) =>
+      stored?.intentId === intentId ? stored : null,
+    saveVerified: async (receipt) => {
+      if (stored && stored.intentId === receipt.intentId) return stored;
+      stored = receipt;
+      return receipt;
+    },
+  };
+}
+
 function snapshot(
   overrides: Partial<PaymentPolicySnapshot> = {},
 ): PaymentPolicySnapshot {
@@ -86,6 +101,7 @@ async function payout(
     authorization: { decision: "ALLOW", policyVersion: 1 },
     ledgerEntries: ledger,
     adapter: new InMemoryPaymentAccountAdapter({ USDC: 50_000n }),
+    receiptStore: memoryReceiptStore(),
     loadPolicySnapshot: async () => snapshot(),
     occurredAt: new Date("2026-09-27T01:00:00Z"),
     ...overrides,
