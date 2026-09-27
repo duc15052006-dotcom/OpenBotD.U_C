@@ -69,7 +69,10 @@ describe("Agent Economy accounting foundation", () => {
   });
 
   test("refuses to aggregate finance across agents", () => {
-    const foreign = { ...entry("foreign", "revenue", "credit", 100n), agentId: "agent-b" };
+    const foreign = {
+      ...entry("foreign", "revenue", "credit", 100n),
+      agentId: "agent-b",
+    };
     expect(() => summarizeAgentLedger("agent-a", [foreign])).toThrow(
       "cross-agent aggregation is forbidden",
     );
