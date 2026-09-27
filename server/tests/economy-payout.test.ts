@@ -139,9 +139,7 @@ describe("Agent Economy manual Owner payout", () => {
   });
 
   test("large payout still requires explicit Owner confirmation", async () => {
-    await expect(
-      payout({ amountMinor: 15_000n }),
-    ).rejects.toThrow(
+    await expect(payout({ amountMinor: 15_000n })).rejects.toThrow(
       "Owner confirmation is required before payment execution",
     );
 
