@@ -128,6 +128,32 @@ function minorToDecimal(value: bigint, decimals: number): string {
   return trimmed ? `${whole}.${trimmed}` : whole.toString();
 }
 
+function requireMatchingCompleteTransaction(
+  transaction: CircleTransaction,
+  credential: CirclePaymentCredential,
+  prepared: PreparedTransfer,
+): void {
+  if (transaction.walletId !== credential.walletId) {
+    throw new Error("Circle completed transaction wallet does not match configured account");
+  }
+  if (transaction.tokenId !== credential.tokenId) {
+    throw new Error("Circle completed transaction token does not match configured asset");
+  }
+  if (transaction.destinationAddress !== prepared.request.destination) {
+    throw new Error("Circle completed transaction destination does not match prepared transfer");
+  }
+  if (!transaction.amounts || transaction.amounts.length !== 1) {
+    throw new Error("Circle completed transaction amount evidence is missing");
+  }
+  const providerAmountMinor = decimalToMinor(
+    transaction.amounts[0] ?? "",
+    credential.tokenDecimals,
+  );
+  if (providerAmountMinor !== prepared.request.amount.amountMinor) {
+    throw new Error("Circle completed transaction amount does not match prepared transfer");
+  }
+}
+
 function circleIdempotencyKey(value: string): string {
   if (
     /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
@@ -350,6 +376,7 @@ export class CircleDeveloperWalletAdapter implements PaymentAccountAdapter {
         attempt === 0 ? created : await this.getTransaction(created.id);
 
       if (transaction.state === "COMPLETE") {
+        requireMatchingCompleteTransaction(transaction, this.credential, prepared);
         return {
           transferId: transaction.txHash || transaction.id,
           idempotencyKey: prepared.request.idempotencyKey,
