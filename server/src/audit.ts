@@ -69,6 +69,13 @@ export const auditEventTypes = [
   "economy.payment_approved",
   "economy.payment_approval_refused",
   /**
+   * A payment crossed the durable verified-receipt boundary.
+   *
+   * Written only after the receipt row exists. Retries that return the same durable receipt do not
+   * write another event, so one external transfer does not masquerade as several executions.
+   */
+  "economy.payment_executed",
+  /**
    * Which coworker an untagged message was routed to, and why.
    *
    * A channel is pinned to one coworker before its first turn, so when the person did not name one
