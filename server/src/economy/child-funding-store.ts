@@ -99,7 +99,7 @@ export function createChildFundingStore(database: Database): ChildFundingStore {
           .limit(1)
           .for("update");
 
-        if (!relationship || !relationship.active || relationship.frozen) {
+        if (!relationship?.active || relationship.frozen) {
           throw new ChildFundingPersistenceRefusedError(
             "child funding relationship is unavailable",
           );
@@ -194,8 +194,7 @@ export function createChildFundingStore(database: Database): ChildFundingStore {
           .limit(1);
 
         if (
-          !proof ||
-          proof.intentKind !== "CHILD_FUNDING" ||
+          proof?.intentKind !== "CHILD_FUNDING" ||
           proof.intentAgentId !== relationship.parentAgentId ||
           proof.receiptAgentId !== relationship.parentAgentId ||
           proof.receiptStatus !== "verified" ||
