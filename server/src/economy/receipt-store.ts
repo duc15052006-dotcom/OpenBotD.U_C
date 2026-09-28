@@ -86,7 +86,7 @@ export function verifiedPaymentReceiptFromRow(row: {
   };
 }
 
-function sameTransfer(
+export function sameVerifiedPaymentTransfer(
   expected: VerifiedPaymentReceipt,
   actual: VerifiedPaymentReceipt,
 ): boolean {
@@ -175,7 +175,7 @@ export function createVerifiedPaymentReceiptStore(
         .onConflictDoNothing({ target: agentPaymentReceipts.intentId });
 
       const stored = await loadByIntent(receipt.intentId);
-      if (!stored || !sameTransfer(receipt, stored)) {
+      if (!stored || !sameVerifiedPaymentTransfer(receipt, stored)) {
         throw new PaymentReceiptConflictError(receipt.intentId);
       }
       return stored;
