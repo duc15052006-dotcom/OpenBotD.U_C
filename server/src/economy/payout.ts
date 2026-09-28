@@ -3,6 +3,7 @@ import {
   type AgentLedgerEntry,
   type AgentPnl,
 } from "./model";
+import type { AuditInitiator, AuditStore } from "../audit";
 import {
   executeAndPersistAuthorizedPayment,
   PaymentExecutionRefusedError,
@@ -44,6 +45,11 @@ export async function executeManualOwnerPayout(input: {
   ledgerEntries: readonly AgentLedgerEntry[];
   adapter: PaymentAccountAdapter;
   receiptStore: VerifiedPaymentReceiptStore;
+  audit: {
+    store: AuditStore;
+    actorUserId?: string;
+    initiator?: AuditInitiator;
+  };
   loadPolicySnapshot: () => Promise<PaymentPolicySnapshot>;
   loadOwnerApproval?: (
     approvalId: string,
@@ -81,6 +87,7 @@ export async function executeManualOwnerPayout(input: {
     provider: input.provider,
     adapter: input.adapter,
     receiptStore: input.receiptStore,
+    audit: input.audit,
     loadOwnerApproval: input.loadOwnerApproval,
     loadPolicySnapshot: async () => {
       const snapshot = await input.loadPolicySnapshot();
