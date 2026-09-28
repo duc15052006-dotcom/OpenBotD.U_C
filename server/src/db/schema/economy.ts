@@ -468,16 +468,6 @@ export const agentFundingRelationships = pgTable(
     childAgentId: text("child_agent_id")
       .notNull()
       .references(() => agents.id, { onDelete: "restrict" }),
-    /**
-     * Destination account owned by the child.
-     *
-     * Nullable only for backward-compatible migration of legacy E6 rows. Funding execution must
-     * fail closed until this binding exists.
-     */
-    childAccountId: uuid("child_account_id").references(
-      () => agentFinancialAccounts.id,
-      { onDelete: "restrict" },
-    ),
     version: integer("version").notNull(),
     budgetMinor: moneyMinor("budget_minor").notNull(),
     assetCode: text("asset_code").notNull(),
@@ -492,9 +482,6 @@ export const agentFundingRelationships = pgTable(
       table.version,
     ),
     index("agent_funding_relationships_child_idx").on(table.childAgentId),
-    index("agent_funding_relationships_child_account_idx").on(
-      table.childAccountId,
-    ),
   ],
 );
 
