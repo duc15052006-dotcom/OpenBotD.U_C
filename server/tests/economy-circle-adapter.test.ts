@@ -112,7 +112,8 @@ describe("Circle developer wallet payment adapter", () => {
                 txHash: "0xabc",
                 walletId: "wallet-id",
                 tokenId: "usdc-token",
-                destinationAddress: "0x1111111111111111111111111111111111111111",
+                destinationAddress:
+                  "0x1111111111111111111111111111111111111111",
                 amounts: ["1.25"],
               },
             },
