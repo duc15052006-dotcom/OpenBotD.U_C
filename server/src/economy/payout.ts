@@ -114,8 +114,7 @@ export async function executeManualOwnerPayout(input: {
     assetClass: "STABLECOIN",
     amountMinor: receipt.amountMinor,
     destination: receipt.destination,
-    distributableProfitBeforeMinor:
-      pnl.distributableProfitBeforePayoutMinor,
+    distributableProfitBeforeMinor: pnl.distributableProfitBeforePayoutMinor,
     reserveBeforeMinor: pnl.reserveAllocationMinor,
     policyVersion: input.authorization.policyVersion,
     requestedBy: input.requestedBy,
