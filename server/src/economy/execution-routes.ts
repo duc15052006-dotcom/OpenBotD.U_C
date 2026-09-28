@@ -3,9 +3,7 @@ import { Hono } from "hono";
 import type { AgentProfileStore } from "../agents/profile-store";
 import type { AppVariables } from "../auth/guards";
 import { CredentialUnusableError } from "../credentials";
-import {
-  PaymentExecutionRefusedError,
-} from "./execution";
+import { PaymentExecutionRefusedError } from "./execution";
 import {
   LiveOperatingPaymentUnsupportedError,
   type LiveOperatingPaymentExecutor,
@@ -40,7 +38,10 @@ export function createLivePaymentRoutes(input: {
       if (raw && typeof raw === "object" && !Array.isArray(raw)) {
         body = raw as Record<string, unknown>;
       } else {
-        return context.json({ error: "Payment execution body is invalid." }, 400);
+        return context.json(
+          { error: "Payment execution body is invalid." },
+          400,
+        );
       }
     } catch {
       // Empty body is valid for ALLOW intents.
