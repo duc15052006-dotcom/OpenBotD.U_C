@@ -17,7 +17,9 @@ export class PaymentReceiptConflictError extends Error {
 
 export class PaymentReceiptIntegrityError extends Error {
   constructor(intentId: string) {
-    super(`Stored receipt for payment intent ${intentId} failed integrity checks.`);
+    super(
+      `Stored receipt for payment intent ${intentId} failed integrity checks.`,
+    );
     this.name = "PaymentReceiptIntegrityError";
   }
 }
