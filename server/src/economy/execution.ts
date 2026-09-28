@@ -1,4 +1,10 @@
 import {
+  DEPLOYMENT_INITIATOR,
+  type AuditInitiator,
+  type AuditStore,
+  recordAuditEvent,
+} from "../audit";
+import {
   decryptPaymentCredentialForUse,
   type PaymentCredentialSecretReader,
 } from "../credentials";
@@ -65,11 +71,16 @@ export interface VerifiedPaymentReceipt {
   verifiedAt: Date;
 }
 
+export interface PersistedVerifiedPaymentReceipt {
+  receipt: VerifiedPaymentReceipt;
+  created: boolean;
+}
+
 export interface VerifiedPaymentReceiptStore {
   loadByIntent(intentId: string): Promise<VerifiedPaymentReceipt | null>;
   saveVerified(
     receipt: VerifiedPaymentReceipt,
-  ): Promise<VerifiedPaymentReceipt>;
+  ): Promise<PersistedVerifiedPaymentReceipt>;
 }
 
 export class PaymentExecutionRefusedError extends Error {
@@ -325,6 +336,11 @@ export async function executeAndPersistAuthorizedPayment(input: {
   provider: string;
   adapter: PaymentAccountAdapter;
   receiptStore: VerifiedPaymentReceiptStore;
+  audit: {
+    store: AuditStore;
+    actorUserId?: string;
+    initiator?: AuditInitiator;
+  };
   loadPolicySnapshot: () => Promise<PaymentPolicySnapshot>;
   loadOwnerApproval?: (
     approvalId: string,
@@ -344,8 +360,40 @@ export async function executeAndPersistAuthorizedPayment(input: {
     loadPolicySnapshot: input.loadPolicySnapshot,
     loadOwnerApproval: input.loadOwnerApproval,
   });
-  const stored = await input.receiptStore.saveVerified(receipt);
+  const persisted = await input.receiptStore.saveVerified(receipt);
+  const stored = persisted.receipt;
   requireStoredReceiptMatchesIntent(input.intent, input.provider, stored);
+
+  if (persisted.created) {
+    try {
+      await recordAuditEvent(input.audit.store, {
+        eventType: "economy.payment_executed",
+        targetType: "payment_intent",
+        targetId: stored.intentId,
+        ...(input.audit.actorUserId
+          ? { actorUserId: input.audit.actorUserId }
+          : {}),
+        initiator: input.audit.initiator ?? DEPLOYMENT_INITIATOR,
+        payload: {
+          agentId: stored.agentId,
+          accountId: stored.accountId,
+          provider: stored.provider,
+          externalReference: stored.externalReference,
+          assetCode: stored.assetCode,
+          amountMinor: stored.amountMinor.toString(),
+        },
+      });
+    } catch (auditError) {
+      console.error(
+        JSON.stringify({
+          type: "economy-payment-audit-write-failed",
+          intentId: stored.intentId,
+          error: String(auditError),
+        }),
+      );
+    }
+  }
+
   return stored;
 }
 
