@@ -15,6 +15,7 @@ import {
   type VerifiedPaymentReceiptStore,
 } from "./execution";
 import type { PaymentAccountAdapter } from "./payment-adapter";
+import type { OwnerPayoutAccountingStore } from "./payout-store";
 
 export interface ManualOwnerPayoutResult {
   receipt: VerifiedPaymentReceipt;
@@ -45,6 +46,8 @@ export async function executeManualOwnerPayout(input: {
   ledgerEntries: readonly AgentLedgerEntry[];
   adapter: PaymentAccountAdapter;
   receiptStore: VerifiedPaymentReceiptStore;
+  payoutStore: OwnerPayoutAccountingStore;
+  requestedBy: string;
   audit: {
     store: AuditStore;
     actorUserId?: string;
@@ -102,20 +105,28 @@ export async function executeManualOwnerPayout(input: {
   });
 
   const occurredAt = input.occurredAt ?? receipt.verifiedAt;
-  const ledgerEntry: AgentLedgerEntry = {
-    id: `owner-payout:${receipt.externalReference}`,
+  const persisted = await input.payoutStore.persist({
+    intentId: input.intentId,
     agentId: input.agentId,
     accountId: input.accountId,
-    idempotencyKey: `ledger:${input.idempotencyKey}`,
-    type: "owner_payout",
-    direction: "debit",
-    status: "settled",
-    amountMinor: receipt.amountMinor,
+    payoutIdempotencyKey: input.idempotencyKey,
     assetCode: receipt.assetCode,
     assetClass: "STABLECOIN",
-    redeemable: true,
-    occurredAt,
-  };
+    amountMinor: receipt.amountMinor,
+    destination: receipt.destination,
+    distributableProfitBeforeMinor:
+      pnl.distributableProfitBeforePayoutMinor,
+    reserveBeforeMinor: pnl.reserveAllocationMinor,
+    policyVersion: input.authorization.policyVersion,
+    requestedBy: input.requestedBy,
+    approval: input.authorization.decision,
+    externalReference: receipt.externalReference,
+    paidAt: occurredAt,
+  });
 
-  return { receipt, pnlBeforePayout: pnl, ledgerEntry };
+  return {
+    receipt,
+    pnlBeforePayout: pnl,
+    ledgerEntry: persisted.ledgerEntry,
+  };
 }
