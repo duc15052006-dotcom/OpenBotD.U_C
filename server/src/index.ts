@@ -29,8 +29,13 @@ import {
 } from "./agents/runtime-model";
 import { createApp } from "./app";
 import { createOwnerPaymentApprovalStore } from "./economy/approval-store";
+import { createLiveOperatingPaymentExecutor } from "./economy/live-payment-executor";
+import { createPaymentAccountingStore } from "./economy/payment-accounting-store";
+import { createPaymentAdapterResolver } from "./economy/payment-adapter-resolver";
 import { createPaymentIntentCreator } from "./economy/payment-intent-creator";
+import { createPaymentIntentReader } from "./economy/payment-intent-store";
 import { createPaymentPolicySnapshotLoader } from "./economy/policy-snapshot-store";
+import { createVerifiedPaymentReceiptStore } from "./economy/receipt-store";
 import {
   type AuditInitiator,
   createAuditReader,
@@ -1496,6 +1501,27 @@ repeatAfterEach(async () => {
   }
 }, 10_000);
 
+const ownerPaymentApprovals = createOwnerPaymentApprovalStore(database);
+const paymentIntentReader = createPaymentIntentReader(database);
+const paymentPolicySnapshotLoader = createPaymentPolicySnapshotLoader(database);
+const paymentIntentCreator = createPaymentIntentCreator(
+  database,
+  paymentPolicySnapshotLoader,
+);
+const livePaymentExecutor = createLiveOperatingPaymentExecutor({
+  intentReader: paymentIntentReader,
+  adapterResolver: createPaymentAdapterResolver({
+    database,
+    encryptionKey: config.keyEncryptionKey,
+    credentialReader: credentialStore,
+  }),
+  receiptStore: createVerifiedPaymentReceiptStore(database),
+  accountingStore: createPaymentAccountingStore(database),
+  approvalStore: ownerPaymentApprovals,
+  loadPolicySnapshot: paymentPolicySnapshotLoader,
+  auditStore: bootAuditStore,
+});
+
 const app = createApp(
   config,
   auth,
@@ -1582,13 +1608,15 @@ const app = createApp(
   // Owner-scoped read/control surface for the durable workflow dashboard.
   workflowStore,
   // Canonical server-side persistence/read boundary for Owner-confirmed payment intents.
-  createOwnerPaymentApprovalStore(database),
+  ownerPaymentApprovals,
   // Owner-originated payment requests are persisted only after a DB-backed server-owned policy
   // snapshot decides them. Browser input never supplies decision, balance, spend or policy state.
-  createPaymentIntentCreator(
-    database,
-    createPaymentPolicySnapshotLoader(database),
-  ),
+  paymentIntentCreator,
+  // Live money movement is wired only through the durable intent/account/vault/accounting chain.
+  {
+    executor: livePaymentExecutor,
+    intentReader: paymentIntentReader,
+  },
 );
 
 /**
