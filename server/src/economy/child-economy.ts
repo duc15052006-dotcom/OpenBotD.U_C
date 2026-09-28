@@ -2,6 +2,7 @@ export interface ChildFundingRelationship {
   id: string;
   parentAgentId: string;
   childAgentId: string;
+  childAccountId: string | null;
   version: number;
   budgetMinor: bigint;
   assetCode: string;
@@ -114,6 +115,15 @@ export function evaluateChildFunding(input: {
       allowed: false,
       reason: "parent and child Agent must be different",
       remainingBudgetMinor: 0n,
+    };
+  }
+  if (!relationship.childAccountId?.trim()) {
+    return {
+      allowed: false,
+      reason: "child funding relationship has no bound child account",
+      remainingBudgetMinor: nonNegative(
+        relationship.budgetMinor - input.fundedToDateMinor,
+      ),
     };
   }
   if (!relationship.active) {
