@@ -136,17 +136,15 @@ function requireDurableIntentMatchesExecution(
     );
   }
 
+  if (durable.decision === "DENY") {
+    throw new PaymentExecutionRefusedError("durable payment intent was denied");
+  }
   if (
     durable.policyVersion !== authorization.policyVersion ||
     durable.decision !== authorization.decision
   ) {
     throw new PaymentExecutionRefusedError(
       "authorization does not match durable payment intent decision",
-    );
-  }
-  if (durable.decision === "DENY") {
-    throw new PaymentExecutionRefusedError(
-      "durable payment intent was denied",
     );
   }
 }
