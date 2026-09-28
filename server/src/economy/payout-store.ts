@@ -9,7 +9,9 @@ import type { AgentLedgerEntry, AssetClass } from "./model";
 
 export class OwnerPayoutAccountingConflictError extends Error {
   constructor(intentId: string) {
-    super(`Owner payout accounting for intent ${intentId} conflicts with durable history.`);
+    super(
+      `Owner payout accounting for intent ${intentId} conflicts with durable history.`,
+    );
     this.name = "OwnerPayoutAccountingConflictError";
   }
 }
@@ -252,7 +254,8 @@ export function createOwnerPayoutAccountingStore(
           storedPayout.destination !== input.destination ||
           BigInt(storedPayout.distributableProfitBeforeMinor) !==
             input.distributableProfitBeforeMinor ||
-          BigInt(storedPayout.reserveBeforeMinor) !== input.reserveBeforeMinor ||
+          BigInt(storedPayout.reserveBeforeMinor) !==
+            input.reserveBeforeMinor ||
           storedPayout.policyVersion !== input.policyVersion ||
           storedPayout.requestedBy !== input.requestedBy ||
           storedPayout.paidAt.getTime() !== input.paidAt.getTime() ||
