@@ -1,10 +1,8 @@
 import { and, eq, isNull } from "drizzle-orm";
 import type { Database } from "../db/client";
 import { agentFinancialAccounts, agentProfiles } from "../db/schema";
-import {
-  type PaymentCredentialSecretReader,
-  withPaymentCredentialAdapter,
-} from "./execution";
+import type { PaymentCredentialSecretReader } from "../credentials";
+import { withPaymentCredentialAdapter } from "./execution";
 import { createCircleDeveloperWalletAdapter } from "./circle-adapter";
 import type { PaymentAccountAdapter } from "./payment-adapter";
 
