@@ -56,9 +56,7 @@ function authorizationFor(
   approvalId?: string,
 ): PaymentAuthorization {
   if (intent.decision === "DENY") {
-    throw new PaymentExecutionRefusedError(
-      "durable payment intent was denied",
-    );
+    throw new PaymentExecutionRefusedError("durable payment intent was denied");
   }
   if (intent.decision === "ALLOW") {
     if (approvalId?.trim()) {
