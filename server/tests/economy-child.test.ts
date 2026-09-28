@@ -10,6 +10,7 @@ const relationship: ChildFundingRelationship = {
   id: "relationship-1",
   parentAgentId: "parent",
   childAgentId: "child",
+  childAccountId: "child-account",
   version: 1,
   budgetMinor: 100_000n,
   assetCode: "USDC",
@@ -70,6 +71,21 @@ describe("Agent Economy child funding", () => {
         operatingCostMinor: 0n,
       }),
     ).toThrow("belongs to another relationship");
+  });
+
+  test("fails closed when a legacy relationship has no bound child account", () => {
+    expect(
+      evaluateChildFunding({
+        relationship: { ...relationship, childAccountId: null },
+        amountMinor: 1_000n,
+        fundedToDateMinor: 0n,
+        maxChildFundingMinor: 10_000n,
+      }),
+    ).toEqual({
+      allowed: false,
+      reason: "child funding relationship has no bound child account",
+      remainingBudgetMinor: 100_000n,
+    });
   });
 
   test("freeze stops new funding without erasing prior funding", () => {
