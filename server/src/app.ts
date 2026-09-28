@@ -60,6 +60,8 @@ import type { Database } from "./db/client";
 import { withoutStatement } from "./db/query-failure";
 import { createOwnerPaymentApprovalRoutes } from "./economy/approval-routes";
 import type { OwnerPaymentApprovalStore } from "./economy/approval-store";
+import { createPaymentIntentRoutes } from "./economy/intent-routes";
+import type { PaymentIntentCreator } from "./economy/payment-intent-creator";
 import type { HostAccessBroker } from "./host-access/broker";
 import { createHostAccessRoutes } from "./host-access/routes";
 import { createIntelligenceClient } from "./intelligence-client";
@@ -340,6 +342,12 @@ export function createApp(
   workflowStore?: WorkflowStore,
   /** Immutable Owner approvals for financial intents that cross the confirmation threshold. */
   ownerPaymentApprovals?: OwnerPaymentApprovalStore,
+  /**
+   * Canonical server-authoritative creator for immutable payment intents.
+   *
+   * Appended last because this signature is positional.
+   */
+  paymentIntentCreator?: PaymentIntentCreator,
 ) {
   const app = new Hono<{ Variables: AppVariables }>();
 
@@ -1309,6 +1317,17 @@ export function createApp(
     app.route(
       "/api/workflows",
       createWorkflowRoutes(workflowStore, requireUser),
+    );
+  }
+
+  if (paymentIntentCreator && agentProfileStore) {
+    app.route(
+      "/api/economy/payment-intents",
+      createPaymentIntentRoutes(
+        paymentIntentCreator,
+        agentProfileStore,
+        requireUser,
+      ),
     );
   }
 
