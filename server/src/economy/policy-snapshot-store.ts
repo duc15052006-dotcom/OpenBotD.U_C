@@ -185,7 +185,10 @@ export function createPaymentPolicySnapshotLoader(
   database: Database,
   now: () => Date = () => new Date(),
 ): PaymentIntentCreationSnapshotLoader {
-  return async ({ agentId, accountId }): Promise<PaymentIntentCreationSnapshot> => {
+  return async ({
+    agentId,
+    accountId,
+  }): Promise<PaymentIntentCreationSnapshot> => {
     const normalizedAgentId = agentId.trim();
     const normalizedAccountId = accountId.trim();
     if (!normalizedAgentId || !normalizedAccountId) {
@@ -351,8 +354,7 @@ export function createPaymentPolicySnapshotLoader(
         frozen: policy.frozen,
       },
       settledBalanceMinor: settledBalanceFor(entries, account.id),
-      availableDistributableProfitMinor:
-        pnl.availableDistributableProfitMinor,
+      availableDistributableProfitMinor: pnl.availableDistributableProfitMinor,
       spend: {
         hourlyMinor: sumVerifiedReceipts(receiptRows, hourStart),
         dailyMinor: sumVerifiedReceipts(receiptRows, dayStart),
