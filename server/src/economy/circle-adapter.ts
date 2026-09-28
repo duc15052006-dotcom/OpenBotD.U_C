@@ -134,13 +134,19 @@ function requireMatchingCompleteTransaction(
   prepared: PreparedTransfer,
 ): void {
   if (transaction.walletId !== credential.walletId) {
-    throw new Error("Circle completed transaction wallet does not match configured account");
+    throw new Error(
+      "Circle completed transaction wallet does not match configured account",
+    );
   }
   if (transaction.tokenId !== credential.tokenId) {
-    throw new Error("Circle completed transaction token does not match configured asset");
+    throw new Error(
+      "Circle completed transaction token does not match configured asset",
+    );
   }
   if (transaction.destinationAddress !== prepared.request.destination) {
-    throw new Error("Circle completed transaction destination does not match prepared transfer");
+    throw new Error(
+      "Circle completed transaction destination does not match prepared transfer",
+    );
   }
   if (!transaction.amounts || transaction.amounts.length !== 1) {
     throw new Error("Circle completed transaction amount evidence is missing");
@@ -150,7 +156,9 @@ function requireMatchingCompleteTransaction(
     credential.tokenDecimals,
   );
   if (providerAmountMinor !== prepared.request.amount.amountMinor) {
-    throw new Error("Circle completed transaction amount does not match prepared transfer");
+    throw new Error(
+      "Circle completed transaction amount does not match prepared transfer",
+    );
   }
 }
 
@@ -376,7 +384,11 @@ export class CircleDeveloperWalletAdapter implements PaymentAccountAdapter {
         attempt === 0 ? created : await this.getTransaction(created.id);
 
       if (transaction.state === "COMPLETE") {
-        requireMatchingCompleteTransaction(transaction, this.credential, prepared);
+        requireMatchingCompleteTransaction(
+          transaction,
+          this.credential,
+          prepared,
+        );
         return {
           transferId: transaction.txHash || transaction.id,
           idempotencyKey: prepared.request.idempotencyKey,
