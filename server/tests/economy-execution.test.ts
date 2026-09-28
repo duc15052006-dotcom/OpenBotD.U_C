@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import type { AuditEventInput, AuditStore } from "../src/audit";
 import { encryptSecret } from "../src/credentials";
 import {
   executeAndPersistAuthorizedPayment,
@@ -88,16 +89,22 @@ class MemoryReceiptStore implements VerifiedPaymentReceiptStore {
     return this.stored?.intentId === intentId ? this.stored : null;
   }
 
-  async saveVerified(
-    receipt: VerifiedPaymentReceipt,
-  ): Promise<VerifiedPaymentReceipt> {
+  async saveVerified(receipt: VerifiedPaymentReceipt) {
     this.saveCalls += 1;
     if (this.stored && this.stored.intentId === receipt.intentId) {
-      return this.stored;
+      return { receipt: this.stored, created: false };
     }
     this.stored = receipt;
-    return receipt;
+    return { receipt, created: true };
   }
+}
+
+function memoryAuditStore(events: AuditEventInput[]): AuditStore {
+  return {
+    insert: async (event) => {
+      events.push(event);
+    },
+  };
 }
 
 class RecordingAdapter implements PaymentAccountAdapter {
@@ -146,6 +153,8 @@ describe("Agent Economy durable receipt boundary", () => {
   test("persists the first verified receipt and skips provider execution on retry", async () => {
     const adapter = new RecordingAdapter();
     const receiptStore = new MemoryReceiptStore();
+    const auditEvents: AuditEventInput[] = [];
+    const audit = { store: memoryAuditStore(auditEvents) };
     let policyReads = 0;
 
     const first = await executeAndPersistAuthorizedPayment({
@@ -154,6 +163,7 @@ describe("Agent Economy durable receipt boundary", () => {
       provider: "mock-provider",
       adapter,
       receiptStore,
+      audit,
       loadPolicySnapshot: async () => {
         policyReads += 1;
         return snapshot();
@@ -164,6 +174,20 @@ describe("Agent Economy durable receipt boundary", () => {
     expect(receiptStore.saveCalls).toBe(1);
     expect(adapter.executeCalls).toBe(1);
     expect(policyReads).toBe(2);
+    expect(auditEvents).toHaveLength(1);
+    expect(auditEvents[0]).toMatchObject({
+      eventType: "economy.payment_executed",
+      targetType: "payment_intent",
+      targetId: intent.id,
+      payload: {
+        agentId: intent.agentId,
+        accountId: intent.accountId,
+        provider: "mock-provider",
+        externalReference: "provider-transfer-1",
+        assetCode: intent.assetCode,
+        amountMinor: intent.amountMinor.toString(),
+      },
+    });
 
     const second = await executeAndPersistAuthorizedPayment({
       intent,
@@ -171,6 +195,7 @@ describe("Agent Economy durable receipt boundary", () => {
       provider: "mock-provider",
       adapter,
       receiptStore,
+      audit,
       loadPolicySnapshot: async () => {
         policyReads += 1;
         throw new Error("retry must not reload policy after durable receipt");
@@ -183,6 +208,32 @@ describe("Agent Economy durable receipt boundary", () => {
     expect(adapter.executeCalls).toBe(1);
     expect(adapter.prepareCalls).toBe(1);
     expect(policyReads).toBe(2);
+    expect(auditEvents).toHaveLength(1);
+  });
+
+  test("keeps a verified payment successful when the audit store is unavailable", async () => {
+    const adapter = new RecordingAdapter();
+    const receiptStore = new MemoryReceiptStore();
+
+    const result = await executeAndPersistAuthorizedPayment({
+      intent,
+      authorization: { decision: "ALLOW", policyVersion: 7 },
+      provider: "mock-provider",
+      adapter,
+      receiptStore,
+      audit: {
+        store: {
+          insert: async () => {
+            throw new Error("audit unavailable");
+          },
+        },
+      },
+      loadPolicySnapshot: async () => snapshot(),
+    });
+
+    expect(result.externalReference).toBe("provider-transfer-1");
+    expect(adapter.executeCalls).toBe(1);
+    expect(receiptStore.stored).toEqual(result);
   });
 
   test("refuses a conflicting durable receipt before touching the provider", async () => {
@@ -210,6 +261,7 @@ describe("Agent Economy durable receipt boundary", () => {
         provider: "mock-provider",
         adapter,
         receiptStore,
+        audit: { store: memoryAuditStore([]) },
         loadPolicySnapshot: async () => snapshot(),
       }),
     ).rejects.toThrow(
