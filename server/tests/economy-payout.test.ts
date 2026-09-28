@@ -85,7 +85,9 @@ const auditStore: AuditStore = {
 };
 
 function memoryPayoutStore(
-  onPersist?: (input: PersistOwnerPayoutAccountingInput) => void | Promise<void>,
+  onPersist?: (
+    input: PersistOwnerPayoutAccountingInput,
+  ) => void | Promise<void>,
 ): OwnerPayoutAccountingStore {
   let stored:
     | {
