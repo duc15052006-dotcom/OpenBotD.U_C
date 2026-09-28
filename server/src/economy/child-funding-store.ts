@@ -179,10 +179,7 @@ export function createChildFundingStore(database: Database): ChildFundingStore {
           .innerJoin(
             agentFinancialAccounts,
             and(
-              eq(
-                agentFinancialAccounts.agentId,
-                relationship.childAgentId,
-              ),
+              eq(agentFinancialAccounts.agentId, relationship.childAgentId),
               eq(
                 agentFinancialAccounts.assetCode,
                 agentPaymentReceipts.assetCode,
@@ -235,9 +232,7 @@ export function createChildFundingStore(database: Database): ChildFundingStore {
         const prior = await transaction
           .select({ amountMinor: agentChildFundingEvents.amountMinor })
           .from(agentChildFundingEvents)
-          .where(
-            eq(agentChildFundingEvents.relationshipId, relationship.id),
-          );
+          .where(eq(agentChildFundingEvents.relationshipId, relationship.id));
 
         let fundedMinor = 0n;
         for (const row of prior) {
