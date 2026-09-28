@@ -14,6 +14,10 @@ import { InMemoryPaymentAccountAdapter } from "../src/economy/payment-adapter";
 import type { AgentLedgerEntry } from "../src/economy/model";
 import type { EconomyExecutionPolicy } from "../src/economy/intents";
 import type {
+  DurablePaymentIntent,
+  PaymentIntentReader,
+} from "../src/economy/payment-intent-store";
+import type {
   OwnerPayoutAccountingStore,
   PersistOwnerPayoutAccountingInput,
 } from "../src/economy/payout-store";
@@ -83,6 +87,31 @@ function memoryReceiptStore(): VerifiedPaymentReceiptStore {
 const auditStore: AuditStore = {
   insert: async () => {},
 };
+
+function payoutIntentReader(
+  overrides: Partial<DurablePaymentIntent> = {},
+): PaymentIntentReader {
+  return {
+    load: async (intentId) =>
+      intentId === "intent-1"
+        ? {
+            id: "intent-1",
+            agentId: "agent-a",
+            accountId: "account-a",
+            idempotencyKey: "payout-1",
+            kind: "OWNER_PAYOUT",
+            amountMinor: 5_000n,
+            assetCode: "USDC",
+            provider: "mock",
+            destination: "owner-wallet",
+            category: "owner_payout",
+            decision: "ALLOW",
+            policyVersion: 1,
+            ...overrides,
+          }
+        : null,
+  };
+}
 
 function memoryPayoutStore(
   onPersist?: (
@@ -155,6 +184,7 @@ async function payout(
     ledgerEntries: ledger,
     adapter: new InMemoryPaymentAccountAdapter({ USDC: 50_000n }),
     receiptStore: memoryReceiptStore(),
+    intentReader: payoutIntentReader(),
     payoutStore: memoryPayoutStore(),
     requestedBy: "owner-a",
     audit: { store: auditStore },
@@ -237,6 +267,7 @@ describe("Agent Economy manual Owner payout", () => {
     await expect(
       payout({
         amountMinor: 15_000n,
+        intentReader: payoutIntentReader({ amountMinor: 15_000n }),
         loadPolicySnapshot: async () =>
           snapshot({ settledBalanceMinor: 20_000n }),
       }),
@@ -244,12 +275,21 @@ describe("Agent Economy manual Owner payout", () => {
   });
 
   test("large payout still requires explicit Owner confirmation", async () => {
-    await expect(payout({ amountMinor: 15_000n })).rejects.toThrow(
+    await expect(
+      payout({
+        amountMinor: 15_000n,
+        intentReader: payoutIntentReader({ amountMinor: 15_000n }),
+      }),
+    ).rejects.toThrow(
       "Owner confirmation is required before payment execution",
     );
 
     const confirmed = await payout({
       amountMinor: 15_000n,
+      intentReader: payoutIntentReader({
+        amountMinor: 15_000n,
+        decision: "OWNER_CONFIRMATION",
+      }),
       authorization: {
         decision: "OWNER_CONFIRMATION",
         policyVersion: 1,
