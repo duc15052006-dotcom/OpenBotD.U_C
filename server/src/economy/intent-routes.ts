@@ -65,7 +65,10 @@ export function createPaymentIntentRoutes(
     try {
       raw = await context.req.json();
     } catch {
-      return context.json({ error: "A JSON payment intent body is required." }, 400);
+      return context.json(
+        { error: "A JSON payment intent body is required." },
+        400,
+      );
     }
 
     const body = bodyObject(raw);
@@ -141,9 +144,7 @@ export function createPaymentIntentRoutes(
             provider: created.provider,
             destination: created.destination,
             category: created.category,
-            ...(created.x402Domain
-              ? { x402Domain: created.x402Domain }
-              : {}),
+            ...(created.x402Domain ? { x402Domain: created.x402Domain } : {}),
             decision: created.decision,
             decisionReason: created.decisionReason,
             policyVersion: created.policyVersion,
@@ -154,7 +155,10 @@ export function createPaymentIntentRoutes(
       );
     } catch (error) {
       if (error instanceof PaymentIntentCreationInvalidError) {
-        return context.json({ error: "Payment intent request is invalid." }, 400);
+        return context.json(
+          { error: "Payment intent request is invalid." },
+          400,
+        );
       }
       if (error instanceof PaymentIntentAccountForbiddenError) {
         // Keep another Agent's financial account existence private.
