@@ -38,6 +38,8 @@ export interface CreatePaymentIntentInput {
 
 export interface CreatedPaymentIntent extends DurablePaymentIntent {
   decisionReason: string;
+  initiatorKind: PaymentIntentInitiator["kind"];
+  initiatorId: string | null;
   requestedAt: Date;
 }
 
@@ -90,7 +92,9 @@ function sameCreatedIntent(
       (expected.x402Domain ?? undefined) &&
     existing.decision === expected.decision &&
     existing.policyVersion === expected.policyVersion &&
-    existing.decisionReason === expected.decisionReason
+    existing.decisionReason === expected.decisionReason &&
+    existing.initiatorKind === expected.initiatorKind &&
+    existing.initiatorId === expected.initiatorId
   );
 }
 
@@ -107,6 +111,8 @@ function parseRow(row: {
   decision: string;
   decisionReason: string;
   policyVersion: number;
+  initiatorKind: string;
+  initiatorId: string | null;
   requestedAt: Date;
   assetCode: string;
   provider: string;
@@ -123,6 +129,14 @@ function parseRow(row: {
     row.decision !== "ALLOW" &&
     row.decision !== "OWNER_CONFIRMATION" &&
     row.decision !== "DENY"
+  ) {
+    return null;
+  }
+  if (
+    row.initiatorKind !== "person" &&
+    row.initiatorKind !== "deployment" &&
+    row.initiatorKind !== "routine" &&
+    row.initiatorKind !== "handoff"
   ) {
     return null;
   }
@@ -163,6 +177,8 @@ function parseRow(row: {
     decision: row.decision,
     policyVersion: row.policyVersion,
     decisionReason: row.decisionReason,
+    initiatorKind: row.initiatorKind,
+    initiatorId: row.initiatorId,
     requestedAt: row.requestedAt,
   };
 }
@@ -191,6 +207,8 @@ export function createPaymentIntentCreator(
         decision: agentPaymentIntents.decision,
         decisionReason: agentPaymentIntents.decisionReason,
         policyVersion: agentPaymentIntents.policyVersion,
+        initiatorKind: agentPaymentIntents.initiatorKind,
+        initiatorId: agentPaymentIntents.initiatorId,
         requestedAt: agentPaymentIntents.requestedAt,
         assetCode: agentFinancialAccounts.assetCode,
         provider: agentFinancialAccounts.provider,
@@ -284,6 +302,8 @@ export function createPaymentIntentCreator(
         decision: decision.decision,
         policyVersion: input.snapshot.version,
         decisionReason: decision.reason,
+        initiatorKind: input.initiator.kind,
+        initiatorId: initiatorId(input.initiator),
       };
 
       await database
