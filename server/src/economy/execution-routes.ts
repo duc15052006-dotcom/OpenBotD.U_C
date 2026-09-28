@@ -8,6 +8,7 @@ import {
   LiveOperatingPaymentUnsupportedError,
   type LiveOperatingPaymentExecutor,
 } from "./live-payment-executor";
+import type { LiveOwnerPayoutExecutor } from "./live-owner-payout-executor";
 import { PaymentAdapterResolutionError } from "./payment-adapter-resolver";
 import type { PaymentIntentReader } from "./payment-intent-store";
 
@@ -20,6 +21,7 @@ function approvalIdFrom(value: unknown): string | undefined | null {
 
 export function createLivePaymentRoutes(input: {
   executor: LiveOperatingPaymentExecutor;
+  ownerPayoutExecutor?: LiveOwnerPayoutExecutor;
   intentReader: PaymentIntentReader;
   profiles: AgentProfileStore;
   requireUser: MiddlewareHandler<{ Variables: AppVariables }>;
@@ -66,7 +68,18 @@ export function createLivePaymentRoutes(input: {
     }
 
     try {
-      const result = await input.executor.execute({
+      const executor =
+        durable.kind === "OWNER_PAYOUT"
+          ? input.ownerPayoutExecutor
+          : input.executor;
+
+      if (!executor) {
+        throw new LiveOperatingPaymentUnsupportedError(
+          "this payment kind requires a specialized execution path",
+        );
+      }
+
+      const result = await executor.execute({
         intentId,
         actorUserId: actor.id,
         ...(approvalId ? { approvalId } : {}),
