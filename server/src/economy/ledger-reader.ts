@@ -35,7 +35,9 @@ function parseType(value: string): LedgerEntryType {
     case "adjustment":
       return value;
     default:
-      throw new LedgerReadIntegrityError("ledger contains an unknown entry type");
+      throw new LedgerReadIntegrityError(
+        "ledger contains an unknown entry type",
+      );
   }
 }
 
@@ -67,7 +69,9 @@ function parseAssetClass(value: string): AssetClass {
     case "PAYABLE":
       return value;
     default:
-      throw new LedgerReadIntegrityError("ledger contains an unknown asset class");
+      throw new LedgerReadIntegrityError(
+        "ledger contains an unknown asset class",
+      );
   }
 }
 
