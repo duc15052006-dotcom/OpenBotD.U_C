@@ -157,7 +157,7 @@ export function createVerifiedPaymentReceiptStore(
         throw new PaymentReceiptConflictError(receipt.intentId);
       }
 
-      await database
+      const inserted = await database
         .insert(agentPaymentReceipts)
         .values({
           intentId: receipt.intentId,
@@ -174,13 +174,14 @@ export function createVerifiedPaymentReceiptStore(
           verifiedAt: receipt.verifiedAt,
           metadata: {},
         })
-        .onConflictDoNothing({ target: agentPaymentReceipts.intentId });
+        .onConflictDoNothing({ target: agentPaymentReceipts.intentId })
+        .returning({ intentId: agentPaymentReceipts.intentId });
 
       const stored = await loadByIntent(receipt.intentId);
       if (!stored || !sameVerifiedPaymentTransfer(receipt, stored)) {
         throw new PaymentReceiptConflictError(receipt.intentId);
       }
-      return stored;
+      return { receipt: stored, created: inserted.length === 1 };
     },
   };
 }
