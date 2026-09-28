@@ -73,7 +73,10 @@ export function createPaymentIntentRoutes(
 
     const body = bodyObject(raw);
     if (!body) {
-      return context.json({ error: "A JSON payment intent body is required." }, 400);
+      return context.json(
+        { error: "A JSON payment intent body is required." },
+        400,
+      );
     }
 
     const agentId = requiredText(body, "agentId");
