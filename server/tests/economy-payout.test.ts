@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import type { AuditStore } from "../src/audit";
 import {
   executeManualOwnerPayout,
   type ManualOwnerPayoutResult,
@@ -66,12 +67,18 @@ function memoryReceiptStore(): VerifiedPaymentReceiptStore {
     loadByIntent: async (intentId) =>
       stored?.intentId === intentId ? stored : null,
     saveVerified: async (receipt) => {
-      if (stored && stored.intentId === receipt.intentId) return stored;
+      if (stored && stored.intentId === receipt.intentId) {
+        return { receipt: stored, created: false };
+      }
       stored = receipt;
-      return receipt;
+      return { receipt, created: true };
     },
   };
 }
+
+const auditStore: AuditStore = {
+  insert: async () => {},
+};
 
 function snapshot(
   overrides: Partial<PaymentPolicySnapshot> = {},
@@ -102,6 +109,7 @@ async function payout(
     ledgerEntries: ledger,
     adapter: new InMemoryPaymentAccountAdapter({ USDC: 50_000n }),
     receiptStore: memoryReceiptStore(),
+    audit: { store: auditStore },
     loadPolicySnapshot: async () => snapshot(),
     occurredAt: new Date("2026-09-27T01:00:00Z"),
     ...overrides,
