@@ -138,9 +138,8 @@ function input() {
 describe("Agent Economy payment intent creator", () => {
   test("derives and persists the server-side policy decision", async () => {
     const fake = fakeDatabase();
-    const creator = createPaymentIntentCreator(
-      fake.database,
-      async () => snapshot(),
+    const creator = createPaymentIntentCreator(fake.database, async () =>
+      snapshot(),
     );
 
     const created = await creator.create(input());
@@ -166,13 +165,11 @@ describe("Agent Economy payment intent creator", () => {
 
   test("derives DENY from the server-owned snapshot", async () => {
     const fake = fakeDatabase();
-    const creator = createPaymentIntentCreator(
-      fake.database,
-      async () =>
-        snapshot({
-          version: 9,
-          policy: { ...policy, frozen: true },
-        }),
+    const creator = createPaymentIntentCreator(fake.database, async () =>
+      snapshot({
+        version: 9,
+        policy: { ...policy, frozen: true },
+      }),
     );
 
     const created = await creator.create(input());
@@ -208,9 +205,8 @@ describe("Agent Economy payment intent creator", () => {
 
   test("rejects an idempotency key reused for another durable request", async () => {
     const fake = fakeDatabase();
-    const creator = createPaymentIntentCreator(
-      fake.database,
-      async () => snapshot(),
+    const creator = createPaymentIntentCreator(fake.database, async () =>
+      snapshot(),
     );
 
     await creator.create(input());
@@ -228,9 +224,8 @@ describe("Agent Economy payment intent creator", () => {
 
   test("rejects an idempotency key reused by another initiator", async () => {
     const fake = fakeDatabase();
-    const creator = createPaymentIntentCreator(
-      fake.database,
-      async () => snapshot(),
+    const creator = createPaymentIntentCreator(fake.database, async () =>
+      snapshot(),
     );
 
     await creator.create(input());
