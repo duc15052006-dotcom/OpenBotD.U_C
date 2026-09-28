@@ -161,9 +161,7 @@ function payoutStore(
 }
 
 function approvals(
-  approval = null as Awaited<
-    ReturnType<OwnerPaymentApprovalStore["load"]>
-  >,
+  approval = null as Awaited<ReturnType<OwnerPaymentApprovalStore["load"]>>,
 ): OwnerPaymentApprovalStore {
   return {
     approve: async () => {
