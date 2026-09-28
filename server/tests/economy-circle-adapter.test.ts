@@ -110,6 +110,11 @@ describe("Circle developer wallet payment adapter", () => {
                 id: "circle-transaction",
                 state: lookups === 1 ? "SENT" : "COMPLETE",
                 txHash: "0xabc",
+                walletId: "wallet-id",
+                tokenId: "usdc-token",
+                destinationAddress:
+                  "0x1111111111111111111111111111111111111111",
+                amounts: ["1.25"],
               },
             },
           });
@@ -146,6 +151,63 @@ describe("Circle developer wallet payment adapter", () => {
     );
     expect(body.entitySecretCiphertext).not.toContain(
       credential.entitySecretHex,
+    );
+  });
+
+  test("refuses COMPLETE when provider finality evidence does not match prepared terms", async () => {
+    const adapter = new CircleDeveloperWalletAdapter(credential, {
+      pollIntervalMs: 0,
+      sleep: async () => {},
+      fetch: (async (url) => {
+        const stringUrl = String(url);
+
+        if (stringUrl.endsWith("/config/entity/publicKey")) {
+          const { publicKey } = await crypto.subtle.generateKey(
+            {
+              name: "RSA-OAEP",
+              modulusLength: 2048,
+              publicExponent: new Uint8Array([1, 0, 1]),
+              hash: "SHA-256",
+            },
+            true,
+            ["encrypt", "decrypt"],
+          );
+          const spki = await crypto.subtle.exportKey("spki", publicKey);
+          const base64 = Buffer.from(spki).toString("base64");
+          const lines = base64.match(/.{1,64}/g)?.join("\n") ?? base64;
+          return response({
+            data: {
+              publicKey: `-----BEGIN PUBLIC KEY-----\n${lines}\n-----END PUBLIC KEY-----`,
+            },
+          });
+        }
+
+        if (stringUrl.endsWith("/developer/transactions/transfer")) {
+          return response({
+            data: {
+              id: "circle-transaction-mismatch",
+              state: "COMPLETE",
+              txHash: "0xdef",
+              walletId: "wallet-id",
+              tokenId: "usdc-token",
+              destinationAddress: "0x9999999999999999999999999999999999999999",
+              amounts: ["1.25"],
+            },
+          });
+        }
+
+        throw new Error(`unexpected Circle test URL: ${stringUrl}`);
+      }) as typeof fetch,
+    });
+
+    const prepared = await adapter.prepareTransfer({
+      idempotencyKey: "intent-mismatch",
+      amount: { assetCode: "USDC", amountMinor: 1_250_000n },
+      destination: "0x1111111111111111111111111111111111111111",
+    });
+
+    await expect(adapter.executeTransfer(prepared)).rejects.toThrow(
+      "Circle completed transaction destination does not match prepared transfer",
     );
   });
 
