@@ -2,7 +2,6 @@ import type { AuditStore } from "../audit";
 import {
   PaymentExecutionRefusedError,
   type PaymentAuthorization,
-  type VerifiedPaymentReceipt,
   type VerifiedPaymentReceiptStore,
 } from "./execution";
 import type { AgentLedgerReader } from "./ledger-reader";
