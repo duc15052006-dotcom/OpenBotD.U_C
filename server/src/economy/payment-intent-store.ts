@@ -37,14 +37,14 @@ function paymentKind(value: string): PaymentIntentKind | null {
 }
 
 function paymentDecision(value: string): PaymentDecision | null {
-  return value === "ALLOW" ||
-    value === "OWNER_CONFIRMATION" ||
-    value === "DENY"
+  return value === "ALLOW" || value === "OWNER_CONFIRMATION" || value === "DENY"
     ? value
     : null;
 }
 
-export function createPaymentIntentReader(database: Database): PaymentIntentReader {
+export function createPaymentIntentReader(
+  database: Database,
+): PaymentIntentReader {
   return {
     async load(intentId) {
       const normalized = intentId.trim();
