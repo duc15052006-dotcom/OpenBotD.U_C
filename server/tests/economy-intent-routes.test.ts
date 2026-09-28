@@ -112,9 +112,7 @@ function requestBody(overrides: Record<string, unknown> = {}) {
 
 describe("Agent Economy payment intent routes", () => {
   test("creates an Owner-originated intent without forwarding client policy fields", async () => {
-    let received:
-      | Parameters<PaymentIntentCreator["create"]>[0]
-      | undefined;
+    let received: Parameters<PaymentIntentCreator["create"]>[0] | undefined;
     const app = testApp(
       creator({
         create: async (input) => {
