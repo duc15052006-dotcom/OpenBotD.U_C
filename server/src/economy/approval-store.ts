@@ -210,7 +210,7 @@ export function createOwnerPaymentApprovalStore(
         )
         .where(eq(agentPaymentApprovals.id, normalized))
         .limit(1);
-      if (!row || !row.profileAgentId || row.agentDeletedAt) return null;
+      if (!row?.profileAgentId || row.agentDeletedAt) return null;
       return approvalFromRow(row);
     },
   };
