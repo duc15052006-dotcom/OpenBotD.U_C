@@ -60,8 +60,11 @@ import type { Database } from "./db/client";
 import { withoutStatement } from "./db/query-failure";
 import { createOwnerPaymentApprovalRoutes } from "./economy/approval-routes";
 import type { OwnerPaymentApprovalStore } from "./economy/approval-store";
+import { createLivePaymentRoutes } from "./economy/execution-routes";
 import { createPaymentIntentRoutes } from "./economy/intent-routes";
+import type { LiveOperatingPaymentExecutor } from "./economy/live-payment-executor";
 import type { PaymentIntentCreator } from "./economy/payment-intent-creator";
+import type { PaymentIntentReader } from "./economy/payment-intent-store";
 import type { HostAccessBroker } from "./host-access/broker";
 import { createHostAccessRoutes } from "./host-access/routes";
 import { createIntelligenceClient } from "./intelligence-client";
@@ -348,6 +351,15 @@ export function createApp(
    * Appended last because this signature is positional.
    */
   paymentIntentCreator?: PaymentIntentCreator,
+  /**
+   * Live operating-payment execution boundary.
+   *
+   * Appended last because this signature is positional.
+   */
+  livePayments?: {
+    executor: LiveOperatingPaymentExecutor;
+    intentReader: PaymentIntentReader;
+  },
 ) {
   const app = new Hono<{ Variables: AppVariables }>();
 
@@ -1339,6 +1351,18 @@ export function createApp(
         requireUser,
         auditStore,
       ),
+    );
+  }
+
+  if (livePayments && agentProfileStore) {
+    app.route(
+      "/api/economy/payment-intents",
+      createLivePaymentRoutes({
+        executor: livePayments.executor,
+        intentReader: livePayments.intentReader,
+        profiles: agentProfileStore,
+        requireUser,
+      }),
     );
   }
 
