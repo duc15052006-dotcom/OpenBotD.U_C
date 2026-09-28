@@ -200,6 +200,7 @@ export function createOwnerPaymentApprovalStore(
           approverKind: agentPaymentApprovals.approverKind,
           approverId: agentPaymentApprovals.approverId,
           approvedAt: agentPaymentApprovals.approvedAt,
+          profileAgentId: agentProfiles.agentId,
           agentDeletedAt: agentProfiles.deletedAt,
         })
         .from(agentPaymentApprovals)
@@ -209,7 +210,7 @@ export function createOwnerPaymentApprovalStore(
         )
         .where(eq(agentPaymentApprovals.id, normalized))
         .limit(1);
-      if (!row || row.agentDeletedAt) return null;
+      if (!row || !row.profileAgentId || row.agentDeletedAt) return null;
       return approvalFromRow(row);
     },
   };
