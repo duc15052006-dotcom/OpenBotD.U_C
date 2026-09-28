@@ -63,6 +63,7 @@ import type { OwnerPaymentApprovalStore } from "./economy/approval-store";
 import { createLivePaymentRoutes } from "./economy/execution-routes";
 import { createPaymentIntentRoutes } from "./economy/intent-routes";
 import type { LiveOperatingPaymentExecutor } from "./economy/live-payment-executor";
+import type { LiveOwnerPayoutExecutor } from "./economy/live-owner-payout-executor";
 import type { PaymentIntentCreator } from "./economy/payment-intent-creator";
 import type { PaymentIntentReader } from "./economy/payment-intent-store";
 import type { HostAccessBroker } from "./host-access/broker";
@@ -358,6 +359,7 @@ export function createApp(
    */
   livePayments?: {
     executor: LiveOperatingPaymentExecutor;
+    ownerPayoutExecutor?: LiveOwnerPayoutExecutor;
     intentReader: PaymentIntentReader;
   },
 ) {
@@ -1359,6 +1361,7 @@ export function createApp(
       "/api/economy/payment-intents",
       createLivePaymentRoutes({
         executor: livePayments.executor,
+        ownerPayoutExecutor: livePayments.ownerPayoutExecutor,
         intentReader: livePayments.intentReader,
         profiles: agentProfileStore,
         requireUser,

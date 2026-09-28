@@ -30,11 +30,14 @@ import {
 import { createApp } from "./app";
 import { createOwnerPaymentApprovalStore } from "./economy/approval-store";
 import { createLiveOperatingPaymentExecutor } from "./economy/live-payment-executor";
+import { createLiveOwnerPayoutExecutor } from "./economy/live-owner-payout-executor";
+import { createAgentLedgerReader } from "./economy/ledger-reader";
 import { createPaymentAccountingStore } from "./economy/payment-accounting-store";
 import { createPaymentAdapterResolver } from "./economy/payment-adapter-resolver";
 import { createPaymentIntentCreator } from "./economy/payment-intent-creator";
 import { createPaymentIntentReader } from "./economy/payment-intent-store";
 import { createPaymentPolicySnapshotLoader } from "./economy/policy-snapshot-store";
+import { createOwnerPayoutAccountingStore } from "./economy/payout-store";
 import { createVerifiedPaymentReceiptStore } from "./economy/receipt-store";
 import {
   type AuditInitiator,
@@ -1508,15 +1511,27 @@ const paymentIntentCreator = createPaymentIntentCreator(
   database,
   paymentPolicySnapshotLoader,
 );
+const paymentAdapterResolver = createPaymentAdapterResolver({
+  database,
+  encryptionKey: config.keyEncryptionKey,
+  credentialReader: credentialStore,
+});
+const verifiedPaymentReceiptStore = createVerifiedPaymentReceiptStore(database);
 const livePaymentExecutor = createLiveOperatingPaymentExecutor({
   intentReader: paymentIntentReader,
-  adapterResolver: createPaymentAdapterResolver({
-    database,
-    encryptionKey: config.keyEncryptionKey,
-    credentialReader: credentialStore,
-  }),
-  receiptStore: createVerifiedPaymentReceiptStore(database),
+  adapterResolver: paymentAdapterResolver,
+  receiptStore: verifiedPaymentReceiptStore,
   accountingStore: createPaymentAccountingStore(database),
+  approvalStore: ownerPaymentApprovals,
+  loadPolicySnapshot: paymentPolicySnapshotLoader,
+  auditStore: bootAuditStore,
+});
+const liveOwnerPayoutExecutor = createLiveOwnerPayoutExecutor({
+  intentReader: paymentIntentReader,
+  ledgerReader: createAgentLedgerReader(database),
+  adapterResolver: paymentAdapterResolver,
+  receiptStore: verifiedPaymentReceiptStore,
+  payoutStore: createOwnerPayoutAccountingStore(database),
   approvalStore: ownerPaymentApprovals,
   loadPolicySnapshot: paymentPolicySnapshotLoader,
   auditStore: bootAuditStore,
@@ -1615,6 +1630,7 @@ const app = createApp(
   // Live money movement is wired only through the durable intent/account/vault/accounting chain.
   {
     executor: livePaymentExecutor,
+    ownerPayoutExecutor: liveOwnerPayoutExecutor,
     intentReader: paymentIntentReader,
   },
 );
