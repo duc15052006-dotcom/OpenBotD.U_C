@@ -41,6 +41,7 @@ export interface OwnerApprovalTarget {
   policyVersion: number;
   decision: string;
   ownerUserId: string | null;
+  agentDeletedAt: Date | null;
 }
 
 export function requireOwnerApprovalTarget(
@@ -50,9 +51,13 @@ export function requireOwnerApprovalTarget(
   if (!target) {
     throw new PaymentIntentApprovalNotFoundError("unknown");
   }
-  // Ownership is checked before the intent's decision. Otherwise a signed-in stranger can probe
-  // an id and distinguish an existing ALLOW/DENY intent (409) from a missing/private one (404).
-  if (!target.ownerUserId || target.ownerUserId !== actorUserId) {
+  // Deleted Agents cannot receive new financial authority. Treat deletion like a private/forbidden
+  // target so callers cannot distinguish lifecycle state through this endpoint.
+  if (
+    target.agentDeletedAt ||
+    !target.ownerUserId ||
+    target.ownerUserId !== actorUserId
+  ) {
     throw new OwnerPaymentApprovalForbiddenError();
   }
   if (target.decision !== "OWNER_CONFIRMATION") {
@@ -125,6 +130,7 @@ export function createOwnerPaymentApprovalStore(
             policyVersion: agentPaymentIntents.policyVersion,
             decision: agentPaymentIntents.decision,
             ownerUserId: agentProfiles.ownerUserId,
+            agentDeletedAt: agentProfiles.deletedAt,
           })
           .from(agentPaymentIntents)
           .leftJoin(
@@ -194,11 +200,18 @@ export function createOwnerPaymentApprovalStore(
           approverKind: agentPaymentApprovals.approverKind,
           approverId: agentPaymentApprovals.approverId,
           approvedAt: agentPaymentApprovals.approvedAt,
+          profileAgentId: agentProfiles.agentId,
+          agentDeletedAt: agentProfiles.deletedAt,
         })
         .from(agentPaymentApprovals)
+        .leftJoin(
+          agentProfiles,
+          eq(agentProfiles.agentId, agentPaymentApprovals.agentId),
+        )
         .where(eq(agentPaymentApprovals.id, normalized))
         .limit(1);
-      return row ? approvalFromRow(row) : null;
+      if (!row?.profileAgentId || row.agentDeletedAt) return null;
+      return approvalFromRow(row);
     },
   };
 }

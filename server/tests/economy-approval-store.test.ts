@@ -13,6 +13,7 @@ const target: OwnerApprovalTarget = {
   policyVersion: 7,
   decision: "OWNER_CONFIRMATION",
   ownerUserId: "owner-a",
+  agentDeletedAt: null,
 };
 
 describe("Agent Economy Owner approval store policy", () => {
@@ -43,6 +44,15 @@ describe("Agent Economy Owner approval store policy", () => {
     expect(() =>
       requireOwnerApprovalTarget({ ...target, decision: "DENY" }, "owner-a"),
     ).toThrow(OwnerPaymentApprovalNotRequiredError);
+  });
+
+  test("refuses approval for a soft-deleted Agent", () => {
+    expect(() =>
+      requireOwnerApprovalTarget(
+        { ...target, agentDeletedAt: new Date("2026-09-28T00:00:00.000Z") },
+        "owner-a",
+      ),
+    ).toThrow(OwnerPaymentApprovalForbiddenError);
   });
 
   test("fails closed when an Agent has no human Owner", () => {
