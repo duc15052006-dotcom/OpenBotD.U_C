@@ -88,8 +88,7 @@ function sameCreatedIntent(
     existing.provider === expected.provider &&
     existing.destination === expected.destination &&
     existing.category === expected.category &&
-    (existing.x402Domain ?? undefined) ===
-      (expected.x402Domain ?? undefined) &&
+    (existing.x402Domain ?? undefined) === (expected.x402Domain ?? undefined) &&
     existing.decision === expected.decision &&
     existing.policyVersion === expected.policyVersion &&
     existing.decisionReason === expected.decisionReason &&
