@@ -19,6 +19,10 @@ import type {
   PreparedTransfer,
   TransferReceipt,
 } from "./payment-adapter";
+import type {
+  DurablePaymentIntent,
+  PaymentIntentReader,
+} from "./payment-intent-store";
 
 export interface ExecutablePaymentIntent extends PaymentIntent {
   id: string;
@@ -87,6 +91,61 @@ export class PaymentExecutionRefusedError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "PaymentExecutionRefusedError";
+  }
+}
+
+function requireDurableIntentMatchesExecution(
+  durable: DurablePaymentIntent | null,
+  intent: ExecutablePaymentIntent,
+  provider: string,
+  authorization: PaymentAuthorization,
+): void {
+  if (!durable) {
+    throw new PaymentExecutionRefusedError(
+      "durable payment intent was not found or Agent is inactive",
+    );
+  }
+
+  if (
+    durable.id !== intent.id ||
+    durable.agentId !== intent.agentId ||
+    durable.accountId !== intent.accountId ||
+    durable.idempotencyKey !== intent.idempotencyKey ||
+    durable.kind !== intent.kind
+  ) {
+    throw new PaymentExecutionRefusedError(
+      "execution does not match durable payment intent identity",
+    );
+  }
+
+  if (
+    durable.amountMinor !== intent.amountMinor ||
+    durable.assetCode !== intent.assetCode ||
+    durable.destination !== intent.destination ||
+    durable.category !== intent.category ||
+    (durable.x402Domain ?? undefined) !== (intent.x402Domain ?? undefined)
+  ) {
+    throw new PaymentExecutionRefusedError(
+      "execution does not match durable payment intent terms",
+    );
+  }
+
+  if (durable.provider !== provider) {
+    throw new PaymentExecutionRefusedError(
+      "payment provider does not match durable financial account",
+    );
+  }
+
+  if (durable.decision === "DENY") {
+    throw new PaymentExecutionRefusedError("durable payment intent was denied");
+  }
+  if (
+    durable.policyVersion !== authorization.policyVersion ||
+    durable.decision !== authorization.decision
+  ) {
+    throw new PaymentExecutionRefusedError(
+      "authorization does not match durable payment intent decision",
+    );
   }
 }
 
@@ -336,6 +395,7 @@ export async function executeAndPersistAuthorizedPayment(input: {
   provider: string;
   adapter: PaymentAccountAdapter;
   receiptStore: VerifiedPaymentReceiptStore;
+  intentReader: PaymentIntentReader;
   audit: {
     store: AuditStore;
     actorUserId?: string;
@@ -346,6 +406,14 @@ export async function executeAndPersistAuthorizedPayment(input: {
     approvalId: string,
   ) => Promise<OwnerPaymentApproval | null>;
 }): Promise<VerifiedPaymentReceipt> {
+  const durableIntent = await input.intentReader.load(input.intent.id);
+  requireDurableIntentMatchesExecution(
+    durableIntent,
+    input.intent,
+    input.provider,
+    input.authorization,
+  );
+
   const existing = await input.receiptStore.loadByIntent(input.intent.id);
   if (existing) {
     requireStoredReceiptMatchesIntent(input.intent, input.provider, existing);

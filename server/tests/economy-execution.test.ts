@@ -20,6 +20,10 @@ import type {
   TransferRequest,
 } from "../src/economy/payment-adapter";
 import type { EconomyExecutionPolicy } from "../src/economy/intents";
+import type {
+  DurablePaymentIntent,
+  PaymentIntentReader,
+} from "../src/economy/payment-intent-store";
 
 const policy: EconomyExecutionPolicy = {
   ownerShareBps: 5000n,
@@ -99,6 +103,31 @@ class MemoryReceiptStore implements VerifiedPaymentReceiptStore {
   }
 }
 
+function memoryIntentReader(
+  overrides: Partial<DurablePaymentIntent> = {},
+): PaymentIntentReader {
+  return {
+    load: async (intentId) =>
+      intentId === intent.id
+        ? {
+            id: intent.id,
+            agentId: intent.agentId,
+            accountId: intent.accountId,
+            idempotencyKey: intent.idempotencyKey,
+            kind: intent.kind,
+            amountMinor: intent.amountMinor,
+            assetCode: intent.assetCode,
+            provider: "mock-provider",
+            destination: intent.destination,
+            category: intent.category,
+            decision: "ALLOW",
+            policyVersion: 7,
+            ...overrides,
+          }
+        : null,
+  };
+}
+
 function memoryAuditStore(events: AuditEventInput[]): AuditStore {
   return {
     insert: async (event) => {
@@ -163,6 +192,7 @@ describe("Agent Economy durable receipt boundary", () => {
       provider: "mock-provider",
       adapter,
       receiptStore,
+      intentReader: memoryIntentReader(),
       audit,
       loadPolicySnapshot: async () => {
         policyReads += 1;
@@ -195,6 +225,7 @@ describe("Agent Economy durable receipt boundary", () => {
       provider: "mock-provider",
       adapter,
       receiptStore,
+      intentReader: memoryIntentReader(),
       audit,
       loadPolicySnapshot: async () => {
         policyReads += 1;
@@ -221,6 +252,7 @@ describe("Agent Economy durable receipt boundary", () => {
       provider: "mock-provider",
       adapter,
       receiptStore,
+      intentReader: memoryIntentReader(),
       audit: {
         store: {
           insert: async () => {
@@ -234,6 +266,54 @@ describe("Agent Economy durable receipt boundary", () => {
     expect(result.externalReference).toBe("provider-transfer-1");
     expect(adapter.executeCalls).toBe(1);
     expect(receiptStore.stored).toEqual(result);
+  });
+
+  test("refuses execution when caller terms differ from the immutable durable intent", async () => {
+    const adapter = new RecordingAdapter();
+    const receiptStore = new MemoryReceiptStore();
+
+    await expect(
+      executeAndPersistAuthorizedPayment({
+        intent: { ...intent, destination: "attacker-wallet" },
+        authorization: { decision: "ALLOW", policyVersion: 7 },
+        provider: "mock-provider",
+        adapter,
+        receiptStore,
+        intentReader: memoryIntentReader(),
+        audit: { store: memoryAuditStore([]) },
+        loadPolicySnapshot: async () => snapshot(),
+      }),
+    ).rejects.toThrow("execution does not match durable payment intent terms");
+
+    expect(adapter.balanceCalls).toBe(0);
+    expect(adapter.prepareCalls).toBe(0);
+    expect(adapter.executeCalls).toBe(0);
+    expect(receiptStore.loadCalls).toBe(0);
+  });
+
+  test("refuses execution when provider differs from the durable financial account", async () => {
+    const adapter = new RecordingAdapter();
+    const receiptStore = new MemoryReceiptStore();
+
+    await expect(
+      executeAndPersistAuthorizedPayment({
+        intent,
+        authorization: { decision: "ALLOW", policyVersion: 7 },
+        provider: "another-provider",
+        adapter,
+        receiptStore,
+        intentReader: memoryIntentReader(),
+        audit: { store: memoryAuditStore([]) },
+        loadPolicySnapshot: async () => snapshot(),
+      }),
+    ).rejects.toThrow(
+      "payment provider does not match durable financial account",
+    );
+
+    expect(adapter.balanceCalls).toBe(0);
+    expect(adapter.prepareCalls).toBe(0);
+    expect(adapter.executeCalls).toBe(0);
+    expect(receiptStore.loadCalls).toBe(0);
   });
 
   test("refuses a conflicting durable receipt before touching the provider", async () => {
@@ -261,6 +341,7 @@ describe("Agent Economy durable receipt boundary", () => {
         provider: "mock-provider",
         adapter,
         receiptStore,
+        intentReader: memoryIntentReader(),
         audit: { store: memoryAuditStore([]) },
         loadPolicySnapshot: async () => snapshot(),
       }),

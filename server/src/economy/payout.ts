@@ -15,6 +15,7 @@ import {
   type VerifiedPaymentReceiptStore,
 } from "./execution";
 import type { PaymentAccountAdapter } from "./payment-adapter";
+import type { PaymentIntentReader } from "./payment-intent-store";
 import type { OwnerPayoutAccountingStore } from "./payout-store";
 
 export interface ManualOwnerPayoutResult {
@@ -46,6 +47,7 @@ export async function executeManualOwnerPayout(input: {
   ledgerEntries: readonly AgentLedgerEntry[];
   adapter: PaymentAccountAdapter;
   receiptStore: VerifiedPaymentReceiptStore;
+  intentReader: PaymentIntentReader;
   payoutStore: OwnerPayoutAccountingStore;
   requestedBy: string;
   audit: {
@@ -90,6 +92,7 @@ export async function executeManualOwnerPayout(input: {
     provider: input.provider,
     adapter: input.adapter,
     receiptStore: input.receiptStore,
+    intentReader: input.intentReader,
     audit: input.audit,
     loadOwnerApproval: input.loadOwnerApproval,
     loadPolicySnapshot: async () => {
