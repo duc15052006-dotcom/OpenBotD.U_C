@@ -15,7 +15,16 @@ export class PaymentReceiptConflictError extends Error {
   }
 }
 
-function fromRow(row: {
+export class PaymentReceiptIntegrityError extends Error {
+  constructor(intentId: string) {
+    super(
+      `Stored receipt for payment intent ${intentId} failed integrity checks.`,
+    );
+    this.name = "PaymentReceiptIntegrityError";
+  }
+}
+
+export function verifiedPaymentReceiptFromRow(row: {
   intentId: string;
   agentId: string;
   accountId: string;
@@ -28,14 +37,39 @@ function fromRow(row: {
   balanceBeforeMinor: string | null;
   balanceAfterMinor: string | null;
   verifiedAt: Date;
-}): VerifiedPaymentReceipt | null {
+}): VerifiedPaymentReceipt {
   if (
+    !row.intentId.trim() ||
+    !row.agentId.trim() ||
+    !row.accountId.trim() ||
+    !row.provider.trim() ||
     row.providerStatus !== "verified" ||
+    !row.assetCode.trim() ||
+    !row.destination.trim() ||
     row.balanceBeforeMinor === null ||
     !row.externalReference.trim() ||
     Number.isNaN(row.verifiedAt.getTime())
   ) {
-    return null;
+    throw new PaymentReceiptIntegrityError(row.intentId);
+  }
+
+  let amountMinor: bigint;
+  let balanceBeforeMinor: bigint;
+  let balanceAfterMinor: bigint | null;
+  try {
+    amountMinor = BigInt(row.amountMinor);
+    balanceBeforeMinor = BigInt(row.balanceBeforeMinor);
+    balanceAfterMinor =
+      row.balanceAfterMinor === null ? null : BigInt(row.balanceAfterMinor);
+  } catch {
+    throw new PaymentReceiptIntegrityError(row.intentId);
+  }
+  if (
+    amountMinor <= 0n ||
+    balanceBeforeMinor < 0n ||
+    (balanceAfterMinor !== null && balanceAfterMinor < 0n)
+  ) {
+    throw new PaymentReceiptIntegrityError(row.intentId);
   }
 
   return {
@@ -46,16 +80,15 @@ function fromRow(row: {
     externalReference: row.externalReference,
     providerStatus: "verified",
     assetCode: row.assetCode,
-    amountMinor: BigInt(row.amountMinor),
+    amountMinor,
     destination: row.destination,
-    balanceBeforeMinor: BigInt(row.balanceBeforeMinor),
-    balanceAfterMinor:
-      row.balanceAfterMinor === null ? null : BigInt(row.balanceAfterMinor),
+    balanceBeforeMinor,
+    balanceAfterMinor,
     verifiedAt: row.verifiedAt,
   };
 }
 
-function sameReceipt(
+export function sameVerifiedPaymentTransfer(
   expected: VerifiedPaymentReceipt,
   actual: VerifiedPaymentReceipt,
 ): boolean {
@@ -68,10 +101,7 @@ function sameReceipt(
     expected.providerStatus === actual.providerStatus &&
     expected.assetCode === actual.assetCode &&
     expected.amountMinor === actual.amountMinor &&
-    expected.destination === actual.destination &&
-    expected.balanceBeforeMinor === actual.balanceBeforeMinor &&
-    expected.balanceAfterMinor === actual.balanceAfterMinor &&
-    expected.verifiedAt.getTime() === actual.verifiedAt.getTime()
+    expected.destination === actual.destination
   );
 }
 
@@ -103,7 +133,7 @@ export function createVerifiedPaymentReceiptStore(
       .where(eq(agentPaymentReceipts.intentId, normalized))
       .limit(1);
 
-    return row ? fromRow(row) : null;
+    return row ? verifiedPaymentReceiptFromRow(row) : null;
   };
 
   return {
@@ -147,7 +177,7 @@ export function createVerifiedPaymentReceiptStore(
         .onConflictDoNothing({ target: agentPaymentReceipts.intentId });
 
       const stored = await loadByIntent(receipt.intentId);
-      if (!stored || !sameReceipt(receipt, stored)) {
+      if (!stored || !sameVerifiedPaymentTransfer(receipt, stored)) {
         throw new PaymentReceiptConflictError(receipt.intentId);
       }
       return stored;
