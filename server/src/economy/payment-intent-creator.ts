@@ -33,8 +33,12 @@ export interface CreatePaymentIntentInput {
   intent: PaymentIntent;
   initiator: PaymentIntentInitiator;
   metadata?: Record<string, unknown>;
-  snapshot: PaymentIntentCreationSnapshot;
 }
+
+export type PaymentIntentCreationSnapshotLoader = (input: {
+  agentId: string;
+  accountId: string;
+}) => Promise<PaymentIntentCreationSnapshot>;
 
 export interface CreatedPaymentIntent extends DurablePaymentIntent {
   decisionReason: string;
@@ -74,26 +78,31 @@ function validInitiator(initiator: PaymentIntentInitiator): boolean {
   return initiator.kind === "deployment" || Boolean(initiator.id.trim());
 }
 
-function sameCreatedIntent(
+function sameImmutableRequest(
   existing: CreatedPaymentIntent,
-  expected: Omit<CreatedPaymentIntent, "id" | "requestedAt">,
+  input: {
+    accountId: string;
+    idempotencyKey: string;
+    intent: PaymentIntent;
+    initiator: PaymentIntentInitiator;
+    assetCode: string;
+    provider: string;
+  },
 ): boolean {
   return (
-    existing.agentId === expected.agentId &&
-    existing.accountId === expected.accountId &&
-    existing.idempotencyKey === expected.idempotencyKey &&
-    existing.kind === expected.kind &&
-    existing.amountMinor === expected.amountMinor &&
-    existing.assetCode === expected.assetCode &&
-    existing.provider === expected.provider &&
-    existing.destination === expected.destination &&
-    existing.category === expected.category &&
-    (existing.x402Domain ?? undefined) === (expected.x402Domain ?? undefined) &&
-    existing.decision === expected.decision &&
-    existing.policyVersion === expected.policyVersion &&
-    existing.decisionReason === expected.decisionReason &&
-    existing.initiatorKind === expected.initiatorKind &&
-    existing.initiatorId === expected.initiatorId
+    existing.agentId === input.intent.agentId &&
+    existing.accountId === input.accountId &&
+    existing.idempotencyKey === input.idempotencyKey &&
+    existing.kind === input.intent.kind &&
+    existing.amountMinor === input.intent.amountMinor &&
+    existing.assetCode === input.assetCode &&
+    existing.provider === input.provider &&
+    existing.destination === input.intent.destination &&
+    existing.category === input.intent.category &&
+    (existing.x402Domain ?? undefined) ===
+      (input.intent.x402Domain ?? undefined) &&
+    existing.initiatorKind === input.initiator.kind &&
+    existing.initiatorId === initiatorId(input.initiator)
   );
 }
 
@@ -188,6 +197,7 @@ export interface PaymentIntentCreator {
 
 export function createPaymentIntentCreator(
   database: Database,
+  loadSnapshot: PaymentIntentCreationSnapshotLoader,
 ): PaymentIntentCreator {
   const loadByIdempotency = async (
     idempotencyKey: string,
@@ -236,7 +246,6 @@ export function createPaymentIntentCreator(
         input.intent.amountMinor <= 0n ||
         !input.intent.destination.trim() ||
         !input.intent.category.trim() ||
-        input.snapshot.version <= 0 ||
         !validInitiator(input.initiator)
       ) {
         throw new PaymentIntentCreationInvalidError(
@@ -276,13 +285,40 @@ export function createPaymentIntentCreator(
         throw new PaymentIntentAccountForbiddenError();
       }
 
+      const existing = await loadByIdempotency(idempotencyKey);
+      if (existing) {
+        if (
+          !sameImmutableRequest(existing, {
+            accountId: account.id,
+            idempotencyKey,
+            intent: input.intent,
+            initiator: input.initiator,
+            assetCode: account.assetCode,
+            provider: account.provider,
+          })
+        ) {
+          throw new PaymentIntentCreationConflictError(idempotencyKey);
+        }
+        return existing;
+      }
+
+      const snapshot = await loadSnapshot({
+        agentId: input.intent.agentId,
+        accountId: account.id,
+      });
+      if (snapshot.version <= 0) {
+        throw new PaymentIntentCreationInvalidError(
+          "Payment intent policy snapshot is invalid.",
+        );
+      }
+
       const decision = decidePaymentIntent({
         intent: input.intent,
-        policy: input.snapshot.policy,
-        settledBalanceMinor: input.snapshot.settledBalanceMinor,
+        policy: snapshot.policy,
+        settledBalanceMinor: snapshot.settledBalanceMinor,
         availableDistributableProfitMinor:
-          input.snapshot.availableDistributableProfitMinor,
-        spend: input.snapshot.spend,
+          snapshot.availableDistributableProfitMinor,
+        spend: snapshot.spend,
       });
 
       const expected: Omit<CreatedPaymentIntent, "id" | "requestedAt"> = {
@@ -299,7 +335,7 @@ export function createPaymentIntentCreator(
           ? { x402Domain: input.intent.x402Domain }
           : {}),
         decision: decision.decision,
-        policyVersion: input.snapshot.version,
+        policyVersion: snapshot.version,
         decisionReason: decision.reason,
         initiatorKind: input.initiator.kind,
         initiatorId: initiatorId(input.initiator),
@@ -326,7 +362,17 @@ export function createPaymentIntentCreator(
         .onConflictDoNothing({ target: agentPaymentIntents.idempotencyKey });
 
       const stored = await loadByIdempotency(idempotencyKey);
-      if (!stored || !sameCreatedIntent(stored, expected)) {
+      if (
+        !stored ||
+        !sameImmutableRequest(stored, {
+          accountId: account.id,
+          idempotencyKey,
+          intent: input.intent,
+          initiator: input.initiator,
+          assetCode: account.assetCode,
+          provider: account.provider,
+        })
+      ) {
         throw new PaymentIntentCreationConflictError(idempotencyKey);
       }
 

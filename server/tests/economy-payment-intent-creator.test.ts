@@ -4,6 +4,7 @@ import {
   createPaymentIntentCreator,
   PaymentIntentCreationConflictError,
   type CreatedPaymentIntent,
+  type PaymentIntentCreationSnapshot,
 } from "../src/economy/payment-intent-creator";
 import type { EconomyExecutionPolicy } from "../src/economy/intents";
 
@@ -106,6 +107,19 @@ function fakeDatabase() {
   };
 }
 
+function snapshot(
+  overrides: Partial<PaymentIntentCreationSnapshot> = {},
+): PaymentIntentCreationSnapshot {
+  return {
+    version: 7,
+    policy,
+    settledBalanceMinor: 100_000n,
+    availableDistributableProfitMinor: 20_000n,
+    spend: { hourlyMinor: 0n, dailyMinor: 0n, monthlyMinor: 0n },
+    ...overrides,
+  };
+}
+
 function input() {
   return {
     accountId: "account-a",
@@ -118,20 +132,15 @@ function input() {
       category: "api",
     },
     initiator: { kind: "person" as const, id: "owner-a" },
-    snapshot: {
-      version: 7,
-      policy,
-      settledBalanceMinor: 100_000n,
-      availableDistributableProfitMinor: 20_000n,
-      spend: { hourlyMinor: 0n, dailyMinor: 0n, monthlyMinor: 0n },
-    },
   };
 }
 
 describe("Agent Economy payment intent creator", () => {
   test("derives and persists the server-side policy decision", async () => {
     const fake = fakeDatabase();
-    const creator = createPaymentIntentCreator(fake.database);
+    const creator = createPaymentIntentCreator(fake.database, async () =>
+      snapshot(),
+    );
 
     const created = await creator.create(input());
 
@@ -154,19 +163,51 @@ describe("Agent Economy payment intent creator", () => {
     });
   });
 
-  test("replays the same request idempotently", async () => {
+  test("derives DENY from the server-owned snapshot", async () => {
     const fake = fakeDatabase();
-    const creator = createPaymentIntentCreator(fake.database);
+    const creator = createPaymentIntentCreator(fake.database, async () =>
+      snapshot({
+        version: 9,
+        policy: { ...policy, frozen: true },
+      }),
+    );
+
+    const created = await creator.create(input());
+
+    expect(created).toMatchObject({
+      decision: "DENY",
+      decisionReason: "financial activity is frozen",
+      policyVersion: 9,
+    });
+  });
+
+  test("replays the same request without re-evaluating a changed policy", async () => {
+    const fake = fakeDatabase();
+    let snapshotLoads = 0;
+    const creator = createPaymentIntentCreator(fake.database, async () => {
+      snapshotLoads += 1;
+      return snapshotLoads === 1
+        ? snapshot()
+        : snapshot({
+            version: 8,
+            policy: { ...policy, frozen: true },
+          });
+    });
 
     const first = await creator.create(input());
     const second = await creator.create(input());
 
     expect(second).toEqual(first);
+    expect(first.decision).toBe("ALLOW");
+    expect(first.policyVersion).toBe(7);
+    expect(snapshotLoads).toBe(1);
   });
 
   test("rejects an idempotency key reused for another durable request", async () => {
     const fake = fakeDatabase();
-    const creator = createPaymentIntentCreator(fake.database);
+    const creator = createPaymentIntentCreator(fake.database, async () =>
+      snapshot(),
+    );
 
     await creator.create(input());
 
@@ -183,7 +224,9 @@ describe("Agent Economy payment intent creator", () => {
 
   test("rejects an idempotency key reused by another initiator", async () => {
     const fake = fakeDatabase();
-    const creator = createPaymentIntentCreator(fake.database);
+    const creator = createPaymentIntentCreator(fake.database, async () =>
+      snapshot(),
+    );
 
     await creator.create(input());
 
