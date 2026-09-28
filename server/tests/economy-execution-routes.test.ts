@@ -8,6 +8,7 @@ import type {
   LiveOperatingPaymentResult,
 } from "../src/economy/live-payment-executor";
 import { LiveOperatingPaymentUnsupportedError } from "../src/economy/live-payment-executor";
+import type { LiveOwnerPayoutExecutor } from "../src/economy/live-owner-payout-executor";
 import type {
   DurablePaymentIntent,
   PaymentIntentReader,
@@ -69,9 +70,11 @@ const durableIntent: DurablePaymentIntent = {
   policyVersion: 7,
 };
 
-function reader(): PaymentIntentReader {
+function reader(
+  value: DurablePaymentIntent = durableIntent,
+): PaymentIntentReader {
   return {
-    load: async (id) => (id === durableIntent.id ? durableIntent : null),
+    load: async (id) => (id === value.id ? value : null),
   };
 }
 
@@ -112,13 +115,20 @@ function testApp(
   executor: LiveOperatingPaymentExecutor,
   profileStore: AgentProfileStore = profiles(),
   actor: Actor = OWNER,
+  options: {
+    intent?: DurablePaymentIntent;
+    ownerPayoutExecutor?: LiveOwnerPayoutExecutor;
+  } = {},
 ) {
   const app = new Hono<{ Variables: AppVariables }>();
   app.route(
     "/api/economy/payment-intents",
     createLivePaymentRoutes({
       executor,
-      intentReader: reader(),
+      ...(options.ownerPayoutExecutor
+        ? { ownerPayoutExecutor: options.ownerPayoutExecutor }
+        : {}),
+      intentReader: reader(options.intent),
       profiles: profileStore,
       requireUser: authenticatedAs(actor),
     }),
@@ -224,6 +234,74 @@ describe("Agent Economy live payment routes", () => {
       },
     );
     expect(invalid.status).toBe(400);
+  });
+
+  test("dispatches Owner payouts only to the specialized payout executor", async () => {
+    let operatingCalls = 0;
+    let payoutInput:
+      | Parameters<LiveOwnerPayoutExecutor["execute"]>[0]
+      | undefined;
+
+    const ownerIntent: DurablePaymentIntent = {
+      ...durableIntent,
+      kind: "OWNER_PAYOUT",
+      category: "owner_payout",
+      destination: "owner-wallet",
+    };
+
+    const app = testApp(
+      {
+        execute: async () => {
+          operatingCalls += 1;
+          return result();
+        },
+      },
+      profiles(),
+      OWNER,
+      {
+        intent: ownerIntent,
+        ownerPayoutExecutor: {
+          execute: async (input) => {
+            payoutInput = input;
+            return {
+              ...result(),
+              pnlBeforePayout: {
+                grossRevenueMinor: 50_000n,
+                operatingCostMinor: 10_000n,
+                operatingProfitMinor: 40_000n,
+                reserveAllocationMinor: 8_000n,
+                reinvestmentMinor: 12_000n,
+                distributableProfitBeforePayoutMinor: 20_000n,
+                ownerPayoutMinor: 0n,
+                availableDistributableProfitMinor: 20_000n,
+                totalInvestmentMinor: 0n,
+                roiBasisPoints: null,
+              },
+            };
+          },
+        },
+      },
+    );
+
+    const response = await app.request(
+      "/api/economy/payment-intents/intent-1/execute",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          amountMinor: "999999",
+          destination: "attacker-wallet",
+          provider: "attacker-provider",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(operatingCalls).toBe(0);
+    expect(payoutInput).toEqual({
+      intentId: "intent-1",
+      actorUserId: "owner-a",
+    });
   });
 
   test("returns conflict for payment kinds that require specialized execution", async () => {
