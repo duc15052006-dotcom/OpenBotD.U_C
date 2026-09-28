@@ -13,6 +13,10 @@ import {
 import { InMemoryPaymentAccountAdapter } from "../src/economy/payment-adapter";
 import type { AgentLedgerEntry } from "../src/economy/model";
 import type { EconomyExecutionPolicy } from "../src/economy/intents";
+import type {
+  OwnerPayoutAccountingStore,
+  PersistOwnerPayoutAccountingInput,
+} from "../src/economy/payout-store";
 
 const policy: EconomyExecutionPolicy = {
   ownerShareBps: 5000n,
@@ -80,6 +84,46 @@ const auditStore: AuditStore = {
   insert: async () => {},
 };
 
+function memoryPayoutStore(
+  onPersist?: (input: PersistOwnerPayoutAccountingInput) => void | Promise<void>,
+): OwnerPayoutAccountingStore {
+  let stored:
+    | {
+        input: PersistOwnerPayoutAccountingInput;
+        payoutId: string;
+        ledgerEntry: AgentLedgerEntry;
+      }
+    | undefined;
+
+  return {
+    persist: async (input) => {
+      await onPersist?.(input);
+      if (stored) {
+        return {
+          payoutId: stored.payoutId,
+          ledgerEntry: stored.ledgerEntry,
+        };
+      }
+      const ledgerEntry: AgentLedgerEntry = {
+        id: `owner-payout:${input.externalReference}`,
+        agentId: input.agentId,
+        accountId: input.accountId,
+        idempotencyKey: `ledger:${input.payoutIdempotencyKey}`,
+        type: "owner_payout",
+        direction: "debit",
+        status: "settled",
+        amountMinor: input.amountMinor,
+        assetCode: input.assetCode,
+        assetClass: input.assetClass,
+        redeemable: true,
+        occurredAt: input.paidAt,
+      };
+      stored = { input, payoutId: "payout-record-1", ledgerEntry };
+      return { payoutId: stored.payoutId, ledgerEntry };
+    },
+  };
+}
+
 function snapshot(
   overrides: Partial<PaymentPolicySnapshot> = {},
 ): PaymentPolicySnapshot {
@@ -109,6 +153,8 @@ async function payout(
     ledgerEntries: ledger,
     adapter: new InMemoryPaymentAccountAdapter({ USDC: 50_000n }),
     receiptStore: memoryReceiptStore(),
+    payoutStore: memoryPayoutStore(),
+    requestedBy: "owner-a",
     audit: { store: auditStore },
     loadPolicySnapshot: async () => snapshot(),
     occurredAt: new Date("2026-09-27T01:00:00Z"),
@@ -138,6 +184,39 @@ describe("Agent Economy manual Owner payout", () => {
       redeemable: true,
       occurredAt: new Date("2026-09-27T01:00:00Z"),
     });
+  });
+
+  test("recovers payout accounting after a post-transfer persistence failure without paying twice", async () => {
+    const adapter = new InMemoryPaymentAccountAdapter({ USDC: 50_000n });
+    const receiptStore = memoryReceiptStore();
+    let persistAttempts = 0;
+    const payoutStore = memoryPayoutStore(() => {
+      persistAttempts += 1;
+      if (persistAttempts === 1) {
+        throw new Error("database temporarily unavailable");
+      }
+    });
+
+    await expect(
+      payout({
+        adapter,
+        receiptStore,
+        payoutStore,
+      }),
+    ).rejects.toThrow("database temporarily unavailable");
+
+    expect((await adapter.getBalance("USDC")).amountMinor).toBe(45_000n);
+
+    const recovered = await payout({
+      adapter,
+      receiptStore,
+      payoutStore,
+    });
+
+    expect(recovered.receipt.amountMinor).toBe(5_000n);
+    expect(recovered.ledgerEntry.idempotencyKey).toBe("ledger:payout-1");
+    expect(persistAttempts).toBe(2);
+    expect((await adapter.getBalance("USDC")).amountMinor).toBe(45_000n);
   });
 
   test("refuses a payout larger than ledger-proven profit even if snapshot claims more", async () => {
