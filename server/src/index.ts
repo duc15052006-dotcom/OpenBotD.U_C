@@ -29,6 +29,8 @@ import {
 } from "./agents/runtime-model";
 import { createApp } from "./app";
 import { createOwnerPaymentApprovalStore } from "./economy/approval-store";
+import { createPaymentIntentCreator } from "./economy/payment-intent-creator";
+import { createPaymentPolicySnapshotLoader } from "./economy/policy-snapshot-store";
 import {
   type AuditInitiator,
   createAuditReader,
@@ -1581,6 +1583,12 @@ const app = createApp(
   workflowStore,
   // Canonical server-side persistence/read boundary for Owner-confirmed payment intents.
   createOwnerPaymentApprovalStore(database),
+  // Owner-originated payment requests are persisted only after a DB-backed server-owned policy
+  // snapshot decides them. Browser input never supplies decision, balance, spend or policy state.
+  createPaymentIntentCreator(
+    database,
+    createPaymentPolicySnapshotLoader(database),
+  ),
 );
 
 /**
