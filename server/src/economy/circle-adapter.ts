@@ -148,7 +148,7 @@ function requireMatchingCompleteTransaction(
       "Circle completed transaction destination does not match prepared transfer",
     );
   }
-  if (!transaction.amounts || transaction.amounts.length !== 1) {
+  if (transaction.amounts?.length !== 1) {
     throw new Error("Circle completed transaction amount evidence is missing");
   }
   const providerAmountMinor = decimalToMinor(
