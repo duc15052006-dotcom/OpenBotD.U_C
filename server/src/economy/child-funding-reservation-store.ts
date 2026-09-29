@@ -104,6 +104,56 @@ function requireIntent(intent: DurablePaymentIntent): void {
   }
 }
 
+export function calculateCommittedChildFundingMinor(input: {
+  events: readonly { intentId: string; amountMinor: string }[];
+  reservations: readonly {
+    intentId: string;
+    amountMinor: string;
+    reservedUntil: Date;
+  }[];
+  verifiedReceiptIntentIds: ReadonlySet<string>;
+  now: Date;
+}): bigint {
+  if (Number.isNaN(input.now.getTime())) {
+    throw new ChildFundingReservationRefusedError(
+      "child funding reservation clock is invalid",
+    );
+  }
+
+  let committedMinor = 0n;
+  const eventIntents = new Set<string>();
+
+  for (const row of input.events) {
+    const amount = parseMoney(row.amountMinor, "funding event amount");
+    if (amount <= 0n) {
+      throw new ChildFundingReservationRefusedError(
+        "stored child funding event amount is invalid",
+      );
+    }
+    committedMinor += amount;
+    eventIntents.add(row.intentId);
+  }
+
+  for (const row of input.reservations) {
+    if (eventIntents.has(row.intentId)) continue;
+    if (
+      row.reservedUntil <= input.now &&
+      !input.verifiedReceiptIntentIds.has(row.intentId)
+    ) {
+      continue;
+    }
+    const amount = parseMoney(row.amountMinor, "reservation amount");
+    if (amount <= 0n) {
+      throw new ChildFundingReservationRefusedError(
+        "stored child funding reservation amount is invalid",
+      );
+    }
+    committedMinor += amount;
+  }
+
+  return committedMinor;
+}
+
 export function createChildFundingReservationStore(
   database: Database,
   options: {
@@ -280,18 +330,7 @@ export function createChildFundingReservationStore(
             eq(agentChildFundingEvents.relationshipId, relationship.id),
           );
 
-        let committedMinor = 0n;
-        const eventIntents = new Set<string>();
-        for (const row of eventRows) {
-          const amount = parseMoney(row.amountMinor, "funding event amount");
-          if (amount <= 0n) {
-            throw new ChildFundingReservationRefusedError(
-              "stored child funding event amount is invalid",
-            );
-          }
-          committedMinor += amount;
-          eventIntents.add(row.intentId);
-        }
+        const eventIntents = new Set(eventRows.map((row) => row.intentId));
 
         const reservationRows = await transaction
           .select({
@@ -322,22 +361,12 @@ export function createChildFundingReservationStore(
           for (const row of receiptRows) receiptIntents.add(row.intentId);
         }
 
-        for (const row of reservationRows) {
-          if (eventIntents.has(row.intentId)) continue;
-          if (
-            row.reservedUntil <= current &&
-            !receiptIntents.has(row.intentId)
-          ) {
-            continue;
-          }
-          const amount = parseMoney(row.amountMinor, "reservation amount");
-          if (amount <= 0n) {
-            throw new ChildFundingReservationRefusedError(
-              "stored child funding reservation amount is invalid",
-            );
-          }
-          committedMinor += amount;
-        }
+        const committedMinor = calculateCommittedChildFundingMinor({
+          events: eventRows,
+          reservations: reservationRows,
+          verifiedReceiptIntentIds: receiptIntents,
+          now: current,
+        });
 
         if (committedMinor + intent.amountMinor > budgetMinor) {
           throw new ChildFundingReservationRefusedError(
