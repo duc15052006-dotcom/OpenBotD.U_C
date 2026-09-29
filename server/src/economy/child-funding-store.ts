@@ -244,8 +244,7 @@ export function createChildFundingStore(database: Database): ChildFundingStore {
           .limit(1);
 
         if (
-          !proof ||
-          proof.kind !== "CHILD_FUNDING" ||
+          proof?.kind !== "CHILD_FUNDING" ||
           proof.decision === "DENY" ||
           proof.agentId !== reservation.parentAgentId ||
           proof.accountId !== reservation.parentAccountId ||
