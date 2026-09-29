@@ -1,7 +1,5 @@
 import type { AuditStore } from "../audit";
-import type {
-  ChildFundingReservationStore,
-} from "./child-funding-reservation-store";
+import type { ChildFundingReservationStore } from "./child-funding-reservation-store";
 import type {
   ChildFundingStore,
   PersistedChildFunding,
