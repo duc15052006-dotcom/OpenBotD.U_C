@@ -99,9 +99,8 @@ export async function reconcileVerifiedPaymentReceipts(input: {
 
   for (const candidate of candidates) {
     let ok = false;
-    let reason:
-      | "provider_evidence_mismatch"
-      | "provider_unavailable" = "provider_evidence_mismatch";
+    let reason: "provider_evidence_mismatch" | "provider_unavailable" =
+      "provider_evidence_mismatch";
 
     try {
       ok = await input.adapterResolver.useForAccount({
