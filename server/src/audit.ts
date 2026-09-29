@@ -84,6 +84,14 @@ export const auditEventTypes = [
    */
   "economy.payment_reconciliation_failed",
   /**
+   * Durable bookmark for the cluster-wide payment reconciliation sweep.
+   *
+   * One row per successful page, not per receipt. It lets a different replica or a restarted
+   * deployment continue from the same immutable receipt cursor without adding mutable scheduler
+   * state to the Economy schema.
+   */
+  "economy.payment_reconciliation_checkpoint",
+  /**
    * Which coworker an untagged message was routed to, and why.
    *
    * A channel is pinned to one coworker before its first turn, so when the person did not name one
