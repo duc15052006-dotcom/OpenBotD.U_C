@@ -247,10 +247,7 @@ export function createChildFundingReservationStore(
         .from(agentFundingRelationships)
         .where(
           and(
-            eq(
-              agentFundingRelationships.parentAgentId,
-              parsed.parentAgentId,
-            ),
+            eq(agentFundingRelationships.parentAgentId, parsed.parentAgentId),
             eq(agentFundingRelationships.childAgentId, parsed.childAgentId),
           ),
         )
