@@ -42,10 +42,11 @@ import { createPaymentIntentReader } from "./economy/payment-intent-store";
 import { createPaymentPolicySnapshotLoader } from "./economy/policy-snapshot-store";
 import { createOwnerPayoutAccountingStore } from "./economy/payout-store";
 import { createVerifiedPaymentReceiptStore } from "./economy/receipt-store";
+import { createPaymentReceiptReconciliationSource } from "./economy/reconciliation";
 import {
-  createPaymentReceiptReconciliationSource,
-  reconcileVerifiedPaymentReceipts,
-} from "./economy/reconciliation";
+  createPaymentReconciliationCheckpointStore,
+  sweepPaymentReconciliation,
+} from "./economy/reconciliation-worker";
 import {
   type AuditInitiator,
   createAuditReader,
@@ -1556,22 +1557,23 @@ const liveChildFundingExecutor = createLiveChildFundingExecutor({
 
 const paymentReconciliationSource =
   createPaymentReceiptReconciliationSource(database);
-let paymentReconciliationCursor:
-  | import("./economy/reconciliation").PaymentReconciliationCursor
-  | undefined;
+const paymentReconciliationWorker = {
+  queue: createWorkQueue(database),
+  owner: workOwner("payment-reconciliation"),
+  source: paymentReconciliationSource,
+  adapterResolver: paymentAdapterResolver,
+  auditStore: bootAuditStore,
+  checkpointStore: createPaymentReconciliationCheckpointStore(
+    database,
+    bootAuditStore,
+  ),
+};
 const paymentReconciliation = repeatAfterEach(
   async () => {
     try {
-      const report = await reconcileVerifiedPaymentReceipts({
-        source: paymentReconciliationSource,
-        adapterResolver: paymentAdapterResolver,
-        auditStore: bootAuditStore,
-        batchSize: 100,
-        ...(paymentReconciliationCursor
-          ? { cursor: paymentReconciliationCursor }
-          : {}),
-      });
-      paymentReconciliationCursor = report.nextCursor;
+      const report = await sweepPaymentReconciliation(
+        paymentReconciliationWorker,
+      );
       if (report.failed > 0 || report.auditWriteFailures > 0) {
         console.warn(
           JSON.stringify({
