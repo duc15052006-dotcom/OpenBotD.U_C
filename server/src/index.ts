@@ -1565,10 +1565,7 @@ const paymentReconciliation = repeatAfterEach(
         auditStore: bootAuditStore,
         batchSize: 100,
       });
-      if (
-        report.failed > 0 ||
-        report.auditWriteFailures > 0
-      ) {
+      if (report.failed > 0 || report.auditWriteFailures > 0) {
         console.warn(
           JSON.stringify({
             type: "economy-payment-reconciliation",
