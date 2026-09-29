@@ -43,6 +43,10 @@ import { createPaymentPolicySnapshotLoader } from "./economy/policy-snapshot-sto
 import { createOwnerPayoutAccountingStore } from "./economy/payout-store";
 import { createVerifiedPaymentReceiptStore } from "./economy/receipt-store";
 import {
+  createPaymentReceiptReconciliationSource,
+  reconcileVerifiedPaymentReceipts,
+} from "./economy/reconciliation";
+import {
   type AuditInitiator,
   createAuditReader,
   createAuditStore,
@@ -1550,6 +1554,35 @@ const liveChildFundingExecutor = createLiveChildFundingExecutor({
   auditStore: bootAuditStore,
 });
 
+const paymentReconciliationSource =
+  createPaymentReceiptReconciliationSource(database);
+const paymentReconciliation = repeatAfterEach(
+  async () => {
+    try {
+      const report = await reconcileVerifiedPaymentReceipts({
+        source: paymentReconciliationSource,
+        adapterResolver: paymentAdapterResolver,
+        auditStore: bootAuditStore,
+        batchSize: 100,
+      });
+      if (report.failed > 0 || report.auditWriteFailures > 0) {
+        console.warn(
+          JSON.stringify({
+            type: "economy-payment-reconciliation",
+            ...report,
+          }),
+        );
+      }
+    } catch (error) {
+      console.warn(
+        "[economy] payment reconciliation pass failed:",
+        error instanceof Error ? error.message : error,
+      );
+    }
+  },
+  60 * 60 * 1_000,
+);
+
 const app = createApp(
   config,
   auth,
@@ -1814,6 +1847,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
       // Started only where handing work between Bots is switched on, so it is often not there.
       workOfferedListener?.stop() ?? Promise.resolve(),
       Promise.resolve(retentionSweeps.stop()),
+      Promise.resolve(paymentReconciliation.stop()),
     ]).finally(() => process.exit(0));
   });
 }
