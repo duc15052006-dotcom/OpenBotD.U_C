@@ -76,7 +76,9 @@ export function createPaymentReconciliationCheckpointStore(
       }
       const verifiedAt = new Date(payload.verifiedAt);
       if (Number.isNaN(verifiedAt.getTime())) {
-        throw new Error("payment reconciliation checkpoint timestamp is invalid");
+        throw new Error(
+          "payment reconciliation checkpoint timestamp is invalid",
+        );
       }
       return { verifiedAt, receiptId: payload.receiptId };
     },
