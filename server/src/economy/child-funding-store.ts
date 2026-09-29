@@ -335,10 +335,8 @@ export function createChildFundingStore(database: Database): ChildFundingStore {
           })
           .onConflictDoNothing({ target: agentChildFundingEvents.intentId });
 
-        const parentLedgerKey =
-          `ledger:child-funding:parent:${proof.idempotencyKey}`;
-        const childLedgerKey =
-          `ledger:child-funding:child:${proof.idempotencyKey}`;
+        const parentLedgerKey = `ledger:child-funding:parent:${proof.idempotencyKey}`;
+        const childLedgerKey = `ledger:child-funding:child:${proof.idempotencyKey}`;
 
         await transaction
           .insert(agentLedgerEntries)
@@ -460,7 +458,8 @@ export function createChildFundingStore(database: Database): ChildFundingStore {
           BigInt(storedEvent.amountMinor) !== reservedAmountMinor ||
           storedEvent.assetCode !== reservation.assetCode ||
           storedEvent.policyVersion !== reservation.policyVersion ||
-          storedEvent.fundedAt.getTime() !== proof.receiptVerifiedAt.getTime() ||
+          storedEvent.fundedAt.getTime() !==
+            proof.receiptVerifiedAt.getTime() ||
           !storedParentLedger ||
           !storedChildLedger
         ) {
