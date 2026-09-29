@@ -438,18 +438,14 @@ export class CircleDeveloperWalletAdapter implements PaymentAccountAdapter {
     if (transaction.state !== "COMPLETE") return false;
 
     try {
-      requireMatchingCompleteTransaction(
-        transaction,
-        this.credential,
-        {
-          id: `circle:${receipt.idempotencyKey}`,
-          request: {
-            idempotencyKey: receipt.idempotencyKey,
-            amount: receipt.amount,
-            destination: receipt.destination,
-          },
+      requireMatchingCompleteTransaction(transaction, this.credential, {
+        id: `circle:${receipt.idempotencyKey}`,
+        request: {
+          idempotencyKey: receipt.idempotencyKey,
+          amount: receipt.amount,
+          destination: receipt.destination,
         },
-      );
+      });
     } catch {
       return false;
     }
