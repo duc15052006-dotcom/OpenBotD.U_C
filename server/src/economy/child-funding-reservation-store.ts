@@ -230,10 +230,7 @@ export function createChildFundingReservationStore(
           .where(
             and(
               eq(agentFundingRelationships.parentAgentId, intent.agentId),
-              eq(
-                agentFundingRelationships.childAgentId,
-                childAccount.agentId,
-              ),
+              eq(agentFundingRelationships.childAgentId, childAccount.agentId),
             ),
           )
           .orderBy(desc(agentFundingRelationships.version))
@@ -326,9 +323,7 @@ export function createChildFundingReservationStore(
             amountMinor: agentChildFundingEvents.amountMinor,
           })
           .from(agentChildFundingEvents)
-          .where(
-            eq(agentChildFundingEvents.relationshipId, relationship.id),
-          );
+          .where(eq(agentChildFundingEvents.relationshipId, relationship.id));
 
         const eventIntents = new Set(eventRows.map((row) => row.intentId));
 
