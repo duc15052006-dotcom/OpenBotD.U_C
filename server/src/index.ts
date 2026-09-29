@@ -29,6 +29,9 @@ import {
 } from "./agents/runtime-model";
 import { createApp } from "./app";
 import { createOwnerPaymentApprovalStore } from "./economy/approval-store";
+import { createChildFundingReservationStore } from "./economy/child-funding-reservation-store";
+import { createChildFundingStore } from "./economy/child-funding-store";
+import { createLiveChildFundingExecutor } from "./economy/live-child-funding-executor";
 import { createLiveOperatingPaymentExecutor } from "./economy/live-payment-executor";
 import { createLiveOwnerPayoutExecutor } from "./economy/live-owner-payout-executor";
 import { createAgentLedgerReader } from "./economy/ledger-reader";
@@ -1536,6 +1539,16 @@ const liveOwnerPayoutExecutor = createLiveOwnerPayoutExecutor({
   loadPolicySnapshot: paymentPolicySnapshotLoader,
   auditStore: bootAuditStore,
 });
+const liveChildFundingExecutor = createLiveChildFundingExecutor({
+  intentReader: paymentIntentReader,
+  reservationStore: createChildFundingReservationStore(database),
+  fundingStore: createChildFundingStore(database),
+  adapterResolver: paymentAdapterResolver,
+  receiptStore: verifiedPaymentReceiptStore,
+  approvalStore: ownerPaymentApprovals,
+  loadPolicySnapshot: paymentPolicySnapshotLoader,
+  auditStore: bootAuditStore,
+});
 
 const app = createApp(
   config,
@@ -1631,6 +1644,7 @@ const app = createApp(
   {
     executor: livePaymentExecutor,
     ownerPayoutExecutor: liveOwnerPayoutExecutor,
+    childFundingExecutor: liveChildFundingExecutor,
     intentReader: paymentIntentReader,
   },
 );
