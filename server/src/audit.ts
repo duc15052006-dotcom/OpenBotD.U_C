@@ -76,6 +76,14 @@ export const auditEventTypes = [
    */
   "economy.payment_executed",
   /**
+   * A durable verified payment receipt could no longer be re-verified against its provider.
+   *
+   * Reconciliation never rewrites accounting history automatically. This row is the durable signal
+   * that operator/recovery logic should investigate provider evidence before any correction entry is
+   * appended.
+   */
+  "economy.payment_reconciliation_failed",
+  /**
    * Which coworker an untagged message was routed to, and why.
    *
    * A channel is pinned to one coworker before its first turn, so when the person did not name one
