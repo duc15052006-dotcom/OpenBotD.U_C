@@ -28,13 +28,17 @@ function candidate(id = "receipt-1"): ReconciliationCandidate {
   };
 }
 
-function source(rows: ReconciliationCandidate[]): PaymentReceiptReconciliationSource {
+function source(
+  rows: ReconciliationCandidate[],
+): PaymentReceiptReconciliationSource {
   return {
     list: async () => rows,
   };
 }
 
-function adapter(verify: (externalReference: string) => boolean): PaymentAccountAdapter {
+function adapter(
+  verify: (externalReference: string) => boolean,
+): PaymentAccountAdapter {
   return {
     getBalance: async (assetCode) => ({ assetCode, amountMinor: 0n }),
     prepareTransfer: async () => {
@@ -131,9 +135,12 @@ describe("Agent Economy payment receipt reconciliation", () => {
 
     const report = await reconcileVerifiedPaymentReceipts({
       source: source([first, second]),
-      adapterResolver: resolver(adapter(() => true), {
-        throwForAccount: "account-a",
-      }),
+      adapterResolver: resolver(
+        adapter(() => true),
+        {
+          throwForAccount: "account-a",
+        },
+      ),
       auditStore: audit(events),
     });
 
