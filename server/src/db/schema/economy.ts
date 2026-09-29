@@ -486,6 +486,58 @@ export const agentFundingRelationships = pgTable(
 );
 
 /**
+ * Durable budget reservation created before a child-funding transfer can reach a provider.
+ *
+ * Rows are append-only. An unconsumed reservation stops counting after reservedUntil, except when a
+ * verified receipt exists for its intent: once money moved, the reservation remains committed until
+ * the immutable child-funding event is recovered.
+ */
+export const agentChildFundingReservations = pgTable(
+  "agent_child_funding_reservations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    relationshipId: uuid("relationship_id")
+      .notNull()
+      .references(() => agentFundingRelationships.id, {
+        onDelete: "restrict",
+      }),
+    intentId: uuid("intent_id")
+      .notNull()
+      .references(() => agentPaymentIntents.id, { onDelete: "restrict" }),
+    parentAgentId: text("parent_agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "restrict" }),
+    parentAccountId: uuid("parent_account_id")
+      .notNull()
+      .references(() => agentFinancialAccounts.id, { onDelete: "restrict" }),
+    childAgentId: text("child_agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "restrict" }),
+    childAccountId: uuid("child_account_id")
+      .notNull()
+      .references(() => agentFinancialAccounts.id, { onDelete: "restrict" }),
+    amountMinor: moneyMinor("amount_minor").notNull(),
+    assetCode: text("asset_code").notNull(),
+    policyVersion: integer("policy_version").notNull(),
+    reservedUntil: timestamp("reserved_until", { withTimezone: true }).notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex("agent_child_funding_reservations_intent_idx").on(
+      table.intentId,
+    ),
+    index("agent_child_funding_reservations_relationship_until_idx").on(
+      table.relationshipId,
+      table.reservedUntil,
+    ),
+    index("agent_child_funding_reservations_child_idx").on(
+      table.childAgentId,
+      table.createdAt,
+    ),
+  ],
+);
+
+/**
  * Immutable proof that parent funding actually completed through the normal payment boundary.
  *
  * Intent + verified receipt references prevent a relationship from claiming spend that never moved.
