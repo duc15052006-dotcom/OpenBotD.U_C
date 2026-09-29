@@ -4,6 +4,7 @@ import type { PaymentAdapterResolver } from "../src/economy/payment-adapter-reso
 import type { PaymentAccountAdapter } from "../src/economy/payment-adapter";
 import {
   reconcileVerifiedPaymentReceipts,
+  type PaymentReceiptReconciliationCursor,
   type PaymentReceiptReconciliationSource,
   type ReconciliationCandidate,
 } from "../src/economy/reconciliation";
@@ -30,9 +31,13 @@ function candidate(id = "receipt-1"): ReconciliationCandidate {
 
 function source(
   rows: ReconciliationCandidate[],
+  nextCursor?: PaymentReceiptReconciliationCursor,
 ): PaymentReceiptReconciliationSource {
   return {
-    list: async () => rows,
+    list: async () => ({
+      candidates: rows,
+      ...(nextCursor ? { nextCursor } : {}),
+    }),
   };
 }
 
@@ -151,6 +156,41 @@ describe("Agent Economy payment receipt reconciliation", () => {
       auditWriteFailures: 0,
     });
     expect(events[0]?.payload.reason).toBe("provider_unavailable");
+  });
+
+  test("returns the source cursor so the runtime can continue through older receipts", async () => {
+    const nextCursor = {
+      verifiedAt: new Date("2026-09-28T23:00:00.000Z"),
+      receiptId: "00000000-0000-0000-0000-000000000123",
+    };
+    const seen: Array<PaymentReceiptReconciliationCursor | undefined> = [];
+    const pagedSource: PaymentReceiptReconciliationSource = {
+      list: async (_batchSize, cursor) => {
+        seen.push(cursor);
+        return {
+          candidates: [candidate()],
+          nextCursor,
+        };
+      },
+    };
+
+    const report = await reconcileVerifiedPaymentReceipts({
+      source: pagedSource,
+      adapterResolver: resolver(adapter(() => true)),
+      auditStore: audit([]),
+      cursor: {
+        verifiedAt: new Date("2026-09-29T00:00:00.000Z"),
+        receiptId: "00000000-0000-0000-0000-000000000999",
+      },
+    });
+
+    expect(seen).toEqual([
+      {
+        verifiedAt: new Date("2026-09-29T00:00:00.000Z"),
+        receiptId: "00000000-0000-0000-0000-000000000999",
+      },
+    ]);
+    expect(report.nextCursor).toEqual(nextCursor);
   });
 
   test("audit write failure is counted but does not abort the pass", async () => {

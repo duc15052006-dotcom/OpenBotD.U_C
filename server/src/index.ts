@@ -1556,6 +1556,9 @@ const liveChildFundingExecutor = createLiveChildFundingExecutor({
 
 const paymentReconciliationSource =
   createPaymentReceiptReconciliationSource(database);
+let paymentReconciliationCursor:
+  | import("./economy/reconciliation").PaymentReconciliationCursor
+  | undefined;
 const paymentReconciliation = repeatAfterEach(
   async () => {
     try {
@@ -1564,7 +1567,11 @@ const paymentReconciliation = repeatAfterEach(
         adapterResolver: paymentAdapterResolver,
         auditStore: bootAuditStore,
         batchSize: 100,
+        ...(paymentReconciliationCursor
+          ? { cursor: paymentReconciliationCursor }
+          : {}),
       });
+      paymentReconciliationCursor = report.nextCursor;
       if (report.failed > 0 || report.auditWriteFailures > 0) {
         console.warn(
           JSON.stringify({
