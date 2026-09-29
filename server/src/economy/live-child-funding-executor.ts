@@ -140,10 +140,7 @@ export function createLiveChildFundingExecutor(input: {
                 accountId: durable.accountId,
               }),
             beforeExecute: () =>
-              input.reservationStore.assertExecutable(
-                reservation.id,
-                durable,
-              ),
+              input.reservationStore.assertExecutable(reservation.id, durable),
           }),
       });
 
