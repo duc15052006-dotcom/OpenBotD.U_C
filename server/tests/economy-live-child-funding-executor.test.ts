@@ -12,9 +12,7 @@ import type {
   VerifiedPaymentReceipt,
   VerifiedPaymentReceiptStore,
 } from "../src/economy/execution";
-import {
-  createLiveChildFundingExecutor,
-} from "../src/economy/live-child-funding-executor";
+import { createLiveChildFundingExecutor } from "../src/economy/live-child-funding-executor";
 import type { OwnerPaymentApprovalStore } from "../src/economy/approval-store";
 import type { PaymentAdapterResolver } from "../src/economy/payment-adapter-resolver";
 import { InMemoryPaymentAccountAdapter } from "../src/economy/payment-adapter";
