@@ -519,7 +519,9 @@ export const agentChildFundingReservations = pgTable(
     amountMinor: moneyMinor("amount_minor").notNull(),
     assetCode: text("asset_code").notNull(),
     policyVersion: integer("policy_version").notNull(),
-    reservedUntil: timestamp("reserved_until", { withTimezone: true }).notNull(),
+    reservedUntil: timestamp("reserved_until", {
+      withTimezone: true,
+    }).notNull(),
     createdAt: createdAt(),
   },
   (table) => [
