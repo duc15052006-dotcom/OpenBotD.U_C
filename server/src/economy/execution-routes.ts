@@ -3,7 +3,10 @@ import { Hono } from "hono";
 import type { AgentProfileStore } from "../agents/profile-store";
 import type { AppVariables } from "../auth/guards";
 import { CredentialUnusableError } from "../credentials";
+import { ChildFundingPersistenceRefusedError } from "./child-funding-store";
+import { ChildFundingReservationRefusedError } from "./child-funding-reservation-store";
 import { PaymentExecutionRefusedError } from "./execution";
+import type { LiveChildFundingExecutor } from "./live-child-funding-executor";
 import {
   LiveOperatingPaymentUnsupportedError,
   type LiveOperatingPaymentExecutor,
@@ -22,6 +25,7 @@ function approvalIdFrom(value: unknown): string | undefined | null {
 export function createLivePaymentRoutes(input: {
   executor: LiveOperatingPaymentExecutor;
   ownerPayoutExecutor?: LiveOwnerPayoutExecutor;
+  childFundingExecutor?: LiveChildFundingExecutor;
   intentReader: PaymentIntentReader;
   profiles: AgentProfileStore;
   requireUser: MiddlewareHandler<{ Variables: AppVariables }>;
@@ -71,7 +75,9 @@ export function createLivePaymentRoutes(input: {
       const executor =
         durable.kind === "OWNER_PAYOUT"
           ? input.ownerPayoutExecutor
-          : input.executor;
+          : durable.kind === "CHILD_FUNDING"
+            ? input.childFundingExecutor
+            : input.executor;
 
       if (!executor) {
         throw new LiveOperatingPaymentUnsupportedError(
@@ -100,7 +106,9 @@ export function createLivePaymentRoutes(input: {
     } catch (error) {
       if (
         error instanceof PaymentExecutionRefusedError ||
-        error instanceof LiveOperatingPaymentUnsupportedError
+        error instanceof LiveOperatingPaymentUnsupportedError ||
+        error instanceof ChildFundingReservationRefusedError ||
+        error instanceof ChildFundingPersistenceRefusedError
       ) {
         return context.json({ error: error.message }, 409);
       }

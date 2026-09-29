@@ -281,6 +281,7 @@ export async function executeAuthorizedPayment(input: {
   loadOwnerApproval?: (
     approvalId: string,
   ) => Promise<OwnerPaymentApproval | null>;
+  beforeExecute?: () => Promise<void>;
 }): Promise<VerifiedPaymentReceipt> {
   const initialSnapshot = await input.loadPolicySnapshot();
   await requireAuthorization(
@@ -313,6 +314,8 @@ export async function executeAuthorizedPayment(input: {
     input.authorization,
     input.loadOwnerApproval,
   );
+
+  await input.beforeExecute?.();
 
   const receipt = await input.adapter.executeTransfer(prepared);
   if (!(await input.adapter.verifyTransfer(receipt))) {
@@ -405,6 +408,7 @@ export async function executeAndPersistAuthorizedPayment(input: {
   loadOwnerApproval?: (
     approvalId: string,
   ) => Promise<OwnerPaymentApproval | null>;
+  beforeExecute?: () => Promise<void>;
 }): Promise<VerifiedPaymentReceipt> {
   const durableIntent = await input.intentReader.load(input.intent.id);
   requireDurableIntentMatchesExecution(
@@ -427,6 +431,7 @@ export async function executeAndPersistAuthorizedPayment(input: {
     adapter: input.adapter,
     loadPolicySnapshot: input.loadPolicySnapshot,
     loadOwnerApproval: input.loadOwnerApproval,
+    beforeExecute: input.beforeExecute,
   });
   const persisted = await input.receiptStore.saveVerified(receipt);
   const stored = persisted.receipt;

@@ -531,6 +531,31 @@ describe("Agent Economy execution boundary", () => {
     expect(adapter.executeCalls).toBe(0);
   });
 
+  test("runs the immediate pre-transfer guard after policy recheck and before money moves", async () => {
+    const adapter = new RecordingAdapter();
+    let guardCalls = 0;
+
+    await expect(
+      executeAuthorizedPayment({
+        intent,
+        authorization: { decision: "ALLOW", policyVersion: 7 },
+        provider: "mock-provider",
+        adapter,
+        loadPolicySnapshot: async () => snapshot(),
+        beforeExecute: async () => {
+          guardCalls += 1;
+          throw new Error("reservation no longer executable");
+        },
+      }),
+    ).rejects.toThrow("reservation no longer executable");
+
+    expect(guardCalls).toBe(1);
+    expect(adapter.prepareCalls).toBe(1);
+    expect(adapter.executeCalls).toBe(0);
+    expect(adapter.verifyCalls).toBe(0);
+    expect(adapter.balance).toBe(100_000n);
+  });
+
   test("returns a receipt only after adapter verification succeeds", async () => {
     const adapter = new RecordingAdapter();
     const receipt = await executeAuthorizedPayment({

@@ -3,6 +3,7 @@ import { Hono, type MiddlewareHandler } from "hono";
 import type { AgentProfileStore } from "../src/agents/profile-store";
 import type { AppVariables } from "../src/auth/guards";
 import { createLivePaymentRoutes } from "../src/economy/execution-routes";
+import type { LiveChildFundingExecutor } from "../src/economy/live-child-funding-executor";
 import type {
   LiveOperatingPaymentExecutor,
   LiveOperatingPaymentResult,
@@ -118,6 +119,7 @@ function testApp(
   options: {
     intent?: DurablePaymentIntent;
     ownerPayoutExecutor?: LiveOwnerPayoutExecutor;
+    childFundingExecutor?: LiveChildFundingExecutor;
   } = {},
 ) {
   const app = new Hono<{ Variables: AppVariables }>();
@@ -127,6 +129,9 @@ function testApp(
       executor,
       ...(options.ownerPayoutExecutor
         ? { ownerPayoutExecutor: options.ownerPayoutExecutor }
+        : {}),
+      ...(options.childFundingExecutor
+        ? { childFundingExecutor: options.childFundingExecutor }
         : {}),
       intentReader: reader(options.intent),
       profiles: profileStore,
@@ -299,6 +304,95 @@ describe("Agent Economy live payment routes", () => {
     expect(response.status).toBe(200);
     expect(operatingCalls).toBe(0);
     expect(payoutInput).toEqual({
+      intentId: "intent-1",
+      actorUserId: "owner-a",
+    });
+  });
+
+  test("dispatches child funding only to the specialized child executor", async () => {
+    let operatingCalls = 0;
+    let childInput:
+      | Parameters<LiveChildFundingExecutor["execute"]>[0]
+      | undefined;
+
+    const childIntent: DurablePaymentIntent = {
+      ...durableIntent,
+      kind: "CHILD_FUNDING",
+      category: "child_funding",
+      destination: "child-wallet",
+    };
+
+    const app = testApp(
+      {
+        execute: async () => {
+          operatingCalls += 1;
+          return result();
+        },
+      },
+      profiles(),
+      OWNER,
+      {
+        intent: childIntent,
+        childFundingExecutor: {
+          execute: async (input) => {
+            childInput = input;
+            return {
+              ...result(),
+              funding: {
+                event: {
+                  id: "funding-event-1",
+                  relationshipId: "relationship-1",
+                  intentId: "intent-1",
+                  receiptId: "receipt-1",
+                  parentAgentId: "agent-a",
+                  childAgentId: "child-a",
+                  amountMinor: 1250n,
+                  assetCode: "USDC",
+                  policyVersion: 7,
+                  fundedAt: new Date("2026-09-28T00:00:00.000Z"),
+                },
+                parentLedgerEntry: result().ledgerEntry,
+                childLedgerEntry: {
+                  ...result().ledgerEntry,
+                  id: "child-ledger-1",
+                  agentId: "child-a",
+                  accountId: "child-account",
+                  idempotencyKey: "ledger:child-funding:child:pay-1",
+                  type: "investment",
+                  direction: "credit",
+                },
+              },
+              childLedgerEntry: {
+                ...result().ledgerEntry,
+                id: "child-ledger-1",
+                agentId: "child-a",
+                accountId: "child-account",
+                idempotencyKey: "ledger:child-funding:child:pay-1",
+                type: "investment",
+                direction: "credit",
+              },
+            };
+          },
+        },
+      },
+    );
+
+    const response = await app.request(
+      "/api/economy/payment-intents/intent-1/execute",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          amountMinor: "999999",
+          destination: "attacker-wallet",
+          relationshipId: "attacker-relationship",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(operatingCalls).toBe(0);
+    expect(childInput).toEqual({
       intentId: "intent-1",
       actorUserId: "owner-a",
     });

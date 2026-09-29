@@ -36,6 +36,10 @@ export interface ChildFundingReservation {
 
 export interface ChildFundingReservationStore {
   reserve(intent: DurablePaymentIntent): Promise<ChildFundingReservation>;
+  assertExecutable(
+    reservationId: string,
+    intent: DurablePaymentIntent,
+  ): Promise<void>;
 }
 
 function parseMoney(value: string, label: string): bigint {
@@ -171,6 +175,100 @@ export function createChildFundingReservationStore(
   }
 
   return {
+    async assertExecutable(reservationId, intent) {
+      requireIntent(intent);
+      const normalizedReservationId = reservationId.trim();
+      if (!normalizedReservationId) {
+        throw new ChildFundingReservationRefusedError(
+          "child funding reservation id is required",
+        );
+      }
+
+      const current = now();
+      if (Number.isNaN(current.getTime())) {
+        throw new ChildFundingReservationRefusedError(
+          "child funding reservation clock is invalid",
+        );
+      }
+
+      const [reservation] = await database
+        .select({
+          id: agentChildFundingReservations.id,
+          relationshipId: agentChildFundingReservations.relationshipId,
+          intentId: agentChildFundingReservations.intentId,
+          parentAgentId: agentChildFundingReservations.parentAgentId,
+          parentAccountId: agentChildFundingReservations.parentAccountId,
+          childAgentId: agentChildFundingReservations.childAgentId,
+          childAccountId: agentChildFundingReservations.childAccountId,
+          amountMinor: agentChildFundingReservations.amountMinor,
+          assetCode: agentChildFundingReservations.assetCode,
+          policyVersion: agentChildFundingReservations.policyVersion,
+          reservedUntil: agentChildFundingReservations.reservedUntil,
+          createdAt: agentChildFundingReservations.createdAt,
+        })
+        .from(agentChildFundingReservations)
+        .where(eq(agentChildFundingReservations.id, normalizedReservationId))
+        .limit(1);
+
+      if (!reservation) {
+        throw new ChildFundingReservationRefusedError(
+          "child funding reservation was not found",
+        );
+      }
+      const parsed = parseReservation(reservation);
+      if (
+        parsed.intentId !== intent.id ||
+        parsed.parentAgentId !== intent.agentId ||
+        parsed.parentAccountId !== intent.accountId ||
+        parsed.amountMinor !== intent.amountMinor ||
+        parsed.assetCode !== intent.assetCode ||
+        parsed.policyVersion !== intent.policyVersion
+      ) {
+        throw new ChildFundingReservationRefusedError(
+          "child funding reservation conflicts with durable intent",
+        );
+      }
+      if (parsed.reservedUntil <= current) {
+        throw new ChildFundingReservationRefusedError(
+          "child funding reservation expired before transfer",
+        );
+      }
+
+      const [latest] = await database
+        .select({
+          id: agentFundingRelationships.id,
+          parentAgentId: agentFundingRelationships.parentAgentId,
+          childAgentId: agentFundingRelationships.childAgentId,
+          version: agentFundingRelationships.version,
+          assetCode: agentFundingRelationships.assetCode,
+          active: agentFundingRelationships.active,
+          frozen: agentFundingRelationships.frozen,
+        })
+        .from(agentFundingRelationships)
+        .where(
+          and(
+            eq(agentFundingRelationships.parentAgentId, parsed.parentAgentId),
+            eq(agentFundingRelationships.childAgentId, parsed.childAgentId),
+          ),
+        )
+        .orderBy(desc(agentFundingRelationships.version))
+        .limit(1);
+
+      if (
+        !latest?.active ||
+        latest.frozen ||
+        latest.id !== parsed.relationshipId ||
+        latest.parentAgentId !== parsed.parentAgentId ||
+        latest.childAgentId !== parsed.childAgentId ||
+        latest.assetCode !== parsed.assetCode ||
+        latest.version <= 0
+      ) {
+        throw new ChildFundingReservationRefusedError(
+          "child funding relationship changed after reservation",
+        );
+      }
+    },
+
     async reserve(intent) {
       requireIntent(intent);
       const current = now();
