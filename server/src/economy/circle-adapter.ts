@@ -390,7 +390,10 @@ export class CircleDeveloperWalletAdapter implements PaymentAccountAdapter {
           prepared,
         );
         return {
-          transferId: transaction.txHash || transaction.id,
+          // Persist Circle's immutable transaction id rather than the chain hash. The transaction id
+          // is the provider lookup key required for later reconciliation; the chain hash remains
+          // provider evidence returned by the lookup itself.
+          transferId: transaction.id,
           idempotencyKey: prepared.request.idempotencyKey,
           amount: prepared.request.amount,
           destination: prepared.request.destination,
@@ -425,10 +428,28 @@ export class CircleDeveloperWalletAdapter implements PaymentAccountAdapter {
   }
 
   async verifyTransfer(receipt: TransferReceipt): Promise<boolean> {
-    // executeTransfer returns only after Circle reports COMPLETE. The external reference is the
-    // finalized txHash when available, otherwise the immutable Circle transaction id. E3a performs
-    // a second field-by-field match against the intent before persisting the verified receipt.
-    return Boolean(receipt.transferId);
+    if (!receipt.transferId.trim()) return false;
+    if (receipt.amount.assetCode !== this.credential.tokenSymbol) return false;
+    if (receipt.amount.amountMinor <= 0n || !receipt.destination.trim()) {
+      return false;
+    }
+
+    const transaction = await this.getTransaction(receipt.transferId);
+    if (transaction.state !== "COMPLETE") return false;
+
+    try {
+      requireMatchingCompleteTransaction(transaction, this.credential, {
+        id: `circle:${receipt.idempotencyKey}`,
+        request: {
+          idempotencyKey: receipt.idempotencyKey,
+          amount: receipt.amount,
+          destination: receipt.destination,
+        },
+      });
+    } catch {
+      return false;
+    }
+    return true;
   }
 }
 

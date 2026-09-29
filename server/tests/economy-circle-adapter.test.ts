@@ -132,12 +132,17 @@ describe("Circle developer wallet payment adapter", () => {
     const receipt = await adapter.executeTransfer(prepared);
 
     expect(receipt).toEqual({
-      transferId: "0xabc",
+      transferId: "circle-transaction",
       idempotencyKey: "openbot-intent-7",
       amount: { assetCode: "USDC", amountMinor: 1_250_000n },
       destination: "0x1111111111111111111111111111111111111111",
     });
     expect(lookups).toBe(2);
+
+    // Durable receipt verification must be able to re-query Circle after the original execution
+    // process is gone. The provider transaction id, not only the chain hash, is therefore persisted.
+    expect(await adapter.verifyTransfer(receipt)).toBe(true);
+    expect(lookups).toBe(3);
 
     const createCall = calls.find((call) =>
       call.url.endsWith("/developer/transactions/transfer"),
@@ -152,6 +157,40 @@ describe("Circle developer wallet payment adapter", () => {
     expect(body.entitySecretCiphertext).not.toContain(
       credential.entitySecretHex,
     );
+  });
+
+  test("re-verification rejects durable receipt terms that no longer match provider evidence", async () => {
+    const adapter = new CircleDeveloperWalletAdapter(credential, {
+      fetch: (async (url) => {
+        const stringUrl = String(url);
+        if (stringUrl.endsWith("/transactions/circle-transaction")) {
+          return response({
+            data: {
+              transaction: {
+                id: "circle-transaction",
+                state: "COMPLETE",
+                txHash: "0xabc",
+                walletId: "wallet-id",
+                tokenId: "usdc-token",
+                destinationAddress:
+                  "0x1111111111111111111111111111111111111111",
+                amounts: ["1.25"],
+              },
+            },
+          });
+        }
+        throw new Error(`unexpected Circle test URL: ${stringUrl}`);
+      }) as typeof fetch,
+    });
+
+    expect(
+      await adapter.verifyTransfer({
+        transferId: "circle-transaction",
+        idempotencyKey: "openbot-intent-7",
+        amount: { assetCode: "USDC", amountMinor: 1_250_000n },
+        destination: "0x9999999999999999999999999999999999999999",
+      }),
+    ).toBe(false);
   });
 
   test("refuses COMPLETE when provider finality evidence does not match prepared terms", async () => {
