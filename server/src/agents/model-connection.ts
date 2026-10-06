@@ -153,7 +153,9 @@ async function testOpenAiCompatibleEndpoint(
   signal: AbortSignal,
 ): Promise<ModelConnectionResult> {
   if (!runtime.apiKey || !runtime.baseUrl) {
-    throw new Error("compatible probe requires a custom endpoint and credential");
+    throw new Error(
+      "compatible probe requires a custom endpoint and credential",
+    );
   }
 
   const base = withoutTrailingSlashes(runtime.baseUrl);
@@ -183,7 +185,10 @@ async function testOpenAiCompatibleEndpoint(
     } catch {
       // A non-standard success body is not proof that the model is unavailable. Verify it below.
     }
-  } else if ([401, 403, 429].includes(catalog.status) || catalog.status >= 500) {
+  } else if (
+    [401, 403, 429].includes(catalog.status) ||
+    catalog.status >= 500
+  ) {
     return classifyFailure(runtime, catalog.status);
   }
 
