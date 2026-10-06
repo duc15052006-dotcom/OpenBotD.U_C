@@ -205,3 +205,36 @@ fn protected_probe_rejects_credentials_embedded_in_endpoint_url() {
     let error = protected_model_probe_client(&url).expect_err("userinfo must be refused");
     assert!(error.said.contains("credentials"));
 }
+
+#[test]
+fn compatible_catalog_reads_standard_openai_model_ids() {
+    let raw = serde_json::json!({
+        "object": "list",
+        "data": [
+            {"id": "qwen/qwen3.7-max:free", "object": "model"},
+            {"id": "openai/gpt-5.6-sol", "object": "model"}
+        ]
+    });
+    let ids = compatible_model_ids(&raw).expect("standard /models catalog");
+    assert_eq!(
+        ids,
+        vec![
+            "qwen/qwen3.7-max:free".to_string(),
+            "openai/gpt-5.6-sol".to_string()
+        ]
+    );
+    assert!(!ids.iter().any(|id| id == "qwen/qwen3.8-max"));
+}
+
+#[test]
+fn compatible_catalog_accepts_bare_array_but_not_unrecognised_shapes() {
+    let bare = serde_json::json!([
+        {"id": "local/model-a"},
+        {"id": "local/model-b"}
+    ]);
+    assert_eq!(
+        compatible_model_ids(&bare).unwrap(),
+        vec!["local/model-a".to_string(), "local/model-b".to_string()]
+    );
+    assert!(compatible_model_ids(&serde_json::json!({"models": []})).is_none());
+}
