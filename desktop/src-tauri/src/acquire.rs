@@ -405,9 +405,7 @@ fn start_machine_with(
     };
     if target_is_windows {
         let address = Address::new(Engine::Podman, Some(owned_connection(true)));
-        if let Err(error) =
-            configure_owned_windows_podman_for_compose(&address, &mut run, true)
-        {
+        if let Err(error) = configure_owned_windows_podman_for_compose(&address, &mut run, true) {
             return StepOutcome::stopped(Step::StartMachine, &error);
         }
     }
@@ -839,16 +837,13 @@ mod tests {
     #[test]
     fn windows_start_writes_host_gateway_config_from_vm_resolution() {
         let mut calls = Vec::<Vec<String>>::new();
-        let inspect = machine_inspect("stopped", false);
+        let inspect = machine_inspect("stopped", true);
 
         let result = start_machine_with(
             |args| {
                 calls.push(args.iter().map(|arg| (*arg).to_string()).collect());
                 match args {
                     ["machine", "inspect", "openbot"] => Ok(inspect.clone()),
-                    ["machine", "set", "--user-mode-networking=true", "openbot"] => {
-                        Ok(String::new())
-                    }
                     ["machine", "start", "openbot"] => Ok(String::new()),
                     ["machine", "ssh", "openbot", "getent", "ahostsv4", "host.containers.internal"] => {
                         Ok("192.168.127.254 STREAM host.containers.internal\n".into())
@@ -870,10 +865,6 @@ mod tests {
             calls,
             vec![
                 vec!["machine", "inspect", "openbot"]
-                    .into_iter()
-                    .map(str::to_string)
-                    .collect::<Vec<_>>(),
-                vec!["machine", "set", "--user-mode-networking=true", "openbot"]
                     .into_iter()
                     .map(str::to_string)
                     .collect::<Vec<_>>(),
@@ -908,7 +899,7 @@ mod tests {
     fn windows_podman_config_forces_cgroupfs_for_current_wsl_layout() {
         let script = host_gateway_config_script("192.168.127.254".parse().unwrap(), true);
         assert!(
-            script.contains("[engine]\\ncgroup_manager=\\\"cgroupfs\\\""),
+            script.contains("[engine]\ncgroup_manager=\"cgroupfs\""),
             "{script}"
         );
         assert!(
