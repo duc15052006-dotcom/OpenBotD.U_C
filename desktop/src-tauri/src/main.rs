@@ -1056,6 +1056,84 @@ async fn provider_probe(request: reqwest::RequestBuilder, provider: &str) -> Res
     Err(format!("{provider} answered with HTTP {status}.").into())
 }
 
+fn compatible_model_ids(raw: &serde_json::Value) -> Option<Vec<String>> {
+    let rows = raw
+        .get("data")
+        .and_then(serde_json::Value::as_array)
+        .or_else(|| raw.as_array())?;
+    Some(
+        rows.iter()
+            .filter_map(|row| row.get("id").and_then(serde_json::Value::as_str))
+            .map(str::to_string)
+            .collect(),
+    )
+}
+
+async fn compatible_model_probe(
+    request: reqwest::RequestBuilder,
+    model: &str,
+) -> Result<(), Problem> {
+    let response = request.send().await.map_err(|error| {
+        Problem::with(
+            "OpenBot could not reach the model endpoint.",
+            error.to_string(),
+        )
+    })?;
+    let status = response.status();
+    if !status.is_success() {
+        if matches!(status.as_u16(), 401 | 403) {
+            return Err("The model endpoint rejected this credential.".into());
+        }
+        if status.is_redirection() {
+            return Err("The model endpoint redirected the connection test. Update the provider address instead of forwarding a credential through a redirect.".into());
+        }
+        return Err(format!("The model endpoint answered with HTTP {status}.").into());
+    }
+
+    let body = response.text().await.map_err(|error| {
+        Problem::with(
+            "The model endpoint answered, but OpenBot could not read its model catalog.",
+            error.to_string(),
+        )
+    })?;
+    let Ok(raw) = serde_json::from_str::<serde_json::Value>(&body) else {
+        return Ok(());
+    };
+    let Some(ids) = compatible_model_ids(&raw) else {
+        return Ok(());
+    };
+    if ids.iter().any(|id| id == model) {
+        return Ok(());
+    }
+
+    let nearby: Vec<_> = ids
+        .iter()
+        .filter(|id| {
+            model
+                .split_once('/')
+                .map(|(vendor, _)| id.starts_with(&format!("{vendor}/")))
+                .unwrap_or(false)
+        })
+        .take(12)
+        .cloned()
+        .collect();
+    let detail = if nearby.is_empty() {
+        format!("The endpoint returned {} model ids, but not {model}.", ids.len())
+    } else {
+        format!(
+            "The endpoint returned {} model ids, but not {model}. Models from the same provider included: {}",
+            ids.len(),
+            nearby.join(", ")
+        )
+    };
+    Err(Problem::with(
+        format!(
+            "The model endpoint does not currently list '{model}'. Choose a model that this endpoint actually serves."
+        ),
+        detail,
+    ))
+}
+
 /// Check exactly the model/provider answer currently shown in setup, without saving it.
 ///
 /// API-key and compatible-endpoint choices make a bounded read-only provider request. Plan choices
@@ -1118,10 +1196,10 @@ async fn test_model_connection(
             if !api_key.trim().is_empty() {
                 request = request.bearer_auth(api_key);
             }
-            provider_probe(request, "The model endpoint").await?;
+            compatible_model_probe(request, &model).await?;
             Ok(ModelConnectionCheck {
                 detail: format!(
-                    "The endpoint answered successfully. OpenBot will use model {model:?}; the final setup check verifies a real Bot response."
+                    "The endpoint accepted the credential and lists model {model:?}. The final setup check verifies a real Bot response."
                 ),
             })
         }
