@@ -43,6 +43,10 @@ function profile(overrides: Partial<AgentProfile> = {}): AgentProfile {
     systemOwned: false,
     hidden: false,
     deletedAt: null,
+    endpoint: null,
+    hasAuth: false,
+    computerResourceProfile: "normal",
+    hasCallbackToken: false,
     ...overrides,
   };
 }
@@ -355,6 +359,10 @@ describe("agent lifecycle routes", () => {
           visibility: "private",
           hidden: false,
           systemOwned: false,
+          endpoint: null,
+          hasAuth: false,
+          computerResourceProfile: "normal",
+          hasCallbackToken: false,
           canManage: true,
           mine: true,
           builtIn: false,
@@ -368,6 +376,10 @@ describe("agent lifecycle routes", () => {
           visibility: "private",
           hidden: false,
           systemOwned: false,
+          endpoint: null,
+          hasAuth: false,
+          computerResourceProfile: "normal",
+          hasCallbackToken: false,
           canManage: false,
           mine: false,
           builtIn: false,
@@ -381,11 +393,48 @@ describe("agent lifecycle routes", () => {
           visibility: "public",
           hidden: false,
           systemOwned: true,
+          endpoint: null,
+          hasAuth: false,
+          computerResourceProfile: "normal",
+          hasCallbackToken: false,
           canManage: false,
           mine: false,
           builtIn: false,
         },
       ],
+    });
+  });
+
+  test("returns the saved Computer resource profile instead of forcing the UI back to Normal", async () => {
+    const store = fakeStore({
+      async get(_actor, id) {
+        return profile({ id, computerResourceProfile: "heavy" });
+      },
+      async update(_actor, id, input) {
+        return profile({ id, ...input });
+      },
+    });
+    const app = appFor(store);
+
+    const updated = await app.request("http://openbot.test/agent-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        ...validInput,
+        computerResourceProfile: "heavy",
+      }),
+    });
+    expect(updated.status).toBe(200);
+    expect((await json(updated)).agent).toMatchObject({
+      id: "agent-1",
+      computerResourceProfile: "heavy",
+    });
+
+    const detail = await app.request("http://openbot.test/agent-1");
+    expect(detail.status).toBe(200);
+    expect((await json(detail)).agent).toMatchObject({
+      id: "agent-1",
+      computerResourceProfile: "heavy",
     });
   });
 
