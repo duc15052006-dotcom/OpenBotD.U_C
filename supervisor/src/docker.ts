@@ -208,6 +208,49 @@ export function parseHostPort(value: unknown): number | undefined {
 }
 
 /**
+ * The effective CPU limit represented by Docker-compatible inspect output.
+ *
+ * Docker reports NanoCpus directly. Podman's compatibility API can instead report the equivalent
+ * CpuPeriod/CpuQuota pair and leave NanoCpus at zero, especially for limits above one CPU. Treat
+ * those two representations as the same resource limit so a stopped Computer can wake without
+ * trying to "repair" a quota the engine already enforces.
+ */
+export function inspectedNanoCpus(
+  hostConfig:
+    | {
+        NanoCpus?: number;
+        CpuPeriod?: number;
+        CpuQuota?: number;
+      }
+    | undefined,
+): number | undefined {
+  const direct = hostConfig?.NanoCpus;
+  if (typeof direct === "number" && direct > 0) return direct;
+
+  const period = hostConfig?.CpuPeriod;
+  const quota = hostConfig?.CpuQuota;
+  if (
+    typeof period === "number" &&
+    period > 0 &&
+    typeof quota === "number" &&
+    quota > 0
+  ) {
+    return Math.round((quota / period) * 1_000_000_000);
+  }
+
+  return typeof direct === "number" ? direct : undefined;
+}
+
+/**
+ * Docker spells an explicit no-restart policy as "no"; compatible engines may omit the name.
+ * Both mean OpenBot, rather than the engine, owns when an Agent Computer is started.
+ */
+export function inspectedRestartPolicyName(name: string | undefined): string {
+  return name?.trim() || "no";
+}
+
+
+/**
  * Whether a labelled thing belongs to this deployment.
  *
  * Containers created before the namespace label existed carry the default namespace, so an existing
@@ -389,6 +432,10 @@ async function inspectOwned(names: ComputerNames): Promise<{
     const published =
       info.NetworkSettings?.Ports?.[COMPUTER_PORT]?.[0]?.HostPort;
     const port = parseHostPort(published);
+    const nanoCpus = inspectedNanoCpus(info.HostConfig);
+    const restartPolicyName = inspectedRestartPolicyName(
+      info.HostConfig?.RestartPolicy?.Name,
+    );
     return {
       status: info.State?.Status ?? "unknown",
       ...(port !== undefined ? { port } : {}),
@@ -401,12 +448,8 @@ async function inspectOwned(names: ComputerNames): Promise<{
       ...(typeof info.HostConfig?.Memory === "number"
         ? { memoryBytes: info.HostConfig.Memory }
         : {}),
-      ...(typeof info.HostConfig?.NanoCpus === "number"
-        ? { nanoCpus: info.HostConfig.NanoCpus }
-        : {}),
-      ...(info.HostConfig?.RestartPolicy?.Name
-        ? { restartPolicyName: info.HostConfig.RestartPolicy.Name }
-        : {}),
+      ...(nanoCpus !== undefined ? { nanoCpus } : {}),
+      restartPolicyName,
       /*
        * When this run of the container began, which is what tells two runs apart.
        *
