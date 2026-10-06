@@ -1,7 +1,7 @@
 import Docker from "dockerode";
 import { isPrimaryComputerContainerName } from "./computer-container-name";
 import { wasRunningBeforeStop } from "./stop-state";
-import { inspectedNanoCpus, inspectedRestartPolicyName } from "./resource-inspect";
+import {\n  inspectedNanoCpus,\n  inspectedRestartPolicyName,\n} from "./resource-inspect";
 import {
   BOT_LABEL,
   type ComputerNames,
