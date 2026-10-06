@@ -504,7 +504,12 @@ pub fn detect() -> EngineStatus {
     // Podman's default connection can name a machine that is not running while another one is. That
     // is not "no engine", and creating a second machine in answer to it is the wrong repair.
     if let Some(machine) = running_machine(crate::acquire::MACHINE) {
-        let address = Address::new(Engine::Podman, Some(machine));
+        let connection = if cfg!(target_os = "windows") && machine == crate::acquire::MACHINE {
+            crate::acquire::owned_connection(true)
+        } else {
+            machine
+        };
+        let address = Address::new(Engine::Podman, Some(connection));
         if address.responds() {
             return answering(address);
         }
