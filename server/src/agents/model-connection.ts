@@ -90,6 +90,137 @@ function probeRequest(runtime: RuntimeAgentModel): {
   };
 }
 
+function compatibleCatalogModelIds(raw: unknown): string[] | null {
+  if (!raw || typeof raw !== "object") return null;
+  const data = (raw as { data?: unknown }).data;
+  if (!Array.isArray(data)) return null;
+  return data
+    .map((entry) =>
+      entry && typeof entry === "object"
+        ? (entry as { id?: unknown }).id
+        : undefined,
+    )
+    .filter((id): id is string => typeof id === "string");
+}
+
+function classifyFailure(
+  runtime: RuntimeAgentModel,
+  status: number,
+): ModelConnectionResult {
+  if (status === 401 || status === 403) {
+    return failure(
+      runtime,
+      "authentication_failed",
+      "The provider rejected the API key or this account does not have access to the selected model.",
+      status,
+    );
+  }
+  if (status === 404) {
+    return failure(
+      runtime,
+      "model_unavailable",
+      "The provider could not find the selected model for this account.",
+      status,
+    );
+  }
+  if (status === 429) {
+    return failure(
+      runtime,
+      "rate_limited",
+      "The provider is reachable but this account is currently rate-limited or out of quota.",
+      status,
+    );
+  }
+  if (status >= 500) {
+    return failure(
+      runtime,
+      "provider_unavailable",
+      "The provider is reachable but is currently unavailable.",
+      status,
+    );
+  }
+  return failure(
+    runtime,
+    "request_rejected",
+    "The provider rejected the model check.",
+    status,
+  );
+}
+
+async function testOpenAiCompatibleEndpoint(
+  runtime: RuntimeAgentModel,
+  guardedFetch: ModelProbeFetch,
+  signal: AbortSignal,
+): Promise<ModelConnectionResult> {
+  if (!runtime.apiKey || !runtime.baseUrl) {
+    throw new Error(
+      "compatible probe requires a custom endpoint and credential",
+    );
+  }
+
+  const base = withoutTrailingSlashes(runtime.baseUrl);
+  const headers = {
+    accept: "application/json",
+    authorization: `Bearer ${runtime.apiKey}`,
+  };
+
+  // Prefer the zero-token catalog check. Unlike OpenAI's own API, compatible gateways are not
+  // required to implement GET /models/:id; many expose only GET /models and chat completions.
+  const catalog = await guardedFetch(`${base}/models`, {
+    method: "GET",
+    headers,
+    signal,
+    redirect: "manual",
+  });
+  if (catalog.ok) {
+    try {
+      const ids = compatibleCatalogModelIds(await catalog.json());
+      if (ids?.includes(runtime.defaultModel)) {
+        return {
+          ok: true,
+          provider: runtime.provider,
+          model: runtime.defaultModel,
+        };
+      }
+    } catch {
+      // A non-standard success body is not proof that the model is unavailable. Verify it below.
+    }
+  } else if (
+    [401, 403, 429].includes(catalog.status) ||
+    catalog.status >= 500
+  ) {
+    return classifyFailure(runtime, catalog.status);
+  }
+
+  // If the catalog is absent, non-standard, or does not list the exact alias, verify the actual
+  // transport with the smallest useful completion. This avoids false 404s on compatible gateways
+  // such as xKiro while never reflecting provider response bodies into the browser.
+  const completion = await guardedFetch(`${base}/chat/completions`, {
+    method: "POST",
+    headers: {
+      ...headers,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model: runtime.defaultModel,
+      messages: [{ role: "user", content: "Reply with OK." }],
+      max_tokens: 1,
+      stream: false,
+    }),
+    signal,
+    redirect: "manual",
+  });
+
+  if (completion.ok) {
+    return {
+      ok: true,
+      provider: runtime.provider,
+      model: runtime.defaultModel,
+    };
+  }
+  return classifyFailure(runtime, completion.status);
+}
+
 function failure(
   runtime: RuntimeAgentModel,
   code: ModelConnectionFailureCode,
@@ -107,11 +238,12 @@ function failure(
 }
 
 /**
- * Verify that the selected provider accepts this credential for this model without spending a model
- * token. OpenAI and Anthropic both expose model-retrieve endpoints; Gemini's native Developer API
- * exposes the same model metadata. No provider response body is ever returned or logged here: an
- * upstream error may echo account or request details, and the settings screen only needs the class
- * of failure and HTTP status.
+ * Verify that the selected provider accepts this credential for this model.
+ *
+ * Native OpenAI, Anthropic and Google endpoints use model metadata and spend no inference tokens.
+ * OpenAI-compatible gateways first use GET /models; if that catalog cannot prove the exact alias,
+ * OpenBot falls back to a one-token chat completion because compatible gateways are not required to
+ * implement OpenAI's GET /models/:id route. No provider response body is returned or logged.
  */
 export async function testAgentModelConnection(
   runtime: RuntimeAgentModel,
@@ -131,6 +263,14 @@ export async function testAgentModelConnection(
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
+    if (runtime.provider === "openai" && runtime.baseUrl) {
+      return await testOpenAiCompatibleEndpoint(
+        runtime,
+        guardedFetch,
+        controller.signal,
+      );
+    }
+
     const response = await guardedFetch(request.url, {
       method: "GET",
       headers: request.headers,
@@ -145,45 +285,7 @@ export async function testAgentModelConnection(
         model: runtime.defaultModel,
       };
     }
-
-    if (response.status === 401 || response.status === 403) {
-      return failure(
-        runtime,
-        "authentication_failed",
-        "The provider rejected the API key or this account does not have access to the selected model.",
-        response.status,
-      );
-    }
-    if (response.status === 404) {
-      return failure(
-        runtime,
-        "model_unavailable",
-        "The provider could not find the selected model for this account.",
-        response.status,
-      );
-    }
-    if (response.status === 429) {
-      return failure(
-        runtime,
-        "rate_limited",
-        "The provider is reachable but this account is currently rate-limited or out of quota.",
-        response.status,
-      );
-    }
-    if (response.status >= 500) {
-      return failure(
-        runtime,
-        "provider_unavailable",
-        "The provider is reachable but is currently unavailable.",
-        response.status,
-      );
-    }
-    return failure(
-      runtime,
-      "request_rejected",
-      "The provider rejected the model check.",
-      response.status,
-    );
+    return classifyFailure(runtime, response.status);
   } catch {
     if (controller.signal.aborted) {
       return failure(
