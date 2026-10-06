@@ -35,7 +35,7 @@ describe("testAgentModelConnection", () => {
     });
   });
 
-  test("checks an OpenAI-compatible Base URL without generating tokens", async () => {
+  test("checks an OpenAI-compatible Base URL through its model catalog first", async () => {
     let seen: { url: string; method?: string; headers: Headers } | undefined;
     const fetcher: ModelProbeFetch = async (url, init) => {
       seen = {
@@ -43,7 +43,10 @@ describe("testAgentModelConnection", () => {
         method: init?.method,
         headers: new Headers(init?.headers),
       };
-      return response(200);
+      return Response.json({
+        object: "list",
+        data: [{ id: "vendor/model", object: "model" }],
+      });
     };
 
     const result = await testAgentModelConnection(
@@ -61,11 +64,99 @@ describe("testAgentModelConnection", () => {
       provider: "openai",
       model: "vendor/model",
     });
-    expect(seen?.url).toBe(
-      "https://gateway.example/api/v1/models/vendor%2Fmodel",
-    );
+    expect(seen?.url).toBe("https://gateway.example/api/v1/models");
     expect(seen?.method).toBe("GET");
     expect(seen?.headers.get("authorization")).toBe("Bearer openai-secret");
+  });
+
+  test("falls back to a minimal completion when a compatible gateway has no model-detail route", async () => {
+    const calls: Array<{
+      url: string;
+      method?: string;
+      body?: Record<string, unknown>;
+      headers: Headers;
+    }> = [];
+    const fetcher: ModelProbeFetch = async (url, init) => {
+      calls.push({
+        url,
+        method: init?.method,
+        body:
+          typeof init?.body === "string"
+            ? (JSON.parse(init.body) as Record<string, unknown>)
+            : undefined,
+        headers: new Headers(init?.headers),
+      });
+      if (url.endsWith("/models")) {
+        return response(404);
+      }
+      return Response.json({
+        id: "chatcmpl-test",
+        object: "chat.completion",
+        choices: [],
+      });
+    };
+
+    const result = await testAgentModelConnection(
+      {
+        provider: "openai",
+        defaultModel: "qwen/qwen3.8-max:free",
+        apiKey: "xkiro-secret",
+        baseUrl: "https://api.xkiro.example/v1",
+      },
+      fetcher,
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      provider: "openai",
+      model: "qwen/qwen3.8-max:free",
+    });
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.url).toBe("https://api.xkiro.example/v1/models");
+    expect(calls[1]?.url).toBe(
+      "https://api.xkiro.example/v1/chat/completions",
+    );
+    expect(calls[1]?.method).toBe("POST");
+    expect(calls[1]?.headers.get("authorization")).toBe(
+      "Bearer xkiro-secret",
+    );
+    expect(calls[1]?.headers.get("content-type")).toBe("application/json");
+    expect(calls[1]?.body).toMatchObject({
+      model: "qwen/qwen3.8-max:free",
+      max_tokens: 1,
+      stream: false,
+    });
+  });
+
+  test("uses a real compatible completion to distinguish a missing model", async () => {
+    const fetcher: ModelProbeFetch = async (url) => {
+      if (url.endsWith("/models")) {
+        return Response.json({
+          object: "list",
+          data: [{ id: "some-other-model" }],
+        });
+      }
+      return response(404);
+    };
+
+    const result = await testAgentModelConnection(
+      {
+        provider: "openai",
+        defaultModel: "missing/model",
+        apiKey: "secret",
+        baseUrl: "https://gateway.example/v1",
+      },
+      fetcher,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      provider: "openai",
+      model: "missing/model",
+      code: "model_unavailable",
+      error: "The provider could not find the selected model for this account.",
+      status: 404,
+    });
   });
 
   test("uses Anthropic model metadata and required headers", async () => {
