@@ -890,6 +890,8 @@ mod tests {
                 vec![
                     "machine".to_string(),
                     "ssh".to_string(),
+                    "--username".to_string(),
+                    "root".to_string(),
                     "openbot".to_string(),
                     host_gateway_config_script("192.168.127.254".parse().unwrap(), true),
                 ],
@@ -911,7 +913,7 @@ mod tests {
                     ["machine", "ssh", "openbot", "getent", "ahostsv4", "host.containers.internal"] => {
                         Ok("192.168.127.254 STREAM host.containers.internal\n".into())
                     }
-                    ["machine", "ssh", "openbot", script]
+                    ["machine", "ssh", "--username", "root", "openbot", script]
                         if script.contains("host_containers_internal_ip=\"192.168.127.254\"") =>
                     {
                         Ok(String::new())
