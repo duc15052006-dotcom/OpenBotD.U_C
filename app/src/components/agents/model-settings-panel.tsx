@@ -67,6 +67,7 @@ export function ModelSettingsPanel({
   const testConnection = useMutation(testAgentModelMutationOptions());
   const [draft, setDraft] = useState(EMPTY_DRAFT);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     if (!settings.data) return;
@@ -107,14 +108,20 @@ export function ModelSettingsPanel({
 
   const configured =
     settings.data?.mode === "custom" && settings.data.hasApiKey;
-  const update = <Key extends keyof Draft>(key: Key, value: Draft[Key]) =>
+  const update = <Key extends keyof Draft>(key: Key, value: Draft[Key]) => {
+    setNotice(null);
+    testConnection.reset();
     setDraft((current) => ({ ...current, [key]: value }));
+  };
 
   const submit = async () => {
     setError(null);
+    setNotice(null);
+    testConnection.reset();
     try {
       if (draft.mode === "global") {
         await save.mutateAsync({ agentId, input: { mode: "global" } });
+        setNotice("Settings saved.");
         return;
       }
       const temperature = draft.temperature.trim()
@@ -146,7 +153,12 @@ export function ModelSettingsPanel({
             : {}),
         },
       });
-      update("apiKey", "");
+      setDraft((current) => ({ ...current, apiKey: "" }));
+      setNotice(
+        draft.credentialSource === "custom"
+          ? "Settings saved. The custom API key is stored securely; the field is cleared intentionally."
+          : "Settings saved.",
+      );
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "Could not save.");
     }
@@ -340,6 +352,11 @@ export function ModelSettingsPanel({
       {error ? (
         <p className="text-sm text-destructive" role="alert">
           {error}
+        </p>
+      ) : null}
+      {notice ? (
+        <p className="text-sm text-emerald-600" role="status">
+          {notice}
         </p>
       ) : null}
       {testConnection.data ? (
