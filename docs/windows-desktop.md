@@ -160,3 +160,9 @@ The desktop native **OpenBot → On window close** menu stores one local prefere
 
 The preference is native-only and contains no credentials. Missing, unreadable, or malformed preference data falls back to **Ask every time**. Choosing Exit still goes through the normal quit cleanup path, so host processes, folder authority, per-Agent Computers, and Compose services are stopped before the desktop process exits.
 
+With **Ask every time**, the native question opens without waiting on the window event loop.
+Repeated X clicks share the same pending question. Windows acceptance must check both choices:
+the question appears and the window stays responsive; **Keep running in tray** hides the window
+and the tray can reopen it; **Exit and stop all Agents** finishes the normal cleanup before exit.
+Check this from setup as well as from a running deployment. Callback regression tests in CI
+do not replace that interactive Windows check.

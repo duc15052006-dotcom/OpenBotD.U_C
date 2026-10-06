@@ -49,6 +49,8 @@ struct Shell {
     stopped_in_session: std::sync::atomic::AtomicBool,
     /// Quit keeps the event loop alive until one background cleanup attempt finishes.
     quit: std::sync::Arc<QuitState>,
+    /// Repeated X clicks share the pending native close question.
+    close_prompt_pending: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Why the stack stopped, kept for the screen that has not loaded yet.
     ///
     /// Going back to the setup screen is a navigation, and a navigation is a fresh page: React
@@ -3589,6 +3591,36 @@ fn quit_menu_accelerator() -> Option<&'static str> {
     Some(QUIT_MENU_ACCELERATOR)
 }
 
+/// Close is an event-loop callback: the question must return before its answer arrives.
+/// Keep the choice separate from Quit so Exit still uses the existing cleanup path.
+fn request_window_close_with(
+    behavior: CloseBehavior,
+    pending: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    hide: impl FnOnce() + Send + 'static,
+    exit: impl FnOnce() + Send + 'static,
+    show: impl FnOnce(Box<dyn FnOnce(bool) + Send>),
+) {
+    use std::sync::atomic::Ordering;
+
+    match behavior {
+        CloseBehavior::KeepRunning => hide(),
+        CloseBehavior::Exit => exit(),
+        CloseBehavior::Ask => {
+            if pending.swap(true, Ordering::SeqCst) {
+                return;
+            }
+            show(Box::new(move |keep_running| {
+                pending.store(false, Ordering::SeqCst);
+                if keep_running {
+                    hide();
+                } else {
+                    exit();
+                }
+            }));
+        }
+    }
+}
+
 fn close_behavior_for<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> CloseBehavior {
     app.path()
         .app_config_dir()
@@ -3701,14 +3733,21 @@ fn main() {
 
                 api.prevent_close();
                 let app = window.app_handle();
-                match close_behavior_for(app) {
-                    CloseBehavior::KeepRunning => {
-                        let _ = window.hide();
-                    }
-                    CloseBehavior::Exit => app.exit(0),
-                    CloseBehavior::Ask => {
-                        let keep_running = app
-                            .dialog()
+                let behavior = close_behavior_for(app);
+                let pending = std::sync::Arc::clone(&app.state::<Shell>().close_prompt_pending);
+                let app = app.clone();
+                let hiding_window = window.clone();
+                let parent_window = window.clone();
+                let exiting_app = app.clone();
+                request_window_close_with(
+                    behavior,
+                    pending,
+                    move || {
+                        let _ = hiding_window.hide();
+                    },
+                    move || exiting_app.exit(0),
+                    move |answer| {
+                        app.dialog()
                             .message(
                                 "OpenBot is still running. Keep Agents and Computers running in the system tray, or exit OpenBot and stop all Agents?",
                             )
@@ -3718,16 +3757,10 @@ fn main() {
                                 "Keep running in tray".into(),
                                 "Exit and stop all Agents".into(),
                             ))
-                            .parent(window)
-                            .blocking_show();
-
-                        if keep_running {
-                            let _ = window.hide();
-                        } else {
-                            app.exit(0);
-                        }
-                    }
-                }
+                            .parent(&parent_window)
+                            .show(answer);
+                    },
+                );
             }
         })
         .setup(|app| {
@@ -3957,6 +3990,7 @@ mod tests {
     use std::io::{Read, Write};
 
     include!("stop_ipc_tests.rs");
+    include!("close_prompt_tests.rs");
 
     #[test]
     fn quit_menu_uses_the_standard_quit_shortcut() {
