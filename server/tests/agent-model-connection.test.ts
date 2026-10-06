@@ -113,13 +113,9 @@ describe("testAgentModelConnection", () => {
     });
     expect(calls).toHaveLength(2);
     expect(calls[0]?.url).toBe("https://api.xkiro.example/v1/models");
-    expect(calls[1]?.url).toBe(
-      "https://api.xkiro.example/v1/chat/completions",
-    );
+    expect(calls[1]?.url).toBe("https://api.xkiro.example/v1/chat/completions");
     expect(calls[1]?.method).toBe("POST");
-    expect(calls[1]?.headers.get("authorization")).toBe(
-      "Bearer xkiro-secret",
-    );
+    expect(calls[1]?.headers.get("authorization")).toBe("Bearer xkiro-secret");
     expect(calls[1]?.headers.get("content-type")).toBe("application/json");
     expect(calls[1]?.body).toMatchObject({
       model: "qwen/qwen3.8-max:free",
