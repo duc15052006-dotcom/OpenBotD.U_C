@@ -1,0 +1,200 @@
+name: Publish Windows preview
+
+# Deliberate candidate publication only. Ordinary verify pushes and PRs do not publish.
+# Stable publication retains its separate signed-release checklist and main-only workflow.
+on:
+  push:
+    branches: ["verify/publish-candidate"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preview-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.identity.outputs.tag }}
+      owner: ${{ steps.identity.outputs.owner }}
+      components: ${{ steps.identity.outputs.components }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+      - id: identity
+        run: |
+          set -euo pipefail
+          bun scripts/preview-distribution.ts metadata > preview.json
+          jq -r '"tag=" + .tag, "owner=" + .owner, "components=" + (.components | tojson)' preview.json >> "$GITHUB_OUTPUT"
+
+  checks:
+    needs: metadata
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  desktop-checks:
+    needs: metadata
+    uses: ./.github/workflows/desktop.yml
+    with:
+      deployment-tag: ${{ needs.metadata.outputs.tag }}
+    permissions:
+      contents: read
+
+  component-images:
+    needs: [metadata, checks, desktop-checks]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(needs.metadata.outputs.components) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ${{ matrix.image }}/Dockerfile
+          platforms: linux/amd64
+          outputs: type=image,name=ghcr.io/${{ needs.metadata.outputs.owner }}/openbot-${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true,oci-mediatypes=true,compression=zstd,force-compression=true
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.image }}-amd64
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}-amd64
+          provenance: true
+          sbom: true
+      - name: Record exact image
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          IMAGE: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          mkdir digests
+          printf '%s\n' "$DIGEST" > "digests/$IMAGE"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: preview-digest-${{ matrix.image }}
+          path: digests/
+          if-no-files-found: error
+          retention-days: 7
+
+  # Pull with an empty credential directory. A workflow-token pull cannot prove that a
+  # person installing the bot can download private-by-default GHCR packages.
+  anonymous-pull:
+    needs: [metadata, component-images]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(needs.metadata.outputs.components) }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: preview-digest-${{ matrix.image }}
+          path: digests
+      - name: Installer can pull without a GitHub account
+        env:
+          IMAGE: ${{ matrix.image }}
+          OWNER: ${{ needs.metadata.outputs.owner }}
+        run: |
+          set -euo pipefail
+          digest="$(cat "digests/$IMAGE")"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          DOCKER_CONFIG="$(mktemp -d)" docker pull --platform linux/amd64 "ghcr.io/$OWNER/openbot-$IMAGE@$digest" || {
+            echo "::error::Anonymous pull failed. The package owner must make this preview package public before publication can continue."
+            exit 1
+          }
+
+  publish:
+    needs: [metadata, checks, desktop-checks, component-images, anonymous-pull]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: preview-digest-*
+          path: digests
+          merge-multiple: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: openbot-desktop-windows
+          path: windows
+      - name: Validate complete runtime and exact installer
+        run: |
+          set -euo pipefail
+          bun scripts/preview-distribution.ts manifest digests
+          bun scripts/preview-distribution.ts installer windows > installer.json
+          mkdir release-assets
+          cp "$(jq -r .installer installer.json)" release-assets/
+          cp "$(jq -r .metadata installer.json)" release-assets/
+          cp container-images.json release-assets/
+          (cd release-assets && sha256sum *.exe *.json > checksums.txt)
+      - name: Publish immutable preview
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # Retry after a network failure may find the same tag. Never move or clobber it.
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" > tag.json 2>/dev/null; then
+            test "$(jq -r .object.type tag.json)" = commit
+            test "$(jq -r .object.sha tag.json)" = "$GITHUB_SHA"
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f "ref=refs/tags/$TAG" -f "sha=$GITHUB_SHA"
+          fi
+          cat > notes.md <<'NOTES'
+          Windows x64 preview with a complete, commit-pinned runtime.
+
+          This installer is unsigned and intended for testing. It is not the stable Windows release.
+          CI checks and installer acceptance passed for the source commit named by the tag.
+          Interactive first-run, real provider/Intelligence, permissions, persistence, diagnostics,
+          recovery, update and full process cleanup still require the Windows release checklist.
+          NOTES
+          gh release create "$TAG" release-assets/* \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --verify-tag \
+            --prerelease --latest=false --title "OpenBot Windows preview $TAG" --notes-file notes.md
+      - name: Published bootstrap URLs answer publicly
+        env:
+          TAG: ${{ needs.metadata.outputs.tag }}
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 5 --retry-all-errors \
+            "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/container-images.json" -o published.json
+          cmp container-images.json published.json
+          curl --fail --location --retry 5 --retry-all-errors \
+            "https://github.com/$GITHUB_REPOSITORY/archive/refs/tags/$TAG.tar.gz" -o source.tar.gz
+          mkdir source
+          tar xzf source.tar.gz --strip-components=1 -C source
+          for path in docker-compose.yml server app worker shared package.json bun.lock; do
+            test -e "source/$path"
+          done

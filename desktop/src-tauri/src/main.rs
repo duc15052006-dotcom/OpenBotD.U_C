@@ -645,12 +645,9 @@ async fn deployment_ready<R: tauri::Runtime>(
     .map_err(|error| format!("the download did not run: {error}"))
     .and_then(|result| result)
     .map_err(|error| {
-        report(app, "deployment", false, error.clone());
-        Problem::with(
-            "OpenBot could not download what it needs to run. Check the internet \
-             connection and try again.",
-            error,
-        )
+        let problem = deployment_release::download_problem(&error);
+        report(app, "deployment", false, problem.said.clone());
+        problem
     })?;
     report(
         app,

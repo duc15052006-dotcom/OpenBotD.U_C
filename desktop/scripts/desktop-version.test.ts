@@ -35,14 +35,17 @@ function fixture() {
     join(import.meta.dir, "desktop-version.ts"),
     join(root, "desktop/scripts/desktop-version.ts"),
   );
-  const run = (command: string) => {
+  const run = (command: string, deploymentTag = "") => {
     const result = Bun.spawnSync(
       [
         process.execPath,
         join(root, "desktop/scripts/desktop-version.ts"),
         command,
       ],
-      { cwd: tmpdir() },
+      {
+        cwd: tmpdir(),
+        env: { ...process.env, OPENBOT_DEPLOYMENT_TAG: deploymentTag },
+      },
     );
     return {
       code: result.exitCode,
@@ -188,5 +191,16 @@ test.each(["internal", "release"])(
     }
     expect(f.read("desktop/src-tauri/Cargo.toml")).toBe(cargo);
     expect(f.read("desktop/src-tauri/Cargo.lock")).toBe(lock);
+    const tag = `v0.0.10-rc.${sourceSha}`;
+    if (channel === "internal") {
+      expect(f.run(channel, tag).code).toBe(0);
+      expect(
+        JSON.parse(f.read("desktop/build-version.json")).deploymentTag,
+      ).toBe(tag);
+    } else {
+      expect(f.run(channel, tag).code).toBe(1);
+    }
+    expect(f.run(channel, `v0.0.10-rc.${"a".repeat(40)}`).code).toBe(1);
+    expect(f.run(channel, "v0.0.10").code).toBe(1);
   },
 );
