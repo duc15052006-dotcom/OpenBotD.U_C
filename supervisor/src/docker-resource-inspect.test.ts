@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { inspectedNanoCpus, inspectedRestartPolicyName } from "./resource-inspect";
+import {\n  inspectedNanoCpus,\n  inspectedRestartPolicyName,\n} from "./resource-inspect";
 
 describe("Docker-compatible resource inspection", () => {
   test("reads Docker NanoCpus directly", () => {
