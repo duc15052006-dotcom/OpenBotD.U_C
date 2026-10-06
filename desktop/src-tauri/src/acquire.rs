@@ -366,14 +366,20 @@ fn host_gateway_config_script(ip: Ipv4Addr, rootful: bool) -> String {
     } else {
         "systemctl --user try-restart podman.service podman.socket"
     };
+    let cgroup_directory = if rootful {
+        "/usr/share/containers/containers.conf.d"
+    } else {
+        "$HOME/.config/containers/containers.conf.d"
+    };
     format!(
         "set -e; \
          mkdir -p \"$HOME/.config/containers/containers.conf.d\"; \
          target=\"$HOME/{HOST_GATEWAY_CONFIG}\"; \
          tmp=\"$target.tmp\"; \
          cat > \"$tmp\" <<'EOF'\n[containers]\nhost_containers_internal_ip=\"{ip}\"\nEOF\n\
-         mkdir -p /usr/share/containers/containers.conf.d; \
-         cgroup_target=/usr/share/containers/containers.conf.d/999-podman-machine-wsl-cgroupfs.conf; \
+         cgroup_directory=\"{cgroup_directory}\"; \
+         mkdir -p \"$cgroup_directory\"; \
+         cgroup_target=\"$cgroup_directory/999-podman-machine-wsl-cgroupfs.conf\"; \
          cgroup_tmp=\"$cgroup_target.tmp\"; \
          cat > \"$cgroup_tmp\" <<'EOF'\n[engine]\ncgroup_manager=\"cgroupfs\"\nEOF\n\
          changed=0; \
@@ -906,7 +912,11 @@ mod tests {
             "{script}"
         );
         assert!(
-            script.contains("systemctl --user try-restart podman.service podman.socket"),
+            script.contains("systemctl try-restart podman.service podman.socket"),
+            "{script}"
+        );
+        assert!(
+            script.contains("/usr/share/containers/containers.conf.d"),
             "{script}"
         );
     }
@@ -985,7 +995,7 @@ mod tests {
             std::fs::set_permissions(&fake_systemctl, std::fs::Permissions::from_mode(0o755))
                 .unwrap();
         }
-        let command = host_gateway_config_script("192.168.127.254".parse().unwrap(), true);
+        let command = host_gateway_config_script("192.168.127.254".parse().unwrap(), false);
         let joined_remote_command = [command.as_str()].join(" ");
         let path = format!(
             "{}:{}",
@@ -1013,7 +1023,7 @@ mod tests {
         let systemctl_calls = std::fs::read_to_string(&calls).unwrap();
         assert_eq!(
             systemctl_calls,
-            "try-restart podman.service podman.socket\n"
+            "--user try-restart podman.service podman.socket\n"
         );
         let _ = std::fs::remove_dir_all(root);
     }
