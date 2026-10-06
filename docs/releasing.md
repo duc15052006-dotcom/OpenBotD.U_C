@@ -216,3 +216,10 @@ release. See [development.md](development.md#quality-checks) for where the cooki
 
 The release PR asks for the result in a comment. That is deliberately a person rather than a robot:
 it is the one gate that cannot be automated, so it is the one gate worth naming.
+
+The journey uses a unique example.com probe for each navigation and requires audit evidence for that
+exact probe, Bot and action. The refusal must also name the deny rule and show the action was not
+carried out. Old or unrelated audit rows cannot satisfy it. The HTTP fixture regressions in
+`tests/smoke-audit-regression.test.ts` check these assertions without real credentials; passing those
+regressions is not a passing Intelligence smoke journey. Failed HTTP response bodies are withheld
+from the smoke log because a deployment may include credentials in an error response.
