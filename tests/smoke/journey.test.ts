@@ -65,7 +65,7 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await api(path, init);
   if (!response.ok) {
     throw new Error(
-      `${init?.method ?? "GET"} ${path} answered ${response.status}: ${(await response.text()).slice(0, 200)}`,
+      `${init?.method ?? "GET"} ${path} answered ${response.status}. Response body withheld because it may contain credentials.`,
     );
   }
   return (await response.json()) as T;
@@ -135,12 +135,12 @@ describe.skipIf(!asked)("a Bot acting on its computer", () => {
   test(
     "reaches a page through the gateway, and the trail records it",
     async () => {
-      const before = Date.now();
+      const probe = `https://example.com/?openbot-smoke=${crypto.randomUUID()}`;
       const result = await json<{ url: string; title: string }>(
         `/api/computers/${BOT}/navigate`,
         {
           method: "POST",
-          body: JSON.stringify({ url: "https://example.com" }),
+          body: JSON.stringify({ url: probe }),
         },
       );
       expect(result.url).toContain("example.com");
@@ -155,12 +155,19 @@ describe.skipIf(!asked)("a Bot acting on its computer", () => {
       expect(shot.width).toBeGreaterThan(0);
 
       const trail = await json<{
-        events: { eventType: string; createdAt: string }[];
+        events: {
+          eventType: string;
+          targetId: string;
+          payload: Record<string, unknown>;
+        }[];
       }>("/api/admin/audit-events?limit=25");
       const recorded = trail.events.some(
         (event) =>
-          event.eventType.startsWith("computer.") &&
-          Date.parse(event.createdAt) >= before - 60_000,
+          event.eventType === "computer.action_allowed" &&
+          event.targetId === BOT &&
+          event.payload.bot === BOT &&
+          event.payload.action === "computer_navigate" &&
+          event.payload.page === probe,
       );
       expect(recorded).toBe(true);
     },
@@ -172,6 +179,7 @@ describe.skipIf(!asked)("a Bot acting on its computer", () => {
     async () => {
       const original = await json<{ policy: unknown }>("/api/computers/policy");
       const rule = 'contains(page.host, "example.com")';
+      const probe = `https://example.com/?openbot-smoke=${crypto.randomUUID()}`;
 
       // The listing nests it under `policy`; the write takes the policy itself.
       await json("/api/computers/policy", {
@@ -186,16 +194,36 @@ describe.skipIf(!asked)("a Bot acting on its computer", () => {
       try {
         const refused = await api(`/api/computers/${BOT}/navigate`, {
           method: "POST",
-          body: JSON.stringify({ url: "https://example.com" }),
+          body: JSON.stringify({ url: probe }),
         });
-        expect(refused.ok).toBe(false);
-        expect((await refused.text()).toLowerCase()).toContain("policy");
+        expect(refused.status).toBe(403);
+        expect((await refused.text()).toLowerCase().includes("policy")).toBe(
+          true,
+        );
 
         const trail = await json<{
-          events: { eventType: string; payload: Record<string, unknown> }[];
+          events: {
+            eventType: string;
+            targetId: string;
+            payload: Record<string, unknown> & {
+              decision?: {
+                rule?: string;
+                allowed?: boolean;
+                carriedOut?: boolean;
+              };
+            };
+          }[];
         }>("/api/admin/audit-events?limit=25");
-        const refusal = trail.events.find((event) =>
-          event.eventType.includes("refused"),
+        const refusal = trail.events.find(
+          (event) =>
+            event.eventType === "computer.action_refused" &&
+            event.targetId === BOT &&
+            event.payload.bot === BOT &&
+            event.payload.action === "computer_navigate" &&
+            event.payload.page === probe &&
+            event.payload.decision?.rule === rule &&
+            event.payload.decision.allowed === false &&
+            event.payload.decision.carriedOut === false,
         );
         expect(refusal).toBeDefined();
       } finally {
