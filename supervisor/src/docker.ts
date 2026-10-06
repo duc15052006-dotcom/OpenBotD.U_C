@@ -1,7 +1,10 @@
 import Docker from "dockerode";
 import { isPrimaryComputerContainerName } from "./computer-container-name";
 import { wasRunningBeforeStop } from "./stop-state";
-import {\n  inspectedNanoCpus,\n  inspectedRestartPolicyName,\n} from "./resource-inspect";
+import {
+  inspectedNanoCpus,
+  inspectedRestartPolicyName,
+} from "./resource-inspect";
 import {
   BOT_LABEL,
   type ComputerNames,
@@ -207,7 +210,6 @@ export function parseHostPort(value: unknown): number | undefined {
   if (!Number.isSafeInteger(port) || port < 1 || port > 65535) return undefined;
   return port;
 }
-
 
 /**
  * Whether a labelled thing belongs to this deployment.
