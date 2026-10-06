@@ -751,6 +751,9 @@ function agentDto(actor: AgentActor, agent: AgentProfile) {
     // and any credential for it lives in the vault, never in this row.
     endpoint: agent.endpoint,
     hasAuth: agent.hasAuth,
+    // The UI edits this preset in place; omitting it makes every refetch fall back to Normal even
+    // when the store has successfully persisted Light or Heavy.
+    computerResourceProfile: agent.computerResourceProfile,
     // Whether one exists, never what it is.
     hasCallbackToken: agent.hasCallbackToken,
     canManage: canManageAgent(actor, agent),
