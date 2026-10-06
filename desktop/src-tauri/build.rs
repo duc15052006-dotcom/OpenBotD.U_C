@@ -30,5 +30,7 @@ fn main() {
     );
     println!("cargo:rerun-if-env-changed=RUSTC");
     println!("cargo:rerun-if-env-changed=PATH");
+    println!("cargo:rerun-if-env-changed=OPENBOT_DEPLOYMENT_TAG");
+    println!("cargo:rerun-if-env-changed=OPENBOT_SOURCE_SHA");
     tauri_build::build()
 }
