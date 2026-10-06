@@ -1118,7 +1118,10 @@ async fn compatible_model_probe(
         .cloned()
         .collect();
     let detail = if nearby.is_empty() {
-        format!("The endpoint returned {} model ids, but not {model}.", ids.len())
+        format!(
+            "The endpoint returned {} model ids, but not {model}.",
+            ids.len()
+        )
     } else {
         format!(
             "The endpoint returned {} model ids, but not {model}. Models from the same provider included: {}",
