@@ -79,7 +79,6 @@ test("leaving a configured key blank preserves it in the save request", async ()
   expect(saved).not.toHaveProperty("apiKey");
 });
 
-
 test("saving a replacement key clears only the field and confirms secure storage", async () => {
   let saved: Record<string, unknown> | undefined;
   globalThis.fetch = Object.assign(
@@ -139,7 +138,9 @@ test("editing settings clears a stale connection-test failure", async () => {
   const user = userEvent.setup({ document: view.baseElement.ownerDocument });
 
   await user.click(view.getByRole("button", { name: "Test connection" }));
-  await waitFor(() => expect(view.getByText("Old provider failure")).toBeTruthy());
+  await waitFor(() =>
+    expect(view.getByText("Old provider failure")).toBeTruthy(),
+  );
 
   await user.type(view.getByLabelText("Model"), "-next");
 
