@@ -872,6 +872,10 @@ mod tests {
                     .into_iter()
                     .map(str::to_string)
                     .collect::<Vec<_>>(),
+                vec!["machine", "inspect", "openbot"]
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect::<Vec<_>>(),
                 vec![
                     "machine",
                     "ssh",
