@@ -79,6 +79,20 @@ impl StepOutcome {
 /// offered.
 pub const MACHINE: &str = "openbot";
 
+/// The connection OpenBot uses for its owned machine.
+///
+/// Windows WSL 2.9.x has a rootless cgroup delegation regression that can leave the `pids`
+/// controller unavailable to crun, so the owned Windows machine deliberately runs rootful inside
+/// its isolated Podman VM. Podman creates a separate `<machine>-root` connection for that store.
+/// Other platforms keep the ordinary rootless connection.
+pub fn owned_connection(target_is_windows: bool) -> String {
+    if target_is_windows {
+        format!("{MACHINE}-root")
+    } else {
+        MACHINE.to_string()
+    }
+}
+
 const USER_MODE_NETWORKING_FLAG: &str = "--user-mode-networking=true";
 const HOST_GATEWAY_CONFIG: &str = ".config/containers/containers.conf.d/90-openbot-host.conf";
 
@@ -193,6 +207,10 @@ fn create_machine_args(
     ];
     if target_is_windows {
         args.push(USER_MODE_NETWORKING_FLAG.to_string());
+        // Rootless Podman on current WSL 2.9 pre-releases can fail every container start with
+        // `crun: controller pids is not available`. The VM is already OpenBot-owned isolation,
+        // so prefer the rootful store there rather than dropping cgroup limits.
+        args.push("--rootful".to_string());
     }
     args
 }
@@ -201,6 +219,7 @@ fn create_machine_args(
 struct MachineNetworking {
     state: String,
     user_mode: bool,
+    rootful: bool,
 }
 
 fn prepare_user_mode_networking_before_start(
@@ -213,13 +232,25 @@ fn prepare_user_mode_networking_before_start(
 
     let listing = run(&["machine", "inspect", MACHINE])?;
     let networking = owned_machine_networking(&listing)?;
-    if networking.state.eq_ignore_ascii_case("running") && !networking.user_mode {
+    if networking.state.eq_ignore_ascii_case("running")
+        && (!networking.user_mode || !networking.rootful)
+    {
         return Err(format!(
-            "{MACHINE} is already running without Podman user-mode networking. Stop the OpenBot engine machine and start OpenBot again so host callbacks can be configured."
+            "{MACHINE} is already running with an incompatible Windows Podman configuration. Stop the OpenBot engine machine and start OpenBot again so user-mode networking and the rootful runtime can be configured."
         ));
     }
-    if networking.state.eq_ignore_ascii_case("stopped") && !networking.user_mode {
-        run(&["machine", "set", USER_MODE_NETWORKING_FLAG, MACHINE])?;
+    if networking.state.eq_ignore_ascii_case("stopped")
+        && (!networking.user_mode || !networking.rootful)
+    {
+        let mut args = vec!["machine", "set"];
+        if !networking.user_mode {
+            args.push(USER_MODE_NETWORKING_FLAG);
+        }
+        if !networking.rootful {
+            args.push("--rootful=true");
+        }
+        args.push(MACHINE);
+        run(&args)?;
     }
     Ok(())
 }
@@ -242,12 +273,21 @@ fn owned_machine_networking(listing: &str) -> Result<MachineNetworking, String> 
         .ok_or_else(|| {
             format!("podman machine inspect did not include {MACHINE} user-mode networking")
         })?;
-    Ok(MachineNetworking { state, user_mode })
+    let rootful = machine
+        .get("Rootful")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| format!("podman machine inspect did not include {MACHINE} rootful mode"))?;
+    Ok(MachineNetworking {
+        state,
+        user_mode,
+        rootful,
+    })
 }
 
 fn configure_host_gateway_after_start(
     run: &mut impl FnMut(&[&str]) -> Result<String, String>,
     target_is_windows: bool,
+    rootful: bool,
 ) -> Result<(), String> {
     if !target_is_windows {
         return Ok(());
@@ -262,8 +302,12 @@ fn configure_host_gateway_after_start(
         "host.containers.internal",
     ])?;
     let ip = first_valid_host_gateway_ip(&resolved)?;
-    let script = host_gateway_config_script(ip);
-    run(&["machine", "ssh", MACHINE, &script]).map(|_| ())
+    let script = host_gateway_config_script(ip, rootful);
+    if rootful {
+        run(&["machine", "ssh", "--username", "root", MACHINE, &script]).map(|_| ())
+    } else {
+        run(&["machine", "ssh", MACHINE, &script]).map(|_| ())
+    }
 }
 
 fn configure_owned_windows_podman_for_compose(
@@ -276,12 +320,12 @@ fn configure_owned_windows_podman_for_compose(
     }
     let listing = run(&["machine", "inspect", MACHINE])?;
     let networking = owned_machine_networking(&listing)?;
-    if !networking.user_mode {
+    if !networking.user_mode || !networking.rootful {
         return Err(format!(
-            "{MACHINE} is running without Podman user-mode networking. Stop the OpenBot engine machine and start OpenBot again so host callbacks can be configured."
+            "{MACHINE} is running with an incompatible Windows Podman configuration. Stop the OpenBot engine machine, run `podman machine set --user-mode-networking=true --rootful=true {MACHINE}`, then start OpenBot again."
         ));
     }
-    configure_host_gateway_after_start(&mut run, true)
+    configure_host_gateway_after_start(&mut run, true, networking.rootful)
 }
 
 /// Run before Compose even when an existing engine skipped the install/start steps.
@@ -292,7 +336,11 @@ pub fn prepare_for_compose(address: &Address) -> Result<(), String> {
 fn owned_windows_podman_address(address: &Address, target_is_windows: bool) -> bool {
     target_is_windows
         && address.engine == Engine::Podman
-        && address.connection.as_deref() == Some(MACHINE)
+        && matches!(
+            address.connection.as_deref(),
+            Some(connection)
+                if connection == MACHINE || connection == owned_connection(true)
+        )
 }
 
 fn first_valid_host_gateway_ip(raw: &str) -> Result<Ipv4Addr, String> {
@@ -315,7 +363,12 @@ fn validate_host_gateway_ip(ip: Ipv4Addr) -> Result<Ipv4Addr, String> {
     Ok(ip)
 }
 
-fn host_gateway_config_script(ip: Ipv4Addr) -> String {
+fn host_gateway_config_script(ip: Ipv4Addr, rootful: bool) -> String {
+    let restart = if rootful {
+        "systemctl try-restart podman.service podman.socket"
+    } else {
+        "systemctl --user try-restart podman.service"
+    };
     format!(
         "set -e; \
          mkdir -p \"$HOME/.config/containers/containers.conf.d\"; \
@@ -326,7 +379,7 @@ fn host_gateway_config_script(ip: Ipv4Addr) -> String {
            rm \"$tmp\"; \
          else \
            mv \"$tmp\" \"$target\"; \
-           systemctl --user try-restart podman.service; \
+           {restart}; \
          fi"
     )
 }
@@ -345,8 +398,13 @@ fn start_machine_with(
         }
         Err(error) => return StepOutcome::stopped(Step::StartMachine, &error),
     };
-    if let Err(error) = configure_host_gateway_after_start(&mut run, target_is_windows) {
-        return StepOutcome::stopped(Step::StartMachine, &error);
+    if target_is_windows {
+        let address = Address::new(Engine::Podman, Some(owned_connection(true)));
+        if let Err(error) =
+            configure_owned_windows_podman_for_compose(&address, &mut run, true)
+        {
+            return StepOutcome::stopped(Step::StartMachine, &error);
+        }
     }
     StepOutcome::went(Step::StartMachine, started)
 }
@@ -382,7 +440,10 @@ fn explain_machine_error(error: &str) -> String {
 /// Always by name. The default connection belongs to whoever set it, and after `machine init` it is
 /// usually still pointing somewhere else.
 pub fn address() -> Address {
-    Address::new(Engine::Podman, Some(MACHINE.to_string()))
+    Address::new(
+        Engine::Podman,
+        Some(owned_connection(cfg!(target_os = "windows"))),
+    )
 }
 
 /// The gate before Compose is touched.
@@ -520,11 +581,16 @@ mod tests {
     }
 
     fn machine_inspect(state: &str, user_mode: bool) -> String {
+        machine_inspect_with_rootful(state, user_mode, true)
+    }
+
+    fn machine_inspect_with_rootful(state: &str, user_mode: bool, rootful: bool) -> String {
         serde_json::json!([
             {
                 "Name": "openbot",
                 "State": state,
-                "UserModeNetworking": user_mode
+                "UserModeNetworking": user_mode,
+                "Rootful": rootful
             }
         ])
         .to_string()
@@ -679,7 +745,8 @@ mod tests {
                 "8192",
                 "--disk-size",
                 "64",
-                "--user-mode-networking=true"
+                "--user-mode-networking=true",
+                "--rootful"
             ]
         );
     }
@@ -687,7 +754,7 @@ mod tests {
     #[test]
     fn existing_stopped_windows_machine_is_configured_before_start() {
         let mut calls = Vec::<Vec<String>>::new();
-        let inspect = machine_inspect("stopped", false);
+        let inspect = machine_inspect_with_rootful("stopped", false, false);
 
         prepare_user_mode_networking_before_start(
             &mut |args: &[&str]| {
@@ -705,7 +772,13 @@ mod tests {
             calls,
             [
                 vec!["machine", "inspect", "openbot"],
-                vec!["machine", "set", "--user-mode-networking=true", "openbot"]
+                vec![
+                    "machine",
+                    "set",
+                    "--user-mode-networking=true",
+                    "--rootful=true",
+                    "openbot"
+                ]
             ]
         );
     }
@@ -713,7 +786,7 @@ mod tests {
     #[test]
     fn running_windows_machine_without_user_mode_fails_loud() {
         let mut calls = Vec::<Vec<String>>::new();
-        let inspect = machine_inspect("running", false);
+        let inspect = machine_inspect_with_rootful("running", false, false);
 
         let error = prepare_user_mode_networking_before_start(
             &mut |args| {
@@ -726,7 +799,7 @@ mod tests {
 
         assert_eq!(calls, [vec!["machine", "inspect", "openbot"]]);
         assert!(
-            error.contains("without Podman user-mode networking"),
+            error.contains("incompatible Windows Podman configuration"),
             "{error}"
         );
     }
@@ -775,7 +848,7 @@ mod tests {
                     ["machine", "ssh", "openbot", "getent", "ahostsv4", "host.containers.internal"] => {
                         Ok("192.168.127.254 STREAM host.containers.internal\n".into())
                     }
-                    ["machine", "ssh", "openbot", script]
+                    ["machine", "ssh", "--username", "root", "openbot", script]
                         if script.contains("host_containers_internal_ip=\"192.168.127.254\"") =>
                     {
                         Ok(String::new())
@@ -818,7 +891,7 @@ mod tests {
                     "machine".to_string(),
                     "ssh".to_string(),
                     "openbot".to_string(),
-                    host_gateway_config_script("192.168.127.254".parse().unwrap()),
+                    host_gateway_config_script("192.168.127.254".parse().unwrap(), true),
                 ],
             ]
         );
@@ -898,7 +971,7 @@ mod tests {
             std::fs::set_permissions(&fake_systemctl, std::fs::Permissions::from_mode(0o755))
                 .unwrap();
         }
-        let command = host_gateway_config_script("192.168.127.254".parse().unwrap());
+        let command = host_gateway_config_script("192.168.127.254".parse().unwrap(), true);
         let joined_remote_command = [command.as_str()].join(" ");
         let path = format!(
             "{}:{}",
@@ -924,7 +997,10 @@ mod tests {
             "[containers]\nhost_containers_internal_ip=\"192.168.127.254\"\n"
         );
         let systemctl_calls = std::fs::read_to_string(&calls).unwrap();
-        assert_eq!(systemctl_calls, "--user try-restart podman.service\n");
+        assert_eq!(
+            systemctl_calls,
+            "try-restart podman.service podman.socket\n"
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -975,7 +1051,10 @@ mod tests {
     #[test]
     fn the_machine_this_app_starts_is_addressed_by_name_not_by_the_default_connection() {
         let addressed = address();
-        assert_eq!(addressed.connection.as_deref(), Some(MACHINE));
+        assert_eq!(
+            addressed.connection.as_deref(),
+            Some(owned_connection(cfg!(target_os = "windows")).as_str())
+        );
         assert_eq!(addressed.engine, Engine::Podman);
     }
 
