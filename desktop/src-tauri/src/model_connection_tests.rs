@@ -206,7 +206,6 @@ fn protected_probe_rejects_credentials_embedded_in_endpoint_url() {
     assert!(error.said.contains("credentials"));
 }
 
-
 #[test]
 fn compatible_catalog_reads_standard_openai_model_ids() {
     let raw = serde_json::json!({
