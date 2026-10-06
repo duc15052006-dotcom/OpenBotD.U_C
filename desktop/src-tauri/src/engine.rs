@@ -223,13 +223,6 @@ impl Address {
         let (binary, arguments) = self.parts();
         let mut command = command_at(self.engine, &binary);
         command.args(arguments);
-        if self.engine == Engine::Podman
-            && is_openbot_windows_podman_connection(self.connection.as_deref())
-        {
-            if let Some(config) = windows_podman_cgroup_override() {
-                command.env("CONTAINERS_CONF_OVERRIDE", config);
-            }
-        }
         command
     }
 
@@ -329,41 +322,6 @@ pub fn tools_dir_under(downloads: &Path) -> PathBuf {
 
 fn tools_dir() -> Option<&'static PathBuf> {
     TOOLS.get()
-}
-
-/// WSL 2.9+/3.0 moved cgroup v2 into a per-distro hierarchy. Current Podman machines can then
-/// fail every container start under the default systemd cgroup manager with
-/// `crun: controller pids is not available`. Podman's documented Windows workaround is
-/// `cgroup_manager="cgroupfs"`. Keep it private to OpenBot-owned Podman commands instead of
-/// rewriting the user's global %APPDATA% containers.conf.
-#[cfg(target_os = "windows")]
-fn windows_podman_cgroup_override() -> Option<PathBuf> {
-    const CONTENT: &str = "[engine]\ncgroup_manager=\"cgroupfs\"\n";
-    let directory = tools_dir()?;
-    if std::fs::create_dir_all(directory).is_err() {
-        return None;
-    }
-    let path = directory.join("openbot-containers.conf");
-    if std::fs::read_to_string(&path).ok().as_deref() != Some(CONTENT)
-        && std::fs::write(&path, CONTENT).is_err()
-    {
-        return None;
-    }
-    Some(path)
-}
-
-#[cfg(not(target_os = "windows"))]
-fn windows_podman_cgroup_override() -> Option<PathBuf> {
-    None
-}
-
-fn is_openbot_windows_podman_connection(connection: Option<&str>) -> bool {
-    cfg!(target_os = "windows")
-        && matches!(
-            connection,
-            Some(name) if name == crate::acquire::MACHINE
-                || name == format!("{}-root", crate::acquire::MACHINE)
-        )
 }
 
 /// A command that runs this engine's binary, wherever it actually is.
@@ -749,37 +707,6 @@ fn main() {
         };
         assert!(missing.engine.is_none());
         assert!(!missing.responding);
-    }
-
-    #[test]
-    fn cgroup_workaround_is_scoped_to_openbot_windows_podman_connections() {
-        assert_eq!(
-            is_openbot_windows_podman_connection(Some("openbot")),
-            cfg!(target_os = "windows")
-        );
-        assert_eq!(
-            is_openbot_windows_podman_connection(Some("openbot-root")),
-            cfg!(target_os = "windows")
-        );
-        assert!(!is_openbot_windows_podman_connection(Some("somebody-else")));
-        assert!(!is_openbot_windows_podman_connection(None));
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn openbot_windows_podman_command_carries_private_cgroupfs_override() {
-        let root = crate::test_support::temp_root("podman cgroup override");
-        tools_live_in(root.clone());
-        let command = Address::new(Engine::Podman, Some("openbot".into())).command();
-        let config = command
-            .get_envs()
-            .find(|(key, _)| *key == "CONTAINERS_CONF_OVERRIDE")
-            .and_then(|(_, value)| value.map(PathBuf::from))
-            .expect("OpenBot-owned Windows Podman must carry a private containers.conf override");
-        assert_eq!(
-            std::fs::read_to_string(config).unwrap(),
-            "[engine]\ncgroup_manager=\"cgroupfs\"\n"
-        );
     }
 
     #[test]
