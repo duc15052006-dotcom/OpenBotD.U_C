@@ -3732,13 +3732,16 @@ fn main() {
                 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
                 api.prevent_close();
-                let app = window.app_handle().clone();
+                let app = window.app_handle();
+                let behavior = close_behavior_for(app);
+                let pending = std::sync::Arc::clone(&app.state::<Shell>().close_prompt_pending);
+                let app = app.clone();
                 let hiding_window = window.clone();
                 let parent_window = window.clone();
                 let exiting_app = app.clone();
                 request_window_close_with(
-                    close_behavior_for(&app),
-                    std::sync::Arc::clone(&app.state::<Shell>().close_prompt_pending),
+                    behavior,
+                    pending,
                     move || {
                         let _ = hiding_window.hide();
                     },
