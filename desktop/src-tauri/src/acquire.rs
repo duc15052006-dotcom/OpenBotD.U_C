@@ -321,12 +321,12 @@ fn host_gateway_config_script(ip: Ipv4Addr) -> String {
          mkdir -p \"$HOME/.config/containers/containers.conf.d\"; \
          target=\"$HOME/{HOST_GATEWAY_CONFIG}\"; \
          tmp=\"$target.tmp\"; \
-         cat > \"$tmp\" <<'EOF'\n[containers]\nhost_containers_internal_ip=\"{ip}\"\nEOF\n\
+         cat > \"$tmp\" <<'EOF'\n[containers]\nhost_containers_internal_ip=\"{ip}\"\n[engine]\ncgroup_manager=\"cgroupfs\"\nEOF\n\
          if [ -f \"$target\" ] && cmp -s \"$tmp\" \"$target\"; then \
            rm \"$tmp\"; \
          else \
            mv \"$tmp\" \"$target\"; \
-           systemctl --user try-restart podman.service; \
+           systemctl --user try-restart podman.service podman.socket; \
          fi"
     )
 }
@@ -825,6 +825,19 @@ mod tests {
     }
 
     #[test]
+    fn windows_podman_config_forces_cgroupfs_for_current_wsl_layout() {
+        let script = host_gateway_config_script("192.168.127.254".parse().unwrap());
+        assert!(
+            script.contains("[engine]\\ncgroup_manager=\\\"cgroupfs\\\""),
+            "{script}"
+        );
+        assert!(
+            script.contains("systemctl --user try-restart podman.service podman.socket"),
+            "{script}"
+        );
+    }
+
+    #[test]
     fn owned_windows_podman_health_gate_writes_host_gateway_config() {
         let mut calls = Vec::<Vec<String>>::new();
         let inspect = machine_inspect("running", true);
@@ -921,10 +934,13 @@ mod tests {
         let written = std::fs::read_to_string(home.join(HOST_GATEWAY_CONFIG)).unwrap();
         assert_eq!(
             written,
-            "[containers]\nhost_containers_internal_ip=\"192.168.127.254\"\n"
+            "[containers]\nhost_containers_internal_ip=\"192.168.127.254\"\n[engine]\ncgroup_manager=\"cgroupfs\"\n"
         );
         let systemctl_calls = std::fs::read_to_string(&calls).unwrap();
-        assert_eq!(systemctl_calls, "--user try-restart podman.service\n");
+        assert_eq!(
+            systemctl_calls,
+            "--user try-restart podman.service podman.socket\n"
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
