@@ -22,6 +22,7 @@ from .tool_runtime import (
     model_messages,
     next_step,
 )
+from .token_efficiency import qwen3_max_output_tokens, qwen3_model
 
 TOKEN_HEADER = "x-openbot-agent-token"
 
@@ -87,6 +88,17 @@ def _resolve_provider(provider: str):
     return OPENBOT_PROVIDER_ALIASES.get(provider, provider)
 
 
+def _model_kwargs(provider: str, model: str):
+    kwargs = _google_genai_kwargs(provider)
+    # Qwen3 hybrid-thinking models can otherwise spend a very large hidden/output budget on a
+    # tiny tool decision. xKiro/OpenAI-compatible endpoints honor max_tokens as the hard cost
+    # ceiling, so keep one even if the model ignores a reasoning control. Long generations can
+    # deliberately raise it through OPENBOT_QWEN_MAX_OUTPUT_TOKENS.
+    if provider == "openai" and qwen3_model(model):
+        kwargs["max_tokens"] = qwen3_max_output_tokens()
+    return kwargs
+
+
 def _chatgpt_auth_file(store: str) -> Path:
     path = Path(store)
     if not path.exists():
@@ -149,11 +161,11 @@ def _model():
         }.get(provider, model)
     prefix, separator, _ = model.partition(":")
     if separator and prefix in MODEL_PROVIDERS:
-        return init_chat_model(model, **_google_genai_kwargs(prefix))
+        return init_chat_model(model, **_model_kwargs(prefix, model))
     return init_chat_model(
         model,
         model_provider=provider,
-        **_google_genai_kwargs(provider),
+        **_model_kwargs(provider, model),
     )
 
 
