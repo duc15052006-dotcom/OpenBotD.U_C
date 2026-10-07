@@ -8,11 +8,26 @@ from src.token_efficiency import (
     prepare_model_messages,
     qwen3_max_output_tokens,
     qwen3_model,
+    qwen3_simple_max_output_tokens,
+    simple_action_tool_names,
     simple_operational_turn,
 )
 
 
 COMPUTER_TOOLS = ["computer_navigate", "computer_snapshot", "computer_read_file"]
+FULL_COMPUTER_TOOLS = [
+    "computer_navigate",
+    "computer_read",
+    "computer_screenshot",
+    "computer_snapshot",
+    "computer_type",
+    "computer_click",
+    "computer_request_secret",
+    "computer_request_help",
+    "computer_list_files",
+    "computer_read_file",
+    "computer_write_file",
+]
 
 
 def test_qwen3_detection_covers_xkiro_ids_without_matching_qwen2():
@@ -99,6 +114,84 @@ def test_simple_classifier_requires_direct_computer_action():
         ["granted_lookup"],
     )
 
+
+
+def test_simple_qwen_turn_gets_small_hard_output_budget(monkeypatch):
+    monkeypatch.delenv("OPENBOT_QWEN_THINKING", raising=False)
+    monkeypatch.delenv("OPENBOT_QWEN_SIMPLE_MAX_OUTPUT_TOKENS", raising=False)
+    messages = [{"role": "user", "content": "Tạo file notes.txt với nội dung hello."}]
+
+    assert (
+        qwen3_simple_max_output_tokens(
+            "qwen/qwen3.6-plus", messages, FULL_COMPUTER_TOOLS
+        )
+        == 2048
+    )
+    assert (
+        qwen3_simple_max_output_tokens(
+            "qwen/qwen3.6-plus",
+            [{"role": "user", "content": "Phân tích kiến trúc này thật kỹ."}],
+            FULL_COMPUTER_TOOLS,
+        )
+        is None
+    )
+
+
+def test_simple_qwen_budget_respects_explicit_thinking_and_overrides(monkeypatch):
+    messages = [{"role": "user", "content": "Create file notes.txt with hello."}]
+    monkeypatch.setenv("OPENBOT_QWEN_THINKING", "on")
+    assert (
+        qwen3_simple_max_output_tokens(
+            "qwen/qwen3.6-plus", messages, FULL_COMPUTER_TOOLS
+        )
+        is None
+    )
+
+    monkeypatch.setenv("OPENBOT_QWEN_THINKING", "off")
+    monkeypatch.setenv("OPENBOT_QWEN_SIMPLE_MAX_OUTPUT_TOKENS", "1024")
+    assert (
+        qwen3_simple_max_output_tokens(
+            "qwen/qwen3.6-plus", messages, FULL_COMPUTER_TOOLS
+        )
+        == 1024
+    )
+
+
+def test_simple_file_action_narrows_to_file_tools_without_losing_recovery_tools():
+    selected = simple_action_tool_names(
+        [{"role": "user", "content": "Tạo file /workspace/notes.txt với nội dung hello."}],
+        FULL_COMPUTER_TOOLS,
+    )
+
+    assert selected == (
+        "computer_list_files",
+        "computer_read_file",
+        "computer_write_file",
+    )
+
+
+def test_simple_screenshot_narrows_to_real_screenshot_tool():
+    selected = simple_action_tool_names(
+        [{"role": "user", "content": "Hãy chụp màn hình hiện tại."}],
+        FULL_COMPUTER_TOOLS,
+    )
+
+    assert selected == ("computer_screenshot",)
+
+
+def test_complex_turn_never_narrows_tools():
+    assert (
+        simple_action_tool_names(
+            [
+                {
+                    "role": "user",
+                    "content": "Phân tích lỗi website này rồi thiết kế cách sửa an toàn.",
+                }
+            ],
+            FULL_COMPUTER_TOOLS,
+        )
+        is None
+    )
 
 def test_normal_history_is_not_trimmed_below_large_context_budget(monkeypatch):
     monkeypatch.delenv("OPENBOT_MODEL_CONTEXT_CHARS", raising=False)
