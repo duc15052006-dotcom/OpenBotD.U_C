@@ -134,7 +134,7 @@ def test_simple_qwen_turn_gets_small_hard_output_budget(monkeypatch):
         qwen3_simple_max_output_tokens(
             "qwen/qwen3.6-plus", messages, FULL_COMPUTER_TOOLS
         )
-        == 1024
+        == 256
     )
     assert (
         qwen3_simple_max_output_tokens(
@@ -157,12 +157,12 @@ def test_simple_qwen_budget_respects_explicit_thinking_and_overrides(monkeypatch
     )
 
     monkeypatch.setenv("OPENBOT_QWEN_THINKING", "off")
-    monkeypatch.setenv("OPENBOT_QWEN_SIMPLE_MAX_OUTPUT_TOKENS", "1024")
+    monkeypatch.setenv("OPENBOT_QWEN_SIMPLE_MAX_OUTPUT_TOKENS", "256")
     assert (
         qwen3_simple_max_output_tokens(
             "qwen/qwen3.6-plus", messages, FULL_COMPUTER_TOOLS
         )
-        == 1024
+        == 256
     )
 
 
@@ -311,8 +311,8 @@ def test_qwen_output_ceiling_is_opt_in_only(monkeypatch):
 
     assert qwen3_max_output_tokens() is None
 
-    monkeypatch.setenv("OPENBOT_QWEN_MAX_OUTPUT_TOKENS", "1024")
-    assert qwen3_max_output_tokens() == 1024
+    monkeypatch.setenv("OPENBOT_QWEN_MAX_OUTPUT_TOKENS", "256")
+    assert qwen3_max_output_tokens() == 256
 
     monkeypatch.setenv("OPENBOT_QWEN_MAX_OUTPUT_TOKENS", "999999")
     assert qwen3_max_output_tokens() == 32768

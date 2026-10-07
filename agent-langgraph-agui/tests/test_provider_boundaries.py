@@ -351,7 +351,7 @@ async def test_simple_qwen_file_action_caps_wire_output_and_narrows_tools(
         _current.reset(token)
 
     body = captured[0]["body"]
-    assert body["max_completion_tokens"] == 1024
+    assert body["max_completion_tokens"] == 256
     assert [tool["function"]["name"] for tool in body["tools"]] == [
         "computer_write_file",
     ]
@@ -564,7 +564,7 @@ async def test_trusted_minimal_policy_replaces_only_generated_bulk_on_fast_path(
 
     body = captured[0]["body"]
     wire = json.dumps(body, ensure_ascii=False)
-    assert body["max_completion_tokens"] == 1024
+    assert body["max_completion_tokens"] == 256
     assert [item["function"]["name"] for item in body["tools"]] == [
         "computer_write_file"
     ]

@@ -347,7 +347,7 @@ async def test_qwen_stateless_surface_resume_keeps_real_chain_and_durable_histor
     second = await run_protocol(resume)
     assert len(boundary["model"]) == 2
     for wire in boundary["model"]:
-        assert wire["max_completion_tokens"] == 1024
+        assert wire["max_completion_tokens"] == 256
         assert [t["function"]["name"] for t in wire["tools"]] == ["computer_write_file"]
         assert "OLD-TRANSCRIPT" not in json.dumps(wire)
         assert "SCHEMA-ONLY" not in json.dumps(wire)
@@ -428,7 +428,7 @@ async def test_qwen_forwarded_minimal_policy_replaces_only_named_generated_polic
     events = await run_protocol(body)
     wire = boundary["model"][0]
     encoded = json.dumps(wire, ensure_ascii=False)
-    assert wire["max_completion_tokens"] == 1024
+    assert wire["max_completion_tokens"] == 256
     assert [tool["function"]["name"] for tool in wire["tools"]] == [
         "computer_write_file"
     ]
