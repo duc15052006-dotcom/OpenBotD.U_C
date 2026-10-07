@@ -102,9 +102,14 @@ def model_messages(messages):
             SystemMessage(content=f"{entry.description}\n{entry.value}")
         )
 
+    offered_tool_names = tuple(tool.name for tool in current_tools().tools)
     return [
         *context_messages,
-        *prepare_model_messages(messages, os.environ.get("BOT_MODEL")),
+        *prepare_model_messages(
+            messages,
+            os.environ.get("BOT_MODEL"),
+            offered_tool_names,
+        ),
     ]
 
 
