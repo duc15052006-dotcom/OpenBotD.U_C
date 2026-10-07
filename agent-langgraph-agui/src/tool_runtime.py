@@ -31,6 +31,8 @@ class RunTools:
     tools: tuple[Tool, ...] = ()
     context: tuple[Context, ...] = ()
     system_messages: tuple[SystemMessage, ...] = ()
+    simple_policy: str = ""
+    simple_policy_ids: frozenset[str] = frozenset()
     deployment: frozenset[str] = frozenset()
     assertion: str = field(default="", repr=False)
 
@@ -65,6 +67,8 @@ class ToolAwareAgent(ParallelToolAgent):
         props = input.forwarded_props if isinstance(input.forwarded_props, dict) else {}
         names = props.get("openbotDeploymentTools", [])
         assertion = props.get("openbotRun", "")
+        simple_policy = props.get("openbotSimpleActionPolicy", "")
+        simple_policy_ids = props.get("openbotSimpleActionPolicyIds", [])
         context = RunTools(
             tools=tuple(input.tools or []),
             context=tuple(input.context or []),
@@ -75,6 +79,12 @@ class ToolAwareAgent(ParallelToolAgent):
                 for message in input.messages or []
                 if message.role == "system"
             ),
+            simple_policy=simple_policy if isinstance(simple_policy, str) else "",
+            simple_policy_ids=frozenset(
+                message_id for message_id in simple_policy_ids if isinstance(message_id, str)
+            )
+            if isinstance(simple_policy_ids, list)
+            else frozenset(),
             deployment=frozenset(name for name in names if isinstance(name, str))
             if isinstance(names, list)
             else frozenset(),
@@ -93,8 +103,12 @@ class ToolAwareAgent(ParallelToolAgent):
                 not in {
                     "openbotRun",
                     "openbotDeploymentTools",
+                    "openbotSimpleActionPolicy",
+                    "openbotSimpleActionPolicyIds",
                     "openbot_run",
                     "openbot_deployment_tools",
+                    "openbot_simple_action_policy",
+                    "openbot_simple_action_policy_ids",
                 }
             }
             async with aclosing(
@@ -140,10 +154,26 @@ def model_messages(messages):
 
     # Current run policy wins over a checkpoint copy with the same id. Also deduplicate an
     # unchanged copy by content, so request policy is paid for exactly once on each model call.
+    # For a trusted stateless fast path, only the exact server-generated policy ids may be replaced
+    # by the smaller direct-action envelope. Unknown/current security messages remain untouched.
     policy_ids = {message.id for message in run.system_messages if message.id}
     policy_content = {
         message.content for message in run.system_messages if isinstance(message.content, str)
     }
+    provider_policy = run.system_messages
+    if stateless_fast_path and run.simple_policy and run.simple_policy_ids:
+        replace_ids = run.simple_policy_ids
+        provider_policy = (
+            SystemMessage(
+                content=run.simple_policy,
+                id="openbot-simple-action-policy",
+            ),
+            *tuple(
+                message
+                for message in run.system_messages
+                if not message.id or message.id not in replace_ids
+            ),
+        )
 
     def current_policy_copy(message):
         role = message.get("role") if isinstance(message, dict) else message.type
@@ -161,7 +191,7 @@ def model_messages(messages):
     )
     return [
         *context_messages,
-        *run.system_messages,
+        *provider_policy,
         *prepare_model_messages(
             history,
             model,
