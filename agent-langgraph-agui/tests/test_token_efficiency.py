@@ -8,7 +8,11 @@ from src.token_efficiency import (
     prepare_model_messages,
     qwen3_max_output_tokens,
     qwen3_model,
+    simple_operational_turn,
 )
+
+
+COMPUTER_TOOLS = ["computer_navigate", "computer_snapshot", "computer_read_file"]
 
 
 def test_qwen3_detection_covers_xkiro_ids_without_matching_qwen2():
@@ -19,12 +23,16 @@ def test_qwen3_detection_covers_xkiro_ids_without_matching_qwen2():
     assert not qwen3_model("gpt-5.6-terra")
 
 
-def test_no_think_is_provider_only_and_does_not_accumulate(monkeypatch):
-    monkeypatch.setenv("BOT_MODEL", "qwen/qwen3.6-plus")
+def test_simple_computer_turn_gets_no_think_without_mutating_history(monkeypatch):
+    monkeypatch.delenv("OPENBOT_QWEN_THINKING", raising=False)
     source = [{"role": "user", "content": "Open example.com."}]
 
-    first = prepare_model_messages(source, "qwen/qwen3.6-plus")
-    second = prepare_model_messages(source, "qwen/qwen3.6-plus")
+    first = prepare_model_messages(
+        source, "qwen/qwen3.6-plus", COMPUTER_TOOLS
+    )
+    second = prepare_model_messages(
+        source, "qwen/qwen3.6-plus", COMPUTER_TOOLS
+    )
 
     assert source == [{"role": "user", "content": "Open example.com."}]
     assert first == second
@@ -32,62 +40,99 @@ def test_no_think_is_provider_only_and_does_not_accumulate(monkeypatch):
     assert first[0]["content"].count("/no_think") == 1
 
 
-def test_no_think_preserves_multimodal_content(monkeypatch):
+def test_complex_request_keeps_qwen_reasoning_even_when_computer_tools_exist(monkeypatch):
+    monkeypatch.delenv("OPENBOT_QWEN_THINKING", raising=False)
+    source = [
+        {
+            "role": "user",
+            "content": "Analyze why this website workflow is failing and design the safest fix.",
+        }
+    ]
+
+    assert (
+        prepare_model_messages(source, "qwen/qwen3.6-plus", COMPUTER_TOOLS)
+        == source
+    )
+
+
+def test_multimodal_turn_keeps_reasoning_and_payload(monkeypatch):
     monkeypatch.delenv("OPENBOT_QWEN_THINKING", raising=False)
     source = [
         {
             "role": "user",
             "content": [
-                {"type": "text", "text": "Describe this."},
+                {"type": "text", "text": "Describe this screenshot carefully."},
                 {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}},
             ],
         }
     ]
 
-    prepared = prepare_model_messages(source, "qwen/qwen3.6-plus")
+    prepared = prepare_model_messages(
+        source, "qwen/qwen3.6-plus", COMPUTER_TOOLS
+    )
 
-    assert source[0]["content"][-1]["type"] == "image_url"
-    assert prepared[0]["content"][-1] == {"type": "text", "text": "/no_think"}
+    assert prepared == source
     assert prepared[0]["content"][1]["type"] == "image_url"
 
 
-def test_thinking_override_keeps_user_message_unchanged(monkeypatch):
+def test_explicit_thinking_override_keeps_simple_user_message_unchanged(monkeypatch):
     monkeypatch.setenv("OPENBOT_QWEN_THINKING", "true")
-    source = [{"role": "user", "content": "Hard problem."}]
+    source = [{"role": "user", "content": "Open example.com."}]
 
-    assert prepare_model_messages(source, "qwen/qwen3.6-plus") == source
+    assert (
+        prepare_model_messages(source, "qwen/qwen3.6-plus", COMPUTER_TOOLS)
+        == source
+    )
 
 
-def test_history_window_keeps_system_and_complete_recent_turns(monkeypatch):
-    monkeypatch.setenv("OPENBOT_MODEL_HISTORY_TURNS", "2")
+def test_simple_classifier_requires_direct_computer_action():
+    assert simple_operational_turn(
+        [{"role": "user", "content": "Chụp màn hình hiện tại."}],
+        ["computer_snapshot"],
+    )
+    assert not simple_operational_turn(
+        [{"role": "user", "content": "Phân tích kỹ lỗi này rồi đề xuất cách sửa."}],
+        ["computer_snapshot"],
+    )
+    assert not simple_operational_turn(
+        [{"role": "user", "content": "Open example.com."}],
+        ["granted_lookup"],
+    )
+
+
+def test_normal_history_is_not_trimmed_below_large_context_budget(monkeypatch):
+    monkeypatch.delenv("OPENBOT_MODEL_CONTEXT_CHARS", raising=False)
+    source = [
+        {"role": "system", "content": "standing"},
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": "answer one"},
+        {"role": "user", "content": "second"},
+        {"role": "assistant", "content": "answer two"},
+    ]
+
+    assert compact_model_history(source) == source
+
+
+def test_large_history_trims_only_old_complete_turns(monkeypatch):
+    monkeypatch.setenv("OPENBOT_MODEL_CONTEXT_CHARS", "16000")
+    monkeypatch.setenv("OPENBOT_TOOL_RESULT_CHARS", "100000")
     messages = [{"role": "system", "content": "standing"}]
-    for i in range(4):
+    for i in range(3):
         messages.extend(
             [
-                {"role": "user", "content": f"user-{i}"},
-                {
-                    "role": "assistant",
-                    "content": "",
-                    "tool_calls": [{"id": f"call-{i}", "name": "tool"}],
-                },
-                {
-                    "role": "tool",
-                    "tool_call_id": f"call-{i}",
-                    "content": f"result-{i}",
-                },
-                {"role": "assistant", "content": f"answer-{i}"},
+                {"role": "user", "content": f"user-{i}-" + ("U" * 6000)},
+                {"role": "assistant", "content": f"answer-{i}-" + ("A" * 200)},
             ]
         )
 
     compact = compact_model_history(messages)
+    users = [m["content"] for m in compact if m["role"] == "user"]
 
     assert compact[0] == {"role": "system", "content": "standing"}
-    assert [m["content"] for m in compact if m["role"] == "user"] == [
-        "user-2",
-        "user-3",
-    ]
-    assert any(m.get("tool_call_id") == "call-2" for m in compact)
-    assert not any(m.get("tool_call_id") == "call-1" for m in compact)
+    assert any(text.startswith("user-2-") for text in users)
+    assert not any(text.startswith("user-0-") for text in users)
+    # The retained suffix always starts at a user boundary rather than an orphaned assistant/tool.
+    assert compact[1]["role"] == "user"
 
 
 def test_large_tool_result_is_bounded_only_in_provider_view(monkeypatch):
@@ -107,12 +152,16 @@ def test_large_tool_result_is_bounded_only_in_provider_view(monkeypatch):
     assert compact[1]["content"].endswith("A" * 100)
 
 
-def test_qwen_output_ceiling_is_bounded_and_overrideable(monkeypatch):
+def test_qwen_output_ceiling_is_adaptive_and_overrideable(monkeypatch):
     monkeypatch.delenv("OPENBOT_QWEN_MAX_OUTPUT_TOKENS", raising=False)
-    assert qwen3_max_output_tokens() == 4096
+    monkeypatch.delenv("OPENBOT_QWEN_SIMPLE_MAX_OUTPUT_TOKENS", raising=False)
+
+    assert qwen3_max_output_tokens(simple_turn=True) == 2048
+    assert qwen3_max_output_tokens(simple_turn=False) is None
 
     monkeypatch.setenv("OPENBOT_QWEN_MAX_OUTPUT_TOKENS", "1024")
-    assert qwen3_max_output_tokens() == 1024
+    assert qwen3_max_output_tokens(simple_turn=True) == 1024
+    assert qwen3_max_output_tokens(simple_turn=False) == 1024
 
     monkeypatch.setenv("OPENBOT_QWEN_MAX_OUTPUT_TOKENS", "999999")
-    assert qwen3_max_output_tokens() == 32768
+    assert qwen3_max_output_tokens(simple_turn=False) == 32768
