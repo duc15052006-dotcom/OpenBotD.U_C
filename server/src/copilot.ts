@@ -97,14 +97,6 @@ type RegisteredRemoteAgentFacts = {
   /** Which agent on the endpoint, for a server that serves a roster. See `remoteTransport`. */
   remoteAgentId?: string;
   standingMessage: StandingRoleMessage;
-  /**
-   * Small trusted policy for a self-contained direct Computer/File action.
-   *
-   * The remote harness may substitute this for the generated standing/grants messages only when
-   * its conservative stateless classifier fires and the exact message ids below are supplied by
-   * this server. Complex/context-dependent work still receives the complete standing role.
-   */
-  simpleActionPolicy?: string;
   /** The key this agent sits behind, resolved from the vault at load time. Never logged. */
   headers?: Record<string, string>;
 };
@@ -145,6 +137,15 @@ type AgentRunInput = Parameters<AbstractAgent["run"]>[0];
 type AgentMessage = AgentRunInput["messages"][number];
 type AgentContext = NonNullable<AgentRunInput["context"]>[number];
 export type StandingRoleMessage = Extract<AgentMessage, { role: "system" }>;
+
+/*
+ * Provider-only optimization metadata must not change RegisteredAgent's public/runtime shape.
+ * Keying by the generated standing-message object also makes copies fail closed: if some future
+ * loader reconstructs that message instead of preserving the object, no minimal policy is found
+ * and the complete policy is sent.
+ */
+const simpleDirectActionPolicies = new WeakMap<StandingRoleMessage, string>();
+
 type AgentHeaders = Record<string, string>;
 type HeaderBearingAgent = AbstractAgent & { headers?: AgentHeaders };
 
@@ -320,19 +321,24 @@ export function registeredAgentFromRow(
    * there: see `remoteTransport`.
    */
   const remoteAgentId = configuration?.remoteAgentId;
-  return typeof endpoint === "string" && isHttpUrl(endpoint)
-    ? {
-        id: row.id,
-        name: row.name,
-        type: row.type === "remote_mastra" ? "remote_mastra" : "remote_ag_ui",
-        endpoint,
-        ...(typeof remoteAgentId === "string" && remoteAgentId.length > 0
-          ? { remoteAgentId }
-          : {}),
-        standingMessage: standingRoleMessage(row, instructions, knowledge),
-        simpleActionPolicy: simpleDirectActionPolicy(row, instructions),
-      }
-    : null;
+  if (typeof endpoint !== "string" || !isHttpUrl(endpoint)) {
+    return null;
+  }
+  const standingMessage = standingRoleMessage(row, instructions, knowledge);
+  simpleDirectActionPolicies.set(
+    standingMessage,
+    simpleDirectActionPolicy(row, instructions),
+  );
+  return {
+    id: row.id,
+    name: row.name,
+    type: row.type === "remote_mastra" ? "remote_mastra" : "remote_ag_ui",
+    endpoint,
+    ...(typeof remoteAgentId === "string" && remoteAgentId.length > 0
+      ? { remoteAgentId }
+      : {}),
+    standingMessage,
+  };
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -1331,6 +1337,9 @@ function remoteAgentWithStandingRole(
       ? signRun(agent.id, input.runId, input.threadId)
       : undefined;
     const deploymentTools = tools.map((tool) => tool.name);
+    const simpleActionPolicy = simpleDirectActionPolicies.get(
+      agent.standingMessage,
+    );
     const forwardedProps = {
       ...(isPlainObject(input.forwardedProps) ? input.forwardedProps : {}),
       openbotBotId: agent.id,
@@ -1350,9 +1359,9 @@ function remoteAgentWithStandingRole(
        * named here. Browser-supplied forwardedProps cannot widen this because these fields are
        * written after that spread.
        */
-      ...(agent.simpleActionPolicy
+      ...(simpleActionPolicy
         ? {
-            openbotSimpleActionPolicy: agent.simpleActionPolicy,
+            openbotSimpleActionPolicy: simpleActionPolicy,
             openbotSimpleActionPolicyIds: [
               agent.standingMessage.id,
               ...(holdingsMessage ? [holdingsMessage.id] : []),
