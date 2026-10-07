@@ -501,6 +501,7 @@ async def test_fast_path_preserves_security_and_unknown_context_without_credenti
     for secret in ("sk-secret-wire-proof", "secret-callback-wire-proof", "secret-run-assertion-wire-proof"):
         assert secret not in wire
 
+
 @pytest.mark.asyncio
 async def test_trusted_minimal_policy_replaces_only_generated_bulk_on_fast_path(
     monkeypatch, compatible_endpoint
@@ -511,7 +512,7 @@ async def test_trusted_minimal_policy_replaces_only_generated_bulk_on_fast_path(
     monkeypatch.setenv("BOT_MODEL", "qwen/qwen3.6-plus:free")
     monkeypatch.setenv("OPENAI_BASE_URL", base_url)
 
-    request = "Hãy tạo file \`/workspace/token-test-next.txt\` với nội dung \`hello\`."
+    request = "Hãy tạo file `/workspace/token-test-next.txt` với nội dung `hello`."
     standing = SystemMessage(
         id="standing-role:bot-ci",
         content="FULL-STANDING-" + "S" * 30_000,
