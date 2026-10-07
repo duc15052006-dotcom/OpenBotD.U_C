@@ -14,8 +14,6 @@ import re
 
 DEFAULT_MODEL_CONTEXT_CHARS = 96_000
 DEFAULT_TOOL_RESULT_CHARS = 24_000
-DEFAULT_QWEN3_SIMPLE_MAX_OUTPUT_TOKENS = 2_048
-
 _QWEN3 = re.compile(r"(^|[/:._-])qwen3([/:._-]|$)", re.IGNORECASE)
 _TRUE = {"1", "true", "yes", "on", "enabled", "always"}
 _FALSE = {"0", "false", "no", "off", "disabled", "never"}
@@ -113,28 +111,21 @@ def _bounded_int(name: str, default: int, minimum: int, maximum: int) -> int:
     return min(max(value, minimum), maximum)
 
 
-def qwen3_max_output_tokens(simple_turn: bool) -> int | None:
-    """Return a Qwen output ceiling without constraining ordinary hard reasoning.
+def qwen3_max_output_tokens() -> int | None:
+    """Return only an explicitly configured Qwen output ceiling.
 
-    An explicit OPENBOT_QWEN_MAX_OUTPUT_TOKENS is a deployment-wide operator choice and always wins.
-    Otherwise only a short deterministic tool turn gets a small ceiling. Complex/normal turns use
-    the provider/model default so this optimisation cannot silently lower their reasoning budget.
+    OpenBot does not impose a default ceiling: doing so can reduce the model's ability on legitimate
+    long or difficult work. Automatic savings happen elsewhere by removing redundant context and by
+    using Qwen's non-thinking mode only on narrow deterministic Computer/File operations.
     """
     raw = (os.environ.get("OPENBOT_QWEN_MAX_OUTPUT_TOKENS") or "").strip()
-    if raw:
-        return _bounded_int(
-            "OPENBOT_QWEN_MAX_OUTPUT_TOKENS",
-            DEFAULT_QWEN3_SIMPLE_MAX_OUTPUT_TOKENS,
-            256,
-            32_768,
-        )
-    if not simple_turn:
+    if not raw:
         return None
     return _bounded_int(
-        "OPENBOT_QWEN_SIMPLE_MAX_OUTPUT_TOKENS",
-        DEFAULT_QWEN3_SIMPLE_MAX_OUTPUT_TOKENS,
+        "OPENBOT_QWEN_MAX_OUTPUT_TOKENS",
+        4_096,
         256,
-        8_192,
+        32_768,
     )
 
 
