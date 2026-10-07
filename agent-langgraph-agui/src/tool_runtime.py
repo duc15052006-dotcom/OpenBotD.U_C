@@ -21,6 +21,7 @@ from .parallel_tools import ParallelToolAgent
 from .token_efficiency import (
     prepare_model_messages,
     qwen3_simple_max_output_tokens,
+    qwen3_stateless_fast_path_enabled,
     simple_action_tool_names,
 )
 
@@ -91,27 +92,33 @@ class ToolAwareAgent(ParallelToolAgent):
 def model_messages(messages):
     """Build a bounded provider view without changing checkpoint/transcript state.
 
-    AG-UI context still stays outside graph state. Duplicate context entries are collapsed because
-    resending the same schema or guidance twice buys no capability and is paid for on every model
-    step. Conversation history is compacted only for the model; the durable thread remains complete.
+    A self-contained Qwen Computer/File command needs neither UI/A2UI context nor old chat turns.
+    Those are omitted only from this provider call; durable state remains complete. All other turns
+    keep the existing context behavior.
     """
-    context_messages = []
-    seen = set()
-    for entry in current_tools().context:
-        key = (entry.description, entry.value)
-        if key in seen:
-            continue
-        seen.add(key)
-        context_messages.append(
-            SystemMessage(content=f"{entry.description}\n{entry.value}")
-        )
-
     offered_tool_names = tuple(tool.name for tool in current_tools().tools)
+    model = os.environ.get("BOT_MODEL")
+    stateless_fast_path = qwen3_stateless_fast_path_enabled(
+        model, messages, offered_tool_names
+    )
+
+    context_messages = []
+    if not stateless_fast_path:
+        seen = set()
+        for entry in current_tools().context:
+            key = (entry.description, entry.value)
+            if key in seen:
+                continue
+            seen.add(key)
+            context_messages.append(
+                SystemMessage(content=f"{entry.description}\n{entry.value}")
+            )
+
     return [
         *context_messages,
         *prepare_model_messages(
             messages,
-            os.environ.get("BOT_MODEL"),
+            model,
             offered_tool_names,
         ),
     ]
