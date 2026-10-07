@@ -271,7 +271,9 @@ function checkComputerSandboxBoundary(): void {
     "CpuQuota?: number",
   ]) {
     if (!resourceInspect.includes(evidence)) {
-      fail(`computer: Docker-compatible resource inspection is missing ${evidence}`);
+      fail(
+        `computer: Docker-compatible resource inspection is missing ${evidence}`,
+      );
     }
   }
 
