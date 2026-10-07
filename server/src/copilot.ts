@@ -104,7 +104,7 @@ type RegisteredRemoteAgentFacts = {
    * its conservative stateless classifier fires and the exact message ids below are supplied by
    * this server. Complex/context-dependent work still receives the complete standing role.
    */
-  simpleActionPolicy: string;
+  simpleActionPolicy?: string;
   /** The key this agent sits behind, resolved from the vault at load time. Never logged. */
   headers?: Record<string, string>;
 };
@@ -1350,11 +1350,15 @@ function remoteAgentWithStandingRole(
        * named here. Browser-supplied forwardedProps cannot widen this because these fields are
        * written after that spread.
        */
-      openbotSimpleActionPolicy: agent.simpleActionPolicy,
-      openbotSimpleActionPolicyIds: [
-        agent.standingMessage.id,
-        ...(holdingsMessage ? [holdingsMessage.id] : []),
-      ],
+      ...(agent.simpleActionPolicy
+        ? {
+            openbotSimpleActionPolicy: agent.simpleActionPolicy,
+            openbotSimpleActionPolicyIds: [
+              agent.standingMessage.id,
+              ...(holdingsMessage ? [holdingsMessage.id] : []),
+            ],
+          }
+        : {}),
       /*
        * This deployment's own statement of what this run is.
        *
