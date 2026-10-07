@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { callComputer } from "../src/lib/copilot/computer-tools";
+import {
+  callComputer,
+  captureComputerScreenshot,
+} from "../src/lib/copilot/computer-tools";
 
 /**
  * What a Bot is told when its action did not happen.
@@ -24,6 +27,43 @@ function serverAnswering(status: number, body: unknown) {
       headers: { "content-type": "application/json" },
     })) as unknown as typeof fetch;
 }
+
+describe("computer screenshot capture", () => {
+  test("returns compact metadata without feeding image bytes into model context", async () => {
+    const base64 = "A".repeat(20_000);
+    serverAnswering(200, {
+      frame: {
+        base64,
+        width: 1280,
+        height: 800,
+        capturedAt: "2026-10-07T07:00:00.000Z",
+        url: "https://example.com/",
+      },
+    });
+
+    const outcome = await captureComputerScreenshot("bot-1", "tool-shot-1");
+
+    expect(outcome).toEqual({
+      ok: true,
+      width: 1280,
+      height: 800,
+      capturedAt: "2026-10-07T07:00:00.000Z",
+      url: "https://example.com/",
+    });
+    expect(JSON.stringify(outcome)).not.toContain(base64);
+  });
+
+  test("reports an unavailable screen as a normal tool failure", async () => {
+    serverAnswering(503, { error: "Browser is not running." });
+
+    const outcome = await captureComputerScreenshot("bot-1", "tool-shot-2");
+
+    expect(outcome).toEqual({
+      ok: false,
+      reason: "Browser is not running.",
+    });
+  });
+});
 
 describe("a computer call the server refused", () => {
   test("a person holding the wheel is reported as that, not as stale refs", async () => {

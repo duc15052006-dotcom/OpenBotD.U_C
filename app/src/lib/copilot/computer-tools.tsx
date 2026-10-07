@@ -5,6 +5,7 @@ import { CommandOutput } from "@/components/computer/command-output";
 import { ComputerView } from "@/components/computer/computer-view";
 import { tryClient } from "@/lib/client";
 import { noteBrowsed, recordActivity } from "@/lib/computers/activity";
+import { readScreenshot, type Screenshot } from "@/lib/computers/screen";
 import { type ControlState, readControl } from "@/lib/computers/control";
 import { useActiveBotHolder } from "./active-bot";
 import { reportComputerActivity } from "./computer-activity";
@@ -15,6 +16,56 @@ import { reportComputerActivity } from "./computer-activity";
 
 /** What every computer call returns to the model: either the result, or a reason it did not happen. */
 export type ToolOutcome = Record<string, unknown> & { ok: boolean };
+
+type CapturedScreenshot = Pick<
+  Screenshot,
+  "base64" | "width" | "height" | "capturedAt" | "url"
+>;
+
+const SCREENSHOT_FRAMES = new Map<string, CapturedScreenshot>();
+const MAX_SCREENSHOT_FRAMES = 20;
+
+function rememberScreenshot(
+  toolCallId: string,
+  frame: CapturedScreenshot,
+): void {
+  SCREENSHOT_FRAMES.delete(toolCallId);
+  SCREENSHOT_FRAMES.set(toolCallId, frame);
+  while (SCREENSHOT_FRAMES.size > MAX_SCREENSHOT_FRAMES) {
+    const oldest = SCREENSHOT_FRAMES.keys().next().value;
+    if (oldest === undefined) break;
+    SCREENSHOT_FRAMES.delete(oldest);
+  }
+}
+
+/**
+ * Capture a real PNG for the transcript without sending its base64 bytes back through the model.
+ *
+ * The picture is for the person. Returning the image itself as a tool result would turn one ordinary
+ * screenshot into tens or hundreds of thousands of prompt characters on the next model step, which
+ * is exactly the token amplification this tool must not introduce.
+ */
+export async function captureComputerScreenshot(
+  botId: string,
+  toolCallId?: string,
+): Promise<ToolOutcome> {
+  reportComputerActivity(botId);
+  const result = await readScreenshot(botId);
+  if (!result.frame) {
+    return {
+      ok: false,
+      reason: result.error ?? "The screen is not available right now.",
+    };
+  }
+  if (toolCallId) rememberScreenshot(toolCallId, result.frame);
+  return {
+    ok: true,
+    width: result.frame.width,
+    height: result.frame.height,
+    capturedAt: result.frame.capturedAt,
+    ...(result.frame.url ? { url: result.frame.url } : {}),
+  };
+}
 
 /**
  * Human-assistance wait window. Long enough for a user to return, finite so the run can unblock.
@@ -347,6 +398,51 @@ export function ComputerTools() {
     parameters: z.object({}),
     handler: async () => callComputer(bot.current, "/read"),
     render: () => null,
+  });
+
+  useFrontendTool({
+    name: "computer_screenshot",
+    description:
+      "Capture a real image of the computer screen. Use this when the person asks for a screenshot, " +
+      "screen capture, or asks to see the current screen. This is different from computer_snapshot: " +
+      "snapshot lists actionable page elements, while screenshot returns a visual capture to the person. " +
+      "The image bytes are deliberately not sent back into the model context.",
+    parameters: z.object({}),
+    handler: async (
+      _input: Record<string, never>,
+      { toolCall }: { toolCall?: { id?: string } } = {},
+    ) => captureComputerScreenshot(bot.current, toolCall?.id),
+    render: ({ result, status, toolCallId }) => {
+      const outcome = outcomeOf(result);
+      const frame = toolCallId ? SCREENSHOT_FRAMES.get(toolCallId) : undefined;
+      const running = status !== "complete" && result === undefined;
+      if (frame) {
+        return (
+          <div className="my-2 grid gap-2">
+            <ActionLine
+              running={running}
+              label="Captured the screen"
+              detail={`${frame.width}×${frame.height}`}
+            />
+            <img
+              alt="Assistant computer screenshot"
+              className="max-h-[520px] w-full rounded-md border object-contain"
+              src={`data:image/png;base64,${frame.base64}`}
+            />
+          </div>
+        );
+      }
+      return (
+        <ActionLine
+          running={running}
+          failed={outcome.ok === false}
+          label="Capture the screen"
+          detail={
+            typeof outcome.reason === "string" ? outcome.reason : undefined
+          }
+        />
+      );
+    },
   });
 
   useFrontendTool({

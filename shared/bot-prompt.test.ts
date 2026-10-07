@@ -18,6 +18,16 @@ describe("COMPUTER_GUIDANCE", () => {
     }
   });
 
+  test("distinguishes a visual screenshot from an accessibility snapshot", () => {
+    expect(COMPUTER_GUIDANCE).toContain("computer_screenshot");
+    expect(COMPUTER_GUIDANCE).toContain(
+      "computer_snapshot is NOT a screenshot",
+    );
+    expect(COMPUTER_GUIDANCE).toContain(
+      "it is the accessibility list of page elements",
+    );
+  });
+
   test("treats human verification as a non-bypass boundary", () => {
     expect(COMPUTER_GUIDANCE).toContain(
       "NEVER solve, automate, outsource, evade or bypass those challenges",

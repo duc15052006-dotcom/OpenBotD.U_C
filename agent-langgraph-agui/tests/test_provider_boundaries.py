@@ -165,6 +165,12 @@ def provider_environment(monkeypatch):
         "NO_PROXY",
         "OPENAI_API_KEY",
         "OPENAI_BASE_URL",
+        "OPENBOT_MODEL_CONTEXT_CHARS",
+        "OPENBOT_MODEL_HISTORY_TURNS",
+        "OPENBOT_QWEN_MAX_OUTPUT_TOKENS",
+        "OPENBOT_QWEN_SIMPLE_MAX_OUTPUT_TOKENS",
+        "OPENBOT_QWEN_THINKING",
+        "OPENBOT_TOOL_RESULT_CHARS",
         "all_proxy",
         "http_proxy",
         "https_proxy",
@@ -262,6 +268,50 @@ async def test_compatible_model_id_reaches_real_http_boundary(
                 "stream": False,
             },
         }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_qwen3_normal_turn_preserves_provider_reasoning_budget_by_default(
+    monkeypatch, compatible_endpoint
+):
+    base_url, captured = compatible_endpoint
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-compatible-ci")
+    monkeypatch.setenv("BOT_PROVIDER", "openai")
+    monkeypatch.setenv("BOT_MODEL", "qwen/qwen3.6-plus")
+    monkeypatch.setenv("OPENAI_BASE_URL", base_url)
+
+    result = await main.answer(
+        {"messages": [{"role": "user", "content": "Analyze the tradeoffs carefully."}]}
+    )
+
+    assert result["messages"][0].content == "compatible proof"
+    assert captured[0]["body"]["model"] == "qwen/qwen3.6-plus"
+    assert "max_tokens" not in captured[0]["body"]
+    assert "max_completion_tokens" not in captured[0]["body"]
+    assert captured[0]["body"]["messages"] == [
+        {"content": "Analyze the tradeoffs carefully.", "role": "user"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_qwen3_cost_controls_are_explicitly_overrideable(
+    monkeypatch, compatible_endpoint
+):
+    base_url, captured = compatible_endpoint
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-compatible-ci")
+    monkeypatch.setenv("BOT_PROVIDER", "openai")
+    monkeypatch.setenv("BOT_MODEL", "qwen/qwen3.6-plus")
+    monkeypatch.setenv("OPENAI_BASE_URL", base_url)
+    monkeypatch.setenv("OPENBOT_QWEN_THINKING", "on")
+    monkeypatch.setenv("OPENBOT_QWEN_MAX_OUTPUT_TOKENS", "8192")
+
+    await main.answer({"messages": [{"role": "user", "content": "Think deeply."}]})
+
+    # langchain-openai maps the configured ceiling to OpenAI's current wire field for this model.
+    assert captured[0]["body"]["max_completion_tokens"] == 8192
+    assert captured[0]["body"]["messages"] == [
+        {"content": "Think deeply.", "role": "user"}
     ]
 
 

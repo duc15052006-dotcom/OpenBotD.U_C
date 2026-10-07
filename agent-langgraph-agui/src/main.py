@@ -22,6 +22,7 @@ from .tool_runtime import (
     model_messages,
     next_step,
 )
+from .token_efficiency import qwen3_max_output_tokens, qwen3_model
 
 TOKEN_HEADER = "x-openbot-agent-token"
 
@@ -87,6 +88,18 @@ def _resolve_provider(provider: str):
     return OPENBOT_PROVIDER_ALIASES.get(provider, provider)
 
 
+def _model_kwargs(provider: str, model: str):
+    kwargs = _google_genai_kwargs(provider)
+    # Never lower Qwen's output/reasoning budget by default. A deployment owner may opt into a hard
+    # ceiling explicitly, but OpenBot's automatic savings come from removing redundant context and
+    # using /no_think only for narrow deterministic tool turns.
+    if provider == "openai" and qwen3_model(model):
+        max_tokens = qwen3_max_output_tokens()
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+    return kwargs
+
+
 def _chatgpt_auth_file(store: str) -> Path:
     path = Path(store)
     if not path.exists():
@@ -149,11 +162,11 @@ def _model():
         }.get(provider, model)
     prefix, separator, _ = model.partition(":")
     if separator and prefix in MODEL_PROVIDERS:
-        return init_chat_model(model, **_google_genai_kwargs(prefix))
+        return init_chat_model(model, **_model_kwargs(prefix, model))
     return init_chat_model(
         model,
         model_provider=provider,
-        **_google_genai_kwargs(provider),
+        **_model_kwargs(provider, model),
     )
 
 

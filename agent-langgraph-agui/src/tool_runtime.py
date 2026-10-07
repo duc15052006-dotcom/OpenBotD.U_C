@@ -18,6 +18,7 @@ from langchain_core.messages import SystemMessage, ToolMessage
 from langgraph.graph import END
 
 from .parallel_tools import ParallelToolAgent
+from .token_efficiency import prepare_model_messages
 
 
 @dataclass(frozen=True)
@@ -84,18 +85,31 @@ class ToolAwareAgent(ParallelToolAgent):
 
 
 def model_messages(messages):
-    """Pass AG-UI application context to the model without checkpointing it.
+    """Build a bounded provider view without changing checkpoint/transcript state.
 
-    The maintained integration carries context separately from messages. Our
-    graph uses MessagesState, so its answer node must explicitly include the
-    current catalog/guidelines instead of silently discarding them.
+    AG-UI context still stays outside graph state. Duplicate context entries are collapsed because
+    resending the same schema or guidance twice buys no capability and is paid for on every model
+    step. Conversation history is compacted only for the model; the durable thread remains complete.
     """
-    return [
-        *[
+    context_messages = []
+    seen = set()
+    for entry in current_tools().context:
+        key = (entry.description, entry.value)
+        if key in seen:
+            continue
+        seen.add(key)
+        context_messages.append(
             SystemMessage(content=f"{entry.description}\n{entry.value}")
-            for entry in current_tools().context
-        ],
-        *messages,
+        )
+
+    offered_tool_names = tuple(tool.name for tool in current_tools().tools)
+    return [
+        *context_messages,
+        *prepare_model_messages(
+            messages,
+            os.environ.get("BOT_MODEL"),
+            offered_tool_names,
+        ),
     ]
 
 

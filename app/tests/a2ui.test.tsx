@@ -114,6 +114,9 @@ test("disabled and unresolved deployments do not activate or advertise the A2UI 
   expect(a2uiProviderOptions(false)).toEqual({});
   expect(a2uiProviderOptions(undefined)).toEqual({});
   expect(a2uiProviderOptions(true).a2ui?.catalog).toBe(OPENBOT_A2UI_CATALOG);
+  // The public basic catalog still renders, but its large component schema/guideline payload is not
+  // repeated into every ordinary model turn.
+  expect(a2uiProviderOptions(true).a2ui?.includeSchema).toBe(false);
   // Existing OpenBot gallery components retain their separate per-Bot tool/grant path.
   expect(OPENBOT_A2UI_CATALOG.components.has("showTable")).toBe(false);
   expect(OPENBOT_A2UI_CATALOG.components.has("askForm")).toBe(false);

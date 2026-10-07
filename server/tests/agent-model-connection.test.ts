@@ -35,17 +35,33 @@ describe("testAgentModelConnection", () => {
     });
   });
 
-  test("checks an OpenAI-compatible Base URL through its model catalog first", async () => {
-    let seen: { url: string; method?: string; headers: Headers } | undefined;
+  test("a compatible model catalog success still verifies real inference", async () => {
+    const calls: Array<{
+      url: string;
+      method?: string;
+      body?: Record<string, unknown>;
+      headers: Headers;
+    }> = [];
     const fetcher: ModelProbeFetch = async (url, init) => {
-      seen = {
+      calls.push({
         url,
         method: init?.method,
+        body:
+          typeof init?.body === "string"
+            ? (JSON.parse(init.body) as Record<string, unknown>)
+            : undefined,
         headers: new Headers(init?.headers),
-      };
+      });
+      if (url.endsWith("/models")) {
+        return Response.json({
+          object: "list",
+          data: [{ id: "vendor/model", object: "model" }],
+        });
+      }
       return Response.json({
-        object: "list",
-        data: [{ id: "vendor/model", object: "model" }],
+        id: "chatcmpl-test",
+        object: "chat.completion",
+        choices: [],
       });
     };
 
@@ -64,9 +80,51 @@ describe("testAgentModelConnection", () => {
       provider: "openai",
       model: "vendor/model",
     });
-    expect(seen?.url).toBe("https://gateway.example/api/v1/models");
-    expect(seen?.method).toBe("GET");
-    expect(seen?.headers.get("authorization")).toBe("Bearer openai-secret");
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.url).toBe("https://gateway.example/api/v1/models");
+    expect(calls[0]?.method).toBe("GET");
+    expect(calls[0]?.headers.get("authorization")).toBe("Bearer openai-secret");
+    expect(calls[1]?.url).toBe(
+      "https://gateway.example/api/v1/chat/completions",
+    );
+    expect(calls[1]?.method).toBe("POST");
+    expect(calls[1]?.body).toMatchObject({
+      model: "vendor/model",
+      max_tokens: 1,
+      stream: false,
+    });
+  });
+
+  test("a compatible catalog can succeed while inference quota is exhausted", async () => {
+    const fetcher: ModelProbeFetch = async (url) => {
+      if (url.endsWith("/models")) {
+        return Response.json({
+          object: "list",
+          data: [{ id: "qwen/qwen3.6-plus:free", object: "model" }],
+        });
+      }
+      return response(429);
+    };
+
+    const result = await testAgentModelConnection(
+      {
+        provider: "openai",
+        defaultModel: "qwen/qwen3.6-plus:free",
+        apiKey: "xkiro-secret",
+        baseUrl: "https://api.xkiro.example/v1",
+      },
+      fetcher,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      provider: "openai",
+      model: "qwen/qwen3.6-plus:free",
+      code: "rate_limited",
+      error:
+        "The provider is reachable but this account is currently rate-limited or out of quota.",
+      status: 429,
+    });
   });
 
   test("falls back to a minimal completion when a compatible gateway has no model-detail route", async () => {
