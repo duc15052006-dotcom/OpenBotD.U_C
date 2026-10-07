@@ -97,6 +97,14 @@ type RegisteredRemoteAgentFacts = {
   /** Which agent on the endpoint, for a server that serves a roster. See `remoteTransport`. */
   remoteAgentId?: string;
   standingMessage: StandingRoleMessage;
+  /**
+   * Small trusted policy for a self-contained direct Computer/File action.
+   *
+   * The remote harness may substitute this for the generated standing/grants messages only when
+   * its conservative stateless classifier fires and the exact message ids below are supplied by
+   * this server. Complex/context-dependent work still receives the complete standing role.
+   */
+  simpleActionPolicy: string;
   /** The key this agent sits behind, resolved from the vault at load time. Never logged. */
   headers?: Record<string, string>;
 };
@@ -183,6 +191,28 @@ export function standingRoleMessage(
       AUTONOMOUS_WORKFLOW_GUIDANCE,
     ].join("\n\n"),
   };
+}
+
+/**
+ * Minimum policy that remains sufficient for a deterministic, self-contained Computer/File action.
+ *
+ * Deliberately keeps identity, role and the Owner's standing instructions. Knowledge documents,
+ * provenance prose and autonomous-workflow guidance are omitted because a literal write/read/list,
+ * screenshot or explicit URL navigation does not need them. Tool permission/workspace checks remain
+ * enforced by the actual tool boundary, not by this prose.
+ */
+export function simpleDirectActionPolicy(
+  profile: AgentStandingProfile,
+  instructions?: string | null,
+): string {
+  const agentInstructions = agentInstructionsGuidance(instructions);
+  return [
+    `You are ${profile.name}, ${profile.title}.`,
+    profile.roleDescription,
+    ...(agentInstructions ? [agentInstructions] : []),
+    "For this self-contained direct action, do only the explicit requested operation and then stop.",
+    "Use only tools offered on this run and obey their permission/workspace boundaries. Never reveal credentials or bypass login, MFA, or CAPTCHA. If a tool refuses, a permission is missing, or human interaction is required, stop and request/report help.",
+  ].join("\n\n");
 }
 
 export type RuntimeModel = {
@@ -300,6 +330,7 @@ export function registeredAgentFromRow(
           ? { remoteAgentId }
           : {}),
         standingMessage: standingRoleMessage(row, instructions, knowledge),
+        simpleActionPolicy: simpleDirectActionPolicy(row, instructions),
       }
     : null;
 }
@@ -1313,6 +1344,17 @@ function remoteAgentWithStandingRole(
        * in front of them. Only this side knows which is which, so only this side can say.
        */
       openbotDeploymentTools: deploymentTools,
+      /*
+       * Provider-only fast-path policy. The harness may use it only for a conservative,
+       * self-contained direct action and only to replace the exact generated policy message ids
+       * named here. Browser-supplied forwardedProps cannot widen this because these fields are
+       * written after that spread.
+       */
+      openbotSimpleActionPolicy: agent.simpleActionPolicy,
+      openbotSimpleActionPolicyIds: [
+        agent.standingMessage.id,
+        ...(holdingsMessage ? [holdingsMessage.id] : []),
+      ],
       /*
        * This deployment's own statement of what this run is.
        *
