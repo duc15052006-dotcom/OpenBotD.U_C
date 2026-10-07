@@ -288,6 +288,7 @@ async def test_qwen3_normal_turn_preserves_provider_reasoning_budget_by_default(
     assert result["messages"][0].content == "compatible proof"
     assert captured[0]["body"]["model"] == "qwen/qwen3.6-plus"
     assert "max_tokens" not in captured[0]["body"]
+    assert "max_completion_tokens" not in captured[0]["body"]
     assert captured[0]["body"]["messages"] == [
         {"content": "Analyze the tradeoffs carefully.", "role": "user"}
     ]
@@ -307,7 +308,8 @@ async def test_qwen3_cost_controls_are_explicitly_overrideable(
 
     await main.answer({"messages": [{"role": "user", "content": "Think deeply."}]})
 
-    assert captured[0]["body"]["max_tokens"] == 8192
+    # langchain-openai maps the configured ceiling to OpenAI's current wire field for this model.
+    assert captured[0]["body"]["max_completion_tokens"] == 8192
     assert captured[0]["body"]["messages"] == [
         {"content": "Think deeply.", "role": "user"}
     ]
