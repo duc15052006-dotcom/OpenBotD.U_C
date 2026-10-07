@@ -25,7 +25,10 @@ type CapturedScreenshot = Pick<
 const SCREENSHOT_FRAMES = new Map<string, CapturedScreenshot>();
 const MAX_SCREENSHOT_FRAMES = 20;
 
-function rememberScreenshot(toolCallId: string, frame: CapturedScreenshot): void {
+function rememberScreenshot(
+  toolCallId: string,
+  frame: CapturedScreenshot,
+): void {
   SCREENSHOT_FRAMES.delete(toolCallId);
   SCREENSHOT_FRAMES.set(toolCallId, frame);
   while (SCREENSHOT_FRAMES.size > MAX_SCREENSHOT_FRAMES) {
