@@ -161,7 +161,12 @@ def model_messages(messages):
         message.content for message in run.system_messages if isinstance(message.content, str)
     }
     provider_policy = run.system_messages
-    if stateless_fast_path and run.simple_policy and run.simple_policy_ids:
+    current_policy_ids = {message.id for message in run.system_messages if message.id}
+    trusted_replacement = bool(
+        run.simple_policy_ids
+        and run.simple_policy_ids.issubset(current_policy_ids)
+    )
+    if stateless_fast_path and run.simple_policy and trusted_replacement:
         replace_ids = run.simple_policy_ids
         provider_policy = (
             SystemMessage(
