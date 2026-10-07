@@ -347,7 +347,7 @@ async def test_qwen_stateless_surface_resume_keeps_real_chain_and_durable_histor
     second = await run_protocol(resume)
     assert len(boundary["model"]) == 2
     for wire in boundary["model"]:
-        assert wire["max_completion_tokens"] == 2048
+        assert wire["max_completion_tokens"] == 1024
         assert [t["function"]["name"] for t in wire["tools"]] == ["computer_write_file"]
         assert "OLD-TRANSCRIPT" not in json.dumps(wire)
         assert "SCHEMA-ONLY" not in json.dumps(wire)
@@ -366,6 +366,92 @@ async def test_qwen_stateless_surface_resume_keeps_real_chain_and_durable_histor
     all_provider_bodies = json.dumps(boundary["model"])
     for secret in ("synthetic-run-assertion", "synthetic-callback-token", "synthetic-model-key", "synthetic-server-token"):
         assert secret not in all_provider_bodies
+
+
+@pytest.mark.asyncio
+async def test_qwen_forwarded_minimal_policy_replaces_only_named_generated_policy(
+    boundary, monkeypatch
+):
+    monkeypatch.setenv("BOT_MODEL", "qwen/qwen3.6-plus:free")
+    monkeypatch.delenv("OPENBOT_QWEN_THINKING", raising=False)
+    boundary["requested_tools"] = ["computer_write_file"]
+    names = [
+        "computer_write_file",
+        "computer_read_file",
+        "computer_snapshot",
+        "computer_screenshot",
+    ]
+    request = "Create file /workspace/a.txt with hello."
+    standing_id = "standing-role:bot-ci"
+    holdings_id = "granted-tools:bot-ci"
+    body = run_input(
+        names,
+        messages=[
+            {
+                "id": standing_id,
+                "role": "system",
+                "content": "FULL-STANDING-" + "S" * 30_000,
+            },
+            {
+                "id": holdings_id,
+                "role": "system",
+                "content": "FULL-HOLDINGS-" + "H" * 30_000,
+            },
+            {
+                "id": "security-extra",
+                "role": "system",
+                "content": "KEEP-SECURITY default-deny and never bypass login/MFA/CAPTCHA.",
+            },
+            {
+                "id": "old-user",
+                "role": "user",
+                "content": "OLD-DURABLE-" + "U" * 30_000,
+            },
+            {
+                "id": "old-assistant",
+                "role": "assistant",
+                "content": "Old unrelated answer.",
+            },
+            {"id": "write-request", "role": "user", "content": request},
+        ],
+    )
+    body["forwardedProps"].update(
+        {
+            "openbotSimpleActionPolicy": (
+                "MINIMAL-DIRECT-POLICY: explicit action only; offered tools and workspace "
+                "permissions are authoritative; never expose credentials or bypass login/MFA/CAPTCHA."
+            ),
+            "openbotSimpleActionPolicyIds": [standing_id, holdings_id],
+        }
+    )
+
+    events = await run_protocol(body)
+    wire = boundary["model"][0]
+    encoded = json.dumps(wire, ensure_ascii=False)
+    assert wire["max_completion_tokens"] == 1024
+    assert [tool["function"]["name"] for tool in wire["tools"]] == [
+        "computer_write_file"
+    ]
+    assert "MINIMAL-DIRECT-POLICY" in encoded
+    assert "KEEP-SECURITY" in encoded
+    assert "FULL-STANDING" not in encoded
+    assert "FULL-HOLDINGS" not in encoded
+    assert "OLD-DURABLE" not in encoded
+    assert request in encoded
+    assert len(encoded) < 5_000
+
+    durable = snapshot(events)
+    assert any(
+        message.get("id") == "old-user" and "OLD-DURABLE" in message.get("content", "")
+        for message in durable
+    )
+    for secret in (
+        "synthetic-run-assertion",
+        "synthetic-callback-token",
+        "synthetic-model-key",
+        "synthetic-server-token",
+    ):
+        assert secret not in encoded
 
 
 @pytest.mark.asyncio

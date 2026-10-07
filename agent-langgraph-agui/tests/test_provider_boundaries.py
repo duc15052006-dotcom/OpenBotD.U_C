@@ -13,6 +13,7 @@ from threading import Thread
 import httpx2
 import pytest
 from ag_ui.core import Context, Tool
+from langchain_core.messages import SystemMessage
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -350,7 +351,7 @@ async def test_simple_qwen_file_action_caps_wire_output_and_narrows_tools(
         _current.reset(token)
 
     body = captured[0]["body"]
-    assert body["max_completion_tokens"] == 2048
+    assert body["max_completion_tokens"] == 1024
     assert [tool["function"]["name"] for tool in body["tools"]] == [
         "computer_write_file",
     ]
@@ -499,6 +500,133 @@ async def test_fast_path_preserves_security_and_unknown_context_without_credenti
     assert "EXPENSIVE-UI-SCHEMA" not in wire
     for secret in ("sk-secret-wire-proof", "secret-callback-wire-proof", "secret-run-assertion-wire-proof"):
         assert secret not in wire
+
+
+@pytest.mark.asyncio
+async def test_trusted_minimal_policy_replaces_only_generated_bulk_on_fast_path(
+    monkeypatch, compatible_endpoint
+):
+    base_url, captured = compatible_endpoint
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-compatible-ci")
+    monkeypatch.setenv("BOT_PROVIDER", "openai")
+    monkeypatch.setenv("BOT_MODEL", "qwen/qwen3.6-plus:free")
+    monkeypatch.setenv("OPENAI_BASE_URL", base_url)
+
+    request = "Hãy tạo file `/workspace/token-test-next.txt` với nội dung `hello`."
+    standing = SystemMessage(
+        id="standing-role:bot-ci",
+        content="FULL-STANDING-" + "S" * 30_000,
+    )
+    holdings = SystemMessage(
+        id="granted-tools:bot-ci",
+        content="FULL-HOLDINGS-" + "H" * 30_000,
+    )
+    security = SystemMessage(
+        id="security-policy-ci",
+        content="KEEP-SECURITY: default-deny; never bypass login/MFA/CAPTCHA.",
+    )
+    minimal = (
+        "MINIMAL-DIRECT-POLICY: obey the explicit action, offered tool boundaries, "
+        "workspace permissions, credential secrecy, and human handoff."
+    )
+    tool = Tool(
+        name="computer_write_file",
+        description="Write a literal file only inside the governed workspace.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "content": {"type": "string"},
+            },
+            "required": ["path", "content"],
+        },
+    )
+    source = [
+        {"id": standing.id, "role": "system", "content": standing.content},
+        {"id": holdings.id, "role": "system", "content": holdings.content},
+        {"id": security.id, "role": "system", "content": security.content},
+        {"role": "user", "content": "OLD-UNRELATED-" + "U" * 30_000},
+        {"role": "assistant", "content": "Old unrelated answer."},
+        {"role": "user", "content": request},
+    ]
+    token = _current.set(
+        RunTools(
+            tools=(tool,),
+            system_messages=(standing, holdings, security),
+            simple_policy=minimal,
+            simple_policy_ids=frozenset({standing.id, holdings.id}),
+        )
+    )
+    try:
+        await main.answer({"messages": source})
+    finally:
+        _current.reset(token)
+
+    body = captured[0]["body"]
+    wire = json.dumps(body, ensure_ascii=False)
+    assert body["max_completion_tokens"] == 1024
+    assert [item["function"]["name"] for item in body["tools"]] == [
+        "computer_write_file"
+    ]
+    assert "MINIMAL-DIRECT-POLICY" in wire
+    assert "KEEP-SECURITY" in wire
+    assert "FULL-STANDING" not in wire
+    assert "FULL-HOLDINGS" not in wire
+    assert "OLD-UNRELATED" not in wire
+    assert request in wire
+    assert len(wire) < 5_000
+
+
+@pytest.mark.asyncio
+async def test_minimal_policy_id_mismatch_fails_closed_to_full_policy(
+    monkeypatch, compatible_endpoint
+):
+    base_url, captured = compatible_endpoint
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-compatible-ci")
+    monkeypatch.setenv("BOT_PROVIDER", "openai")
+    monkeypatch.setenv("BOT_MODEL", "qwen/qwen3.6-plus:free")
+    monkeypatch.setenv("OPENAI_BASE_URL", base_url)
+
+    standing = SystemMessage(
+        id="standing-role:bot-ci",
+        content="FULL-STANDING-MUST-REMAIN",
+    )
+    tool = Tool(
+        name="computer_write_file",
+        description="Write only inside the governed workspace.",
+        parameters={"type": "object", "properties": {}},
+    )
+    token = _current.set(
+        RunTools(
+            tools=(tool,),
+            system_messages=(standing,),
+            simple_policy="MINIMAL-POLICY-MUST-NOT-REPLACE",
+            simple_policy_ids=frozenset({"standing-role:wrong-bot"}),
+        )
+    )
+    try:
+        await main.answer(
+            {
+                "messages": [
+                    {
+                        "id": standing.id,
+                        "role": "system",
+                        "content": standing.content,
+                    },
+                    {
+                        "role": "user",
+                        "content": "Create file /workspace/a.txt with hello.",
+                    },
+                ]
+            }
+        )
+    finally:
+        _current.reset(token)
+
+    wire = json.dumps(captured[0]["body"], ensure_ascii=False)
+    assert "FULL-STANDING-MUST-REMAIN" in wire
+    assert "MINIMAL-POLICY-MUST-NOT-REPLACE" not in wire
+
 
 @pytest.mark.asyncio
 async def test_qwen3_cost_controls_are_explicitly_overrideable(

@@ -137,6 +137,15 @@ type AgentRunInput = Parameters<AbstractAgent["run"]>[0];
 type AgentMessage = AgentRunInput["messages"][number];
 type AgentContext = NonNullable<AgentRunInput["context"]>[number];
 export type StandingRoleMessage = Extract<AgentMessage, { role: "system" }>;
+
+/*
+ * Provider-only optimization metadata must not change RegisteredAgent's public/runtime shape.
+ * Keying by the generated standing-message object also makes copies fail closed: if some future
+ * loader reconstructs that message instead of preserving the object, no minimal policy is found
+ * and the complete policy is sent.
+ */
+const simpleDirectActionPolicies = new WeakMap<StandingRoleMessage, string>();
+
 type AgentHeaders = Record<string, string>;
 type HeaderBearingAgent = AbstractAgent & { headers?: AgentHeaders };
 
@@ -183,6 +192,28 @@ export function standingRoleMessage(
       AUTONOMOUS_WORKFLOW_GUIDANCE,
     ].join("\n\n"),
   };
+}
+
+/**
+ * Minimum policy that remains sufficient for a deterministic, self-contained Computer/File action.
+ *
+ * Deliberately keeps identity, role and the Owner's standing instructions. Knowledge documents,
+ * provenance prose and autonomous-workflow guidance are omitted because a literal write/read/list,
+ * screenshot or explicit URL navigation does not need them. Tool permission/workspace checks remain
+ * enforced by the actual tool boundary, not by this prose.
+ */
+export function simpleDirectActionPolicy(
+  profile: AgentStandingProfile,
+  instructions?: string | null,
+): string {
+  const agentInstructions = agentInstructionsGuidance(instructions);
+  return [
+    `You are ${profile.name}, ${profile.title}.`,
+    profile.roleDescription,
+    ...(agentInstructions ? [agentInstructions] : []),
+    "For this self-contained direct action, do only the explicit requested operation and then stop.",
+    "Use only tools offered on this run and obey their permission/workspace boundaries. Never reveal credentials or bypass login, MFA, or CAPTCHA. If a tool refuses, a permission is missing, or human interaction is required, stop and request/report help.",
+  ].join("\n\n");
 }
 
 export type RuntimeModel = {
@@ -290,18 +321,24 @@ export function registeredAgentFromRow(
    * there: see `remoteTransport`.
    */
   const remoteAgentId = configuration?.remoteAgentId;
-  return typeof endpoint === "string" && isHttpUrl(endpoint)
-    ? {
-        id: row.id,
-        name: row.name,
-        type: row.type === "remote_mastra" ? "remote_mastra" : "remote_ag_ui",
-        endpoint,
-        ...(typeof remoteAgentId === "string" && remoteAgentId.length > 0
-          ? { remoteAgentId }
-          : {}),
-        standingMessage: standingRoleMessage(row, instructions, knowledge),
-      }
-    : null;
+  if (typeof endpoint !== "string" || !isHttpUrl(endpoint)) {
+    return null;
+  }
+  const standingMessage = standingRoleMessage(row, instructions, knowledge);
+  simpleDirectActionPolicies.set(
+    standingMessage,
+    simpleDirectActionPolicy(row, instructions),
+  );
+  return {
+    id: row.id,
+    name: row.name,
+    type: row.type === "remote_mastra" ? "remote_mastra" : "remote_ag_ui",
+    endpoint,
+    ...(typeof remoteAgentId === "string" && remoteAgentId.length > 0
+      ? { remoteAgentId }
+      : {}),
+    standingMessage,
+  };
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -1300,6 +1337,9 @@ function remoteAgentWithStandingRole(
       ? signRun(agent.id, input.runId, input.threadId)
       : undefined;
     const deploymentTools = tools.map((tool) => tool.name);
+    const simpleActionPolicy = simpleDirectActionPolicies.get(
+      agent.standingMessage,
+    );
     const forwardedProps = {
       ...(isPlainObject(input.forwardedProps) ? input.forwardedProps : {}),
       openbotBotId: agent.id,
@@ -1313,6 +1353,21 @@ function remoteAgentWithStandingRole(
        * in front of them. Only this side knows which is which, so only this side can say.
        */
       openbotDeploymentTools: deploymentTools,
+      /*
+       * Provider-only fast-path policy. The harness may use it only for a conservative,
+       * self-contained direct action and only to replace the exact generated policy message ids
+       * named here. Browser-supplied forwardedProps cannot widen this because these fields are
+       * written after that spread.
+       */
+      ...(simpleActionPolicy
+        ? {
+            openbotSimpleActionPolicy: simpleActionPolicy,
+            openbotSimpleActionPolicyIds: [
+              agent.standingMessage.id,
+              ...(holdingsMessage ? [holdingsMessage.id] : []),
+            ],
+          }
+        : {}),
       /*
        * This deployment's own statement of what this run is.
        *

@@ -14,7 +14,7 @@ import re
 
 DEFAULT_MODEL_CONTEXT_CHARS = 96_000
 DEFAULT_TOOL_RESULT_CHARS = 24_000
-DEFAULT_QWEN_SIMPLE_MAX_OUTPUT_TOKENS = 2_048
+DEFAULT_QWEN_SIMPLE_MAX_OUTPUT_TOKENS = 1_024
 _QWEN3 = re.compile(r"(^|[/:._-])qwen3([/:._-]|$)", re.IGNORECASE)
 _TRUE = {"1", "true", "yes", "on", "enabled", "always"}
 _FALSE = {"0", "false", "no", "off", "disabled", "never"}
