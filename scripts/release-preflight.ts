@@ -257,10 +257,23 @@ function checkComputerSandboxBoundary(): void {
   for (const evidence of [
     'existing.restartPolicyName !== "no"',
     'RestartPolicy: { Name: "no" }',
-    "restartPolicyName: info.HostConfig.RestartPolicy.Name",
+    "const restartPolicyName = inspectedRestartPolicyName(",
+    "const nanoCpus = inspectedNanoCpus(info.HostConfig)",
   ]) {
     if (!supervisor.includes(evidence)) {
       fail(`computer: legacy restart-policy migration is missing ${evidence}`);
+    }
+  }
+  const resourceInspect = read("supervisor/src/resource-inspect.ts");
+  for (const evidence of [
+    'return name?.trim() || "no"',
+    "CpuPeriod?: number",
+    "CpuQuota?: number",
+  ]) {
+    if (!resourceInspect.includes(evidence)) {
+      fail(
+        `computer: Docker-compatible resource inspection is missing ${evidence}`,
+      );
     }
   }
 

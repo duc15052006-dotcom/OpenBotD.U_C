@@ -2,6 +2,10 @@ import Docker from "dockerode";
 import { isPrimaryComputerContainerName } from "./computer-container-name";
 import { wasRunningBeforeStop } from "./stop-state";
 import {
+  inspectedNanoCpus,
+  inspectedRestartPolicyName,
+} from "./resource-inspect";
+import {
   BOT_LABEL,
   type ComputerNames,
   DEFAULT_NAMESPACE,
@@ -389,6 +393,10 @@ async function inspectOwned(names: ComputerNames): Promise<{
     const published =
       info.NetworkSettings?.Ports?.[COMPUTER_PORT]?.[0]?.HostPort;
     const port = parseHostPort(published);
+    const nanoCpus = inspectedNanoCpus(info.HostConfig);
+    const restartPolicyName = inspectedRestartPolicyName(
+      info.HostConfig?.RestartPolicy?.Name,
+    );
     return {
       status: info.State?.Status ?? "unknown",
       ...(port !== undefined ? { port } : {}),
@@ -401,12 +409,8 @@ async function inspectOwned(names: ComputerNames): Promise<{
       ...(typeof info.HostConfig?.Memory === "number"
         ? { memoryBytes: info.HostConfig.Memory }
         : {}),
-      ...(typeof info.HostConfig?.NanoCpus === "number"
-        ? { nanoCpus: info.HostConfig.NanoCpus }
-        : {}),
-      ...(info.HostConfig?.RestartPolicy?.Name
-        ? { restartPolicyName: info.HostConfig.RestartPolicy.Name }
-        : {}),
+      ...(nanoCpus !== undefined ? { nanoCpus } : {}),
+      restartPolicyName,
       /*
        * When this run of the container began, which is what tells two runs apart.
        *
