@@ -14,6 +14,7 @@ import re
 
 DEFAULT_MODEL_CONTEXT_CHARS = 96_000
 DEFAULT_TOOL_RESULT_CHARS = 24_000
+DEFAULT_QWEN_SIMPLE_MAX_OUTPUT_TOKENS = 2_048
 _QWEN3 = re.compile(r"(^|[/:._-])qwen3([/:._-]|$)", re.IGNORECASE)
 _TRUE = {"1", "true", "yes", "on", "enabled", "always"}
 _FALSE = {"0", "false", "no", "off", "disabled", "never"}
@@ -192,6 +193,17 @@ def _latest_user_message(messages):
     return None
 
 
+def _latest_user_text(messages) -> str | None:
+    message = _latest_user_message(messages)
+    if message is None:
+        return None
+    content = _content(message)
+    if _has_non_text_payload(content):
+        return None
+    text = " ".join(_text_parts(content)).strip().lower()
+    return text or None
+
+
 def simple_operational_turn(messages, offered_tool_names=()) -> bool:
     """Conservatively recognise a direct Computer/File action.
 
@@ -207,19 +219,115 @@ def simple_operational_turn(messages, offered_tool_names=()) -> bool:
     ):
         return False
 
-    message = _latest_user_message(messages)
-    if message is None:
-        return False
-    content = _content(message)
-    if _has_non_text_payload(content):
-        return False
-    text = " ".join(_text_parts(content)).strip().lower()
+    text = _latest_user_text(messages)
     if not text or len(text) > 600:
         return False
     if any(signal in text for signal in _COMPLEX_SIGNALS):
         return False
     return any(action in text for action in _SIMPLE_ACTIONS)
 
+
+def qwen3_simple_max_output_tokens(
+    model: str | None,
+    messages,
+    offered_tool_names=(),
+) -> int | None:
+    """Bound only deterministic Qwen Computer/File turns.
+
+    Compatible gateways do not consistently honor Qwen's /no_think hint. A small completion
+    ceiling is therefore the hard backstop against a trivial click/file action spending tens of
+    thousands of hidden reasoning tokens. Complex turns are untouched. Explicit thinking=on
+    also disables this fast-path ceiling.
+    """
+    if not qwen3_non_thinking_enabled(model, messages, offered_tool_names):
+        return None
+    simple_limit = _bounded_int(
+        "OPENBOT_QWEN_SIMPLE_MAX_OUTPUT_TOKENS",
+        DEFAULT_QWEN_SIMPLE_MAX_OUTPUT_TOKENS,
+        256,
+        8_192,
+    )
+    global_limit = qwen3_max_output_tokens()
+    return min(simple_limit, global_limit) if global_limit is not None else simple_limit
+
+
+def simple_action_tool_names(messages, offered_tool_names=()) -> tuple[str, ...] | None:
+    """Return a small, capability-preserving tool set for an obvious direct action.
+
+    The model still receives all tools for analysis/research/debug/design work. This only narrows
+    deterministic Computer/File requests where the user's intent identifies the required tool.
+    Companion tools stay available when an action commonly needs a snapshot, page read, secret, or
+    human handoff.
+    """
+    offered = tuple(name for name in offered_tool_names if isinstance(name, str))
+    if not simple_operational_turn(messages, offered):
+        return None
+
+    text = _latest_user_text(messages)
+    if not text:
+        return None
+
+    groups = (
+        (
+            ("chụp màn hình", "take a screenshot", "screenshot", "screen shot"),
+            ("computer_screenshot",),
+            ("computer_screenshot",),
+        ),
+        (
+            ("tạo file", "tạo tệp", "ghi file", "ghi tệp", "lưu file", "lưu tệp",
+             "create file", "write file", "save file"),
+            ("computer_write_file",),
+            ("computer_write_file", "computer_read_file", "computer_list_files"),
+        ),
+        (
+            ("đọc file", "đọc tệp", "read file", "read the file"),
+            ("computer_read_file",),
+            ("computer_read_file", "computer_list_files"),
+        ),
+        (
+            ("liệt kê file", "liệt kê tệp", "list file"),
+            ("computer_list_files",),
+            ("computer_list_files", "computer_read_file"),
+        ),
+        (
+            ("bấm ", "nhấn ", "click ", "press "),
+            ("computer_snapshot", "computer_click"),
+            ("computer_snapshot", "computer_click", "computer_read", "computer_request_help"),
+        ),
+        (
+            ("điền ", "gõ ", "type ", "fill "),
+            ("computer_snapshot", "computer_type"),
+            (
+                "computer_snapshot",
+                "computer_type",
+                "computer_click",
+                "computer_read",
+                "computer_request_secret",
+                "computer_request_help",
+            ),
+        ),
+        (
+            ("mở ", "truy cập", "vào trang", "open ", "open the ", "navigate", "visit ", "go to "),
+            ("computer_navigate",),
+            (
+                "computer_navigate",
+                "computer_read",
+                "computer_snapshot",
+                "computer_screenshot",
+                "computer_request_help",
+            ),
+        ),
+    )
+
+    offered_set = set(offered)
+    for signals, required, useful in groups:
+        if not any(signal in text for signal in signals):
+            continue
+        if not set(required).issubset(offered_set):
+            return None
+        wanted = set(useful)
+        return tuple(name for name in offered if name in wanted)
+    return None
 
 def qwen3_non_thinking_enabled(
     model: str | None,

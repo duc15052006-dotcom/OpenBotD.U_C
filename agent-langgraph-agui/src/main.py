@@ -172,7 +172,7 @@ def _model():
 
 async def answer(state: MessagesState):
     messages = model_messages(state["messages"])
-    return {"messages": [await bind_tools(_model()).ainvoke(messages)]}
+    return {"messages": [await bind_tools(_model(), messages).ainvoke(messages)]}
 
 
 builder = StateGraph(MessagesState)
