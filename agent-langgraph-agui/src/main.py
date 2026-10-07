@@ -18,11 +18,16 @@ from langgraph.graph import START, MessagesState, StateGraph
 from .tool_runtime import (
     ToolAwareAgent,
     bind_tools,
+    current_tools,
     execute_tools,
     model_messages,
     next_step,
 )
-from .token_efficiency import qwen3_max_output_tokens, qwen3_model
+from .token_efficiency import (
+    qwen3_max_output_tokens,
+    qwen3_model,
+    simple_operational_turn,
+)
 
 TOKEN_HEADER = "x-openbot-agent-token"
 
@@ -88,14 +93,14 @@ def _resolve_provider(provider: str):
     return OPENBOT_PROVIDER_ALIASES.get(provider, provider)
 
 
-def _model_kwargs(provider: str, model: str):
+def _model_kwargs(provider: str, model: str, simple_turn: bool = False):
     kwargs = _google_genai_kwargs(provider)
-    # Qwen3 hybrid-thinking models can otherwise spend a very large hidden/output budget on a
-    # tiny tool decision. xKiro/OpenAI-compatible endpoints honor max_tokens as the hard cost
-    # ceiling, so keep one even if the model ignores a reasoning control. Long generations can
-    # deliberately raise it through OPENBOT_QWEN_MAX_OUTPUT_TOKENS.
+    # Do not globally shrink Qwen's reasoning budget. Only direct, deterministic Computer/File
+    # turns get a small ceiling by default. Operators may still set an explicit global ceiling.
     if provider == "openai" and qwen3_model(model):
-        kwargs["max_tokens"] = qwen3_max_output_tokens()
+        max_tokens = qwen3_max_output_tokens(simple_turn)
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
     return kwargs
 
 
@@ -116,7 +121,7 @@ def _chatgpt_auth_file(store: str) -> Path:
     return path
 
 
-def _model():
+def _model(simple_turn: bool = False):
     """The model this Bot thinks with, chosen by which credential the deployment gave it.
 
     A SIGNED-IN CHATGPT PLAN IS NOT AN API KEY, and this is the only place that difference shows up.
@@ -161,17 +166,24 @@ def _model():
         }.get(provider, model)
     prefix, separator, _ = model.partition(":")
     if separator and prefix in MODEL_PROVIDERS:
-        return init_chat_model(model, **_model_kwargs(prefix, model))
+        return init_chat_model(model, **_model_kwargs(prefix, model, simple_turn))
     return init_chat_model(
         model,
         model_provider=provider,
-        **_model_kwargs(provider, model),
+        **_model_kwargs(provider, model, simple_turn),
     )
 
 
 async def answer(state: MessagesState):
+    tools = current_tools().tools
+    offered_names = tuple(tool.name for tool in tools)
+    simple_turn = simple_operational_turn(state["messages"], offered_names)
     messages = model_messages(state["messages"])
-    return {"messages": [await bind_tools(_model()).ainvoke(messages)]}
+    return {
+        "messages": [
+            await bind_tools(_model(simple_turn=simple_turn)).ainvoke(messages)
+        ]
+    }
 
 
 builder = StateGraph(MessagesState)
