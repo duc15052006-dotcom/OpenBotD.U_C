@@ -152,16 +152,13 @@ def test_large_tool_result_is_bounded_only_in_provider_view(monkeypatch):
     assert compact[1]["content"].endswith("A" * 100)
 
 
-def test_qwen_output_ceiling_is_adaptive_and_overrideable(monkeypatch):
+def test_qwen_output_ceiling_is_opt_in_only(monkeypatch):
     monkeypatch.delenv("OPENBOT_QWEN_MAX_OUTPUT_TOKENS", raising=False)
-    monkeypatch.delenv("OPENBOT_QWEN_SIMPLE_MAX_OUTPUT_TOKENS", raising=False)
 
-    assert qwen3_max_output_tokens(simple_turn=True) == 2048
-    assert qwen3_max_output_tokens(simple_turn=False) is None
+    assert qwen3_max_output_tokens() is None
 
     monkeypatch.setenv("OPENBOT_QWEN_MAX_OUTPUT_TOKENS", "1024")
-    assert qwen3_max_output_tokens(simple_turn=True) == 1024
-    assert qwen3_max_output_tokens(simple_turn=False) == 1024
+    assert qwen3_max_output_tokens() == 1024
 
     monkeypatch.setenv("OPENBOT_QWEN_MAX_OUTPUT_TOKENS", "999999")
-    assert qwen3_max_output_tokens(simple_turn=False) == 32768
+    assert qwen3_max_output_tokens() == 32768
