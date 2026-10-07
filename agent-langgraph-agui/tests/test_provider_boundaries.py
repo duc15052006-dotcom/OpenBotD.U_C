@@ -270,7 +270,7 @@ async def test_compatible_model_id_reaches_real_http_boundary(
 
 
 @pytest.mark.asyncio
-async def test_qwen3_compatible_turn_disables_thinking_and_has_output_ceiling(
+async def test_qwen3_normal_turn_preserves_provider_reasoning_budget_by_default(
     monkeypatch, compatible_endpoint
 ):
     base_url, captured = compatible_endpoint
@@ -280,14 +280,14 @@ async def test_qwen3_compatible_turn_disables_thinking_and_has_output_ceiling(
     monkeypatch.setenv("OPENAI_BASE_URL", base_url)
 
     result = await main.answer(
-        {"messages": [{"role": "user", "content": "Open example.com."}]}
+        {"messages": [{"role": "user", "content": "Analyze the tradeoffs carefully."}]}
     )
 
     assert result["messages"][0].content == "compatible proof"
     assert captured[0]["body"]["model"] == "qwen/qwen3.6-plus"
-    assert captured[0]["body"]["max_tokens"] == 4096
+    assert "max_tokens" not in captured[0]["body"]
     assert captured[0]["body"]["messages"] == [
-        {"content": "Open example.com.\n\n/no_think", "role": "user"}
+        {"content": "Analyze the tradeoffs carefully.", "role": "user"}
     ]
 
 
