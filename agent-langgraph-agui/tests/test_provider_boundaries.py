@@ -12,7 +12,7 @@ from threading import Thread
 
 import httpx2
 import pytest
-from ag_ui.core import Tool
+from ag_ui.core import Context, Tool
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -321,15 +321,28 @@ async def test_simple_qwen_file_action_caps_wire_output_and_narrows_tools(
         )
         for name in names
     )
-    token = _current.set(RunTools(tools=tools))
+    token = _current.set(
+        RunTools(
+            tools=tools,
+            context=(
+                Context(
+                    description="Synthetic expensive UI context",
+                    value="CONTEXT-MARKER-" + ("X" * 20_000),
+                ),
+            ),
+        )
+    )
     try:
         await main.answer(
             {
                 "messages": [
+                    {"role": "system", "content": "standing policy"},
+                    {"role": "user", "content": "OLD-USER-MARKER"},
+                    {"role": "assistant", "content": "OLD-ASSISTANT-MARKER"},
                     {
                         "role": "user",
-                        "content": "Tạo file notes.txt với nội dung hello.",
-                    }
+                        "content": "Tạo file /workspace/notes.txt với nội dung hello.",
+                    },
                 ]
             }
         )
@@ -339,10 +352,13 @@ async def test_simple_qwen_file_action_caps_wire_output_and_narrows_tools(
     body = captured[0]["body"]
     assert body["max_completion_tokens"] == 2048
     assert [tool["function"]["name"] for tool in body["tools"]] == [
-        "computer_list_files",
-        "computer_read_file",
         "computer_write_file",
     ]
+    wire = json.dumps(body, ensure_ascii=False)
+    assert "CONTEXT-MARKER" not in wire
+    assert "OLD-USER-MARKER" not in wire
+    assert "OLD-ASSISTANT-MARKER" not in wire
+    assert body["messages"][0] == {"content": "standing policy", "role": "system"}
     assert body["messages"][-1]["content"].endswith("/no_think")
 
 
