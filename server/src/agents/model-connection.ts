@@ -90,19 +90,6 @@ function probeRequest(runtime: RuntimeAgentModel): {
   };
 }
 
-function compatibleCatalogModelIds(raw: unknown): string[] | null {
-  if (!raw || typeof raw !== "object") return null;
-  const data = (raw as { data?: unknown }).data;
-  if (!Array.isArray(data)) return null;
-  return data
-    .map((entry) =>
-      entry && typeof entry === "object"
-        ? (entry as { id?: unknown }).id
-        : undefined,
-    )
-    .filter((id): id is string => typeof id === "string");
-}
-
 function classifyFailure(
   runtime: RuntimeAgentModel,
   status: number,
@@ -164,37 +151,28 @@ async function testOpenAiCompatibleEndpoint(
     authorization: `Bearer ${runtime.apiKey}`,
   };
 
-  // Prefer the zero-token catalog check. Unlike OpenAI's own API, compatible gateways are not
-  // required to implement GET /models/:id; many expose only GET /models and chat completions.
+  // A model catalogue proves only that the key may read metadata. It does NOT prove inference
+  // quota. xKiro, for example, can return the selected free model from /models after that account's
+  // daily free-token allowance is exhausted, while /chat/completions correctly returns 429. The old
+  // early-success path therefore told the settings screen "Connected" and the very next real Bot
+  // turn failed. Keep the catalogue as a cheap early authentication/provider-health check, but a
+  // compatible endpoint is successful only after one real, tightly bounded completion.
   const catalog = await guardedFetch(`${base}/models`, {
     method: "GET",
     headers,
     signal,
     redirect: "manual",
   });
-  if (catalog.ok) {
-    try {
-      const ids = compatibleCatalogModelIds(await catalog.json());
-      if (ids?.includes(runtime.defaultModel)) {
-        return {
-          ok: true,
-          provider: runtime.provider,
-          model: runtime.defaultModel,
-        };
-      }
-    } catch {
-      // A non-standard success body is not proof that the model is unavailable. Verify it below.
-    }
-  } else if (
-    [401, 403, 429].includes(catalog.status) ||
-    catalog.status >= 500
+  if (
+    !catalog.ok &&
+    ([401, 403, 429].includes(catalog.status) || catalog.status >= 500)
   ) {
     return classifyFailure(runtime, catalog.status);
   }
 
-  // If the catalog is absent, non-standard, or does not list the exact alias, verify the actual
-  // transport with the smallest useful completion. This avoids false 404s on compatible gateways
-  // such as xKiro while never reflecting provider response bodies into the browser.
+  // Verify the same inference transport the Bot will use. One output token is enough to distinguish
+  // a usable credential/model from an account whose free quota is already exhausted, without turning
+  // a settings check into meaningful token spend. Provider response bodies remain private.
   const completion = await guardedFetch(`${base}/chat/completions`, {
     method: "POST",
     headers: {
@@ -241,9 +219,10 @@ function failure(
  * Verify that the selected provider accepts this credential for this model.
  *
  * Native OpenAI, Anthropic and Google endpoints use model metadata and spend no inference tokens.
- * OpenAI-compatible gateways first use GET /models; if that catalog cannot prove the exact alias,
- * OpenBot falls back to a one-token chat completion because compatible gateways are not required to
- * implement OpenAI's GET /models/:id route. No provider response body is returned or logged.
+ * OpenAI-compatible gateways use GET /models only as a cheap preflight, then always make a one-token
+ * chat completion. A catalogue success cannot prove inference quota, and reporting it as "Connected"
+ * is misleading when the account's next real generation returns 429. No provider response body is
+ * returned or logged.
  */
 export async function testAgentModelConnection(
   runtime: RuntimeAgentModel,
