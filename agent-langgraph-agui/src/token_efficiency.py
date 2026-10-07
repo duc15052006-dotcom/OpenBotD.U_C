@@ -18,6 +18,8 @@ DEFAULT_QWEN_SIMPLE_MAX_OUTPUT_TOKENS = 2_048
 _QWEN3 = re.compile(r"(^|[/:._-])qwen3([/:._-]|$)", re.IGNORECASE)
 _TRUE = {"1", "true", "yes", "on", "enabled", "always"}
 _FALSE = {"0", "false", "no", "off", "disabled", "never"}
+_PATH_OR_FILE = re.compile(r"(?:[/\\]|\b[\w.-]+\.[a-z0-9]{1,12}\b)", re.IGNORECASE)
+_URLISH = re.compile(r"(?:https?://|www\.|\b[a-z0-9-]+\.[a-z]{2,})(?:\S*)", re.IGNORECASE)
 
 # Deliberately narrow. A false negative costs a few tokens; a false positive could remove useful
 # reasoning. These are direct, observable Computer/File operations rather than analysis tasks.
@@ -227,6 +229,55 @@ def simple_operational_turn(messages, offered_tool_names=()) -> bool:
     return any(action in text for action in _SIMPLE_ACTIONS)
 
 
+def stateless_simple_action_turn(messages, offered_tool_names=()) -> bool:
+    """Recognise only self-contained actions that do not need earlier conversation context.
+
+    This is deliberately stricter than simple_operational_turn. A click such as "press it" or a
+    file request such as "save that" may be simple, but it depends on prior turns and must retain
+    them. Screenshot/list requests are self-contained by nature; file and navigation requests need
+    an explicit target.
+    """
+    offered = tuple(name for name in offered_tool_names if isinstance(name, str))
+    if not simple_operational_turn(messages, offered):
+        return False
+    text = _latest_user_text(messages)
+    if not text:
+        return False
+
+    if any(signal in text for signal in ("chụp màn hình", "take a screenshot", "screenshot", "screen shot")):
+        return "computer_screenshot" in offered
+    if any(signal in text for signal in ("liệt kê file", "liệt kê tệp", "list file")):
+        return "computer_list_files" in offered
+    if any(
+        signal in text
+        for signal in (
+            "tạo file", "tạo tệp", "ghi file", "ghi tệp", "lưu file", "lưu tệp",
+            "đọc file", "đọc tệp", "create file", "write file", "save file",
+            "read file", "read the file",
+        )
+    ):
+        return bool(_PATH_OR_FILE.search(text))
+    if any(
+        signal in text
+        for signal in ("mở ", "truy cập", "vào trang", "open ", "open the ", "navigate", "visit ", "go to ")
+    ):
+        return bool(_URLISH.search(text))
+    return False
+
+
+def qwen3_stateless_fast_path_enabled(
+    model: str | None,
+    messages,
+    offered_tool_names=(),
+) -> bool:
+    """Whether Qwen may receive the minimal provider view for a self-contained action."""
+    if not qwen3_model(model):
+        return False
+    mode = (os.environ.get("OPENBOT_QWEN_THINKING") or "").strip().lower()
+    if mode in _TRUE:
+        return False
+    return stateless_simple_action_turn(messages, offered_tool_names)
+
 def qwen3_simple_max_output_tokens(
     model: str | None,
     messages,
@@ -266,6 +317,7 @@ def simple_action_tool_names(messages, offered_tool_names=()) -> tuple[str, ...]
     text = _latest_user_text(messages)
     if not text:
         return None
+    stateless = stateless_simple_action_turn(messages, offered)
 
     groups = (
         (
@@ -277,17 +329,17 @@ def simple_action_tool_names(messages, offered_tool_names=()) -> tuple[str, ...]
             ("tạo file", "tạo tệp", "ghi file", "ghi tệp", "lưu file", "lưu tệp",
              "create file", "write file", "save file"),
             ("computer_write_file",),
-            ("computer_write_file", "computer_read_file", "computer_list_files"),
+            ("computer_write_file",) if stateless else ("computer_write_file", "computer_read_file", "computer_list_files"),
         ),
         (
             ("đọc file", "đọc tệp", "read file", "read the file"),
             ("computer_read_file",),
-            ("computer_read_file", "computer_list_files"),
+            ("computer_read_file",) if stateless else ("computer_read_file", "computer_list_files"),
         ),
         (
             ("liệt kê file", "liệt kê tệp", "list file"),
             ("computer_list_files",),
-            ("computer_list_files", "computer_read_file"),
+            ("computer_list_files",) if stateless else ("computer_list_files", "computer_read_file"),
         ),
         (
             ("bấm ", "nhấn ", "click ", "press "),
@@ -309,7 +361,7 @@ def simple_action_tool_names(messages, offered_tool_names=()) -> tuple[str, ...]
         (
             ("mở ", "truy cập", "vào trang", "open ", "open the ", "navigate", "visit ", "go to "),
             ("computer_navigate",),
-            (
+            ("computer_navigate",) if stateless else (
                 "computer_navigate",
                 "computer_read",
                 "computer_snapshot",
@@ -389,6 +441,25 @@ def _message_chars(message) -> int:
         return len(str(_content(message) or "")) + 64
 
 
+def compact_stateless_simple_history(messages):
+    """Keep system policy plus only the current self-contained user turn.
+
+    Surface tool results that resume the same turn live after that latest user message and are kept.
+    Older conversation turns are omitted only from the provider view; durable LangGraph/OpenBot
+    history remains untouched.
+    """
+    items = list(messages)
+    user_positions = [
+        index for index, message in enumerate(items) if _role(message) == "user"
+    ]
+    if not user_positions:
+        return items
+    latest_user = user_positions[-1]
+    leading_system = [
+        message for message in items[:latest_user] if _role(message) == "system"
+    ]
+    return [*leading_system, *items[latest_user:]]
+
 def compact_model_history(messages):
     """Preserve normal histories exactly; trim only after the provider view is genuinely large.
 
@@ -432,8 +503,11 @@ def compact_model_history(messages):
 
 
 def prepare_model_messages(messages, model: str | None, offered_tool_names=()):
-    """Build the model-only view and use /no_think only for safe, direct Qwen tool turns."""
+    """Build the provider-only view without weakening complex or context-dependent turns."""
     prepared = compact_model_history(messages)
+    if qwen3_stateless_fast_path_enabled(model, prepared, offered_tool_names):
+        prepared = compact_stateless_simple_history(prepared)
+
     if not qwen3_non_thinking_enabled(model, prepared, offered_tool_names):
         return prepared
 
