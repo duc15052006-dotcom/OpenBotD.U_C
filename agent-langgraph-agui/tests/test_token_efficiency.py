@@ -1,6 +1,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.token_efficiency import (
@@ -105,6 +107,10 @@ def test_explicit_thinking_override_keeps_simple_user_message_unchanged(monkeypa
 
 def test_simple_classifier_requires_direct_computer_action():
     assert simple_operational_turn(
+        [{"role": "user", "content": "Chụp màn hình hiện tại."}],
+        ["computer_screenshot"],
+    )
+    assert not simple_operational_turn(
         [{"role": "user", "content": "Chụp màn hình hiện tại."}],
         ["computer_snapshot"],
     )
@@ -310,3 +316,96 @@ def test_qwen_output_ceiling_is_opt_in_only(monkeypatch):
 
     monkeypatch.setenv("OPENBOT_QWEN_MAX_OUTPUT_TOKENS", "999999")
     assert qwen3_max_output_tokens() == 32768
+
+
+@pytest.mark.parametrize("prompt", [
+    "làm lại file đó",
+    "Tạo file /workspace/a.txt với nội dung vừa nói.",
+    "Write file /workspace/a.txt with the previous content.",
+    "Create file /workspace/a.txt with the final result.",
+    "Tạo file /workspace/a.txt với nội dung báo cáo cũ.",
+    "Create file /workspace/a.py with code for a complete application.",
+    "Chụp màn hình trang đó.",
+    "Liệt kê file trong thư mục đó.",
+    "Mở https://example.com rồi tìm thông tin và viết báo cáo.",
+    "Hãy chụp màn hình hiện tại và đọc file /workspace/a.txt.",
+    "Click Save then fix the problem.",
+    "Read file /workspace/a.txt and summarize the implications.",
+])
+def test_dependent_or_multiple_actions_keep_history_reasoning_and_tools(monkeypatch, prompt):
+    monkeypatch.delenv("OPENBOT_QWEN_THINKING", raising=False)
+    history = [
+        {"role": "user", "content": "Earlier task data."},
+        {"role": "assistant", "content": "Earlier answer."},
+        {"role": "user", "content": prompt},
+    ]
+    assert not stateless_simple_action_turn(history, FULL_COMPUTER_TOOLS)
+    assert prepare_model_messages(history, "qwen/qwen3.6-plus:free", FULL_COMPUTER_TOOLS) == history
+    assert qwen3_simple_max_output_tokens("qwen/qwen3.6-plus:free", history, FULL_COMPUTER_TOOLS) is None
+    assert simple_action_tool_names(history, FULL_COMPUTER_TOOLS) is None
+
+
+@pytest.mark.parametrize(("prompt", "expected"), [
+    ("Hãy tạo file `/workspace/token-test-next.txt` với nội dung `hello`.", "computer_write_file"),
+    ("Đọc file /workspace/a.txt.", "computer_read_file"),
+    ("List files in /workspace.", "computer_list_files"),
+    ("Hãy chụp màn hình Computer hiện tại và trả về ảnh chụp.", "computer_screenshot"),
+    ("Open https://example.com.", "computer_navigate"),
+])
+def test_self_contained_commands_identify_only_the_required_action(prompt, expected):
+    history = [{"role": "user", "content": prompt}]
+    assert stateless_simple_action_turn(history, FULL_COMPUTER_TOOLS)
+    selected = simple_action_tool_names(history, FULL_COMPUTER_TOOLS)
+    assert expected in selected
+    assert set(selected) == ({expected, "computer_request_help"} if expected == "computer_navigate" else {expected})
+
+
+@pytest.mark.parametrize("problem", ["orphan", "incomplete", "error", "refusal", "different_tool"])
+def test_unsafe_resume_never_gets_a_stateless_view_or_simple_cap(monkeypatch, problem):
+    monkeypatch.delenv("OPENBOT_QWEN_THINKING", raising=False)
+    history = [
+        {"role": "user", "content": "Earlier prompt."},
+        {"role": "assistant", "content": "Earlier answer."},
+        {"role": "user", "content": "Tạo file /workspace/a.txt với nội dung hello."},
+        {"role": "assistant", "content": "", "tool_calls": [
+            {"id": "call-write", "name": "computer_write_file", "args": {"path": "a.txt", "content": "hello"}}
+        ]},
+        {"role": "tool", "tool_call_id": "call-write", "content": "written"},
+    ]
+    if problem == "orphan":
+        history[-1]["tool_call_id"] = "earlier-call"
+    elif problem == "incomplete":
+        history.pop()
+    elif problem == "error":
+        history[-1]["status"] = "error"
+    elif problem == "refusal":
+        history[-1]["content"] = "Refused. The deployment policy denied this write."
+    else:
+        history[-2]["tool_calls"][0]["name"] = "computer_read_file"
+    assert prepare_model_messages(history, "qwen/qwen3.6-plus:free", FULL_COMPUTER_TOOLS) == history
+    assert qwen3_simple_max_output_tokens("qwen/qwen3.6-plus:free", history, FULL_COMPUTER_TOOLS) is None
+
+
+def test_stateless_large_history_preserves_intervening_security_and_developer_policy(monkeypatch):
+    monkeypatch.delenv("OPENBOT_QWEN_THINKING", raising=False)
+    history = [
+        {"role": "system", "content": "Default-deny; never bypass CAPTCHA/MFA/login."},
+        {"role": "user", "content": "Old content " + "x" * 100_000},
+        {"role": "developer", "content": "Only the sandbox workspace is writable."},
+        {"role": "system", "content": "Never expose credentials."},
+        {"role": "user", "content": "Create file /workspace/a.txt with hello."},
+    ]
+    prepared = prepare_model_messages(history, "qwen/qwen3.6-plus:free", FULL_COMPUTER_TOOLS)
+    assert prepared[:3] == [history[0], history[2], history[3]]
+    assert len(history[1]["content"]) > 100_000
+    assert history[-1]["content"] == "Create file /workspace/a.txt with hello."
+
+
+def test_attachment_on_an_explicit_action_disables_fast_path(monkeypatch):
+    monkeypatch.delenv("OPENBOT_QWEN_THINKING", raising=False)
+    history = [{"role": "user", "content": [
+        {"type": "text", "text": "Create file /workspace/a.txt with hello."},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}},
+    ]}]
+    assert prepare_model_messages(history, "qwen/qwen3.6-plus:free", FULL_COMPUTER_TOOLS) == history
+    assert qwen3_simple_max_output_tokens("qwen/qwen3.6-plus:free", history, FULL_COMPUTER_TOOLS) is None

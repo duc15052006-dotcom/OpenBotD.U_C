@@ -17,7 +17,7 @@ from ag_ui.core import Context, Tool
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src import main
-from src.tool_runtime import RunTools, _current
+from src.tool_runtime import RunTools, _current, _A2UI_SCHEMA_DESCRIPTION
 
 _LOOPBACK_SOCKET_GUARD_INSTALLED = False
 
@@ -326,7 +326,7 @@ async def test_simple_qwen_file_action_caps_wire_output_and_narrows_tools(
             tools=tools,
             context=(
                 Context(
-                    description="Synthetic expensive UI context",
+                    description=_A2UI_SCHEMA_DESCRIPTION,
                     value="CONTEXT-MARKER-" + ("X" * 20_000),
                 ),
             ),
@@ -337,11 +337,11 @@ async def test_simple_qwen_file_action_caps_wire_output_and_narrows_tools(
             {
                 "messages": [
                     {"role": "system", "content": "standing policy"},
-                    {"role": "user", "content": "OLD-USER-MARKER"},
-                    {"role": "assistant", "content": "OLD-ASSISTANT-MARKER"},
+                    {"role": "user", "content": "OLD-USER-MARKER" + "U" * 30_000},
+                    {"role": "assistant", "content": "OLD-ASSISTANT-MARKER" + "A" * 30_000},
                     {
                         "role": "user",
-                        "content": "Tạo file /workspace/notes.txt với nội dung hello.",
+                        "content": "Hãy tạo file `/workspace/token-test-next.txt` với nội dung `hello`.",
                     },
                 ]
             }
@@ -359,7 +359,10 @@ async def test_simple_qwen_file_action_caps_wire_output_and_narrows_tools(
     assert "OLD-USER-MARKER" not in wire
     assert "OLD-ASSISTANT-MARKER" not in wire
     assert body["messages"][0] == {"content": "standing policy", "role": "system"}
-    assert body["messages"][-1]["content"].endswith("/no_think")
+    assert body["messages"][-1]["content"] == (
+        "Hãy tạo file `/workspace/token-test-next.txt` với nội dung `hello`.\n\n/no_think"
+    )
+    assert len(wire) < 4_000
 
 
 @pytest.mark.asyncio
@@ -386,11 +389,17 @@ async def test_complex_qwen_turn_keeps_full_tools_and_unbounded_default_output(
         )
         for name in names
     )
-    token = _current.set(RunTools(tools=tools))
+    context_value = "COMPLEX-CONTEXT-" + "X" * 20_000
+    token = _current.set(RunTools(tools=tools, context=(
+        Context(description=_A2UI_SCHEMA_DESCRIPTION, value=context_value),
+    )))
     try:
         await main.answer(
             {
                 "messages": [
+                    {"role": "system", "content": "standing policy"},
+                    {"role": "user", "content": "OLD-COMPLEX-USER-" + "U" * 30_000},
+                    {"role": "assistant", "content": "OLD-COMPLEX-ASSISTANT-" + "A" * 30_000},
                     {
                         "role": "user",
                         "content": "Phân tích kiến trúc file này thật kỹ và đề xuất cách tối ưu.",
@@ -406,6 +415,90 @@ async def test_complex_qwen_turn_keeps_full_tools_and_unbounded_default_output(
     assert "max_completion_tokens" not in body
     assert [tool["function"]["name"] for tool in body["tools"]] == list(names)
     assert "/no_think" not in body["messages"][-1]["content"]
+    wire = json.dumps(body, ensure_ascii=False)
+    assert context_value in wire
+    assert "OLD-COMPLEX-USER-" + "U" * 30_000 in wire
+    assert "OLD-COMPLEX-ASSISTANT-" + "A" * 30_000 in wire
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("model", "prompt", "thinking", "attachment"), [
+    ("qwen/qwen3.6-plus:free", "làm lại file đó", "", False),
+    ("qwen/qwen3.6-plus:free", "Tạo file /workspace/a.txt với nội dung vừa nói.", "", False),
+    ("qwen/qwen3.6-plus:free", "Create file /workspace/a.txt with hello.", "on", False),
+    ("qwen/qwen3.6-plus:free", "Create file /workspace/a.txt with hello.", "", True),
+    ("gpt-ci", "Create file /workspace/a.txt with hello.", "", False),
+])
+async def test_non_fast_path_keeps_history_context_and_full_tools_on_wire(
+    monkeypatch, compatible_endpoint, model, prompt, thinking, attachment
+):
+    base_url, captured = compatible_endpoint
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-compatible-ci")
+    monkeypatch.setenv("BOT_PROVIDER", "openai")
+    monkeypatch.setenv("BOT_MODEL", model)
+    monkeypatch.setenv("OPENAI_BASE_URL", base_url)
+    if thinking:
+        monkeypatch.setenv("OPENBOT_QWEN_THINKING", thinking)
+    names = ("computer_write_file", "computer_read_file", "computer_snapshot", "computer_screenshot")
+    content = prompt if not attachment else [
+        {"type": "text", "text": prompt},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}},
+    ]
+    source = [
+        {"role": "system", "content": "standing policy"},
+        {"role": "user", "content": "OLD-REQUIRED-HISTORY-" + "U" * 30_000},
+        {"role": "assistant", "content": "Old task result."},
+        {"role": "user", "content": content},
+    ]
+    token = _current.set(RunTools(
+        tools=tuple(Tool(name=name, description=name, parameters={"type": "object", "properties": {}}) for name in names),
+        context=(Context(description=_A2UI_SCHEMA_DESCRIPTION, value="REQUIRED-UI-CONTEXT"),),
+    ))
+    try:
+        await main.answer({"messages": source})
+    finally:
+        _current.reset(token)
+    body = captured[0]["body"]
+    assert "max_tokens" not in body and "max_completion_tokens" not in body
+    assert [t["function"]["name"] for t in body["tools"]] == list(names)
+    assert body["messages"][1:] == source
+    assert "REQUIRED-UI-CONTEXT" in body["messages"][0]["content"]
+    assert "/no_think" not in json.dumps(body)
+
+
+@pytest.mark.asyncio
+async def test_fast_path_preserves_security_and_unknown_context_without_credentials(
+    monkeypatch, compatible_endpoint
+):
+    base_url, captured = compatible_endpoint
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-secret-wire-proof")
+    monkeypatch.setenv("AGENT_TOOL_TOKEN", "secret-callback-wire-proof")
+    monkeypatch.setenv("BOT_PROVIDER", "openai")
+    monkeypatch.setenv("BOT_MODEL", "qwen/qwen3.6-plus:free")
+    monkeypatch.setenv("OPENAI_BASE_URL", base_url)
+    token = _current.set(RunTools(
+        tools=(Tool(name="computer_write_file", description="Write only inside the workspace.", parameters={"type": "object", "properties": {}}),),
+        context=(
+            Context(description=_A2UI_SCHEMA_DESCRIPTION, value="EXPENSIVE-UI-SCHEMA-" + "X" * 20_000),
+            Context(description="Permission policy", value="Default-deny. No host filesystem access."),
+            Context(description="Unrecognized context", value="KEEP-UNKNOWN-CONTEXT"),
+        ),
+        assertion="secret-run-assertion-wire-proof",
+    ))
+    try:
+        await main.answer({"messages": [
+            {"role": "system", "content": "Never bypass CAPTCHA/MFA/login; never expose credentials."},
+            {"role": "user", "content": "Create file /workspace/a.txt with hello."},
+        ]})
+    finally:
+        _current.reset(token)
+    wire = json.dumps(captured[0]["body"], ensure_ascii=False)
+    assert "Default-deny. No host filesystem access." in wire
+    assert "Never bypass CAPTCHA/MFA/login; never expose credentials." in wire
+    assert "KEEP-UNKNOWN-CONTEXT" in wire
+    assert "EXPENSIVE-UI-SCHEMA" not in wire
+    for secret in ("sk-secret-wire-proof", "secret-callback-wire-proof", "secret-run-assertion-wire-proof"):
+        assert secret not in wire
 
 @pytest.mark.asyncio
 async def test_qwen3_cost_controls_are_explicitly_overrideable(
