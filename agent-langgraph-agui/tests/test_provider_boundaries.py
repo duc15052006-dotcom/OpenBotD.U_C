@@ -12,10 +12,12 @@ from threading import Thread
 
 import httpx2
 import pytest
+from ag_ui.core import Tool
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src import main
+from src.tool_runtime import RunTools, _current
 
 _LOOPBACK_SOCKET_GUARD_INSTALLED = False
 
@@ -293,6 +295,101 @@ async def test_qwen3_normal_turn_preserves_provider_reasoning_budget_by_default(
         {"content": "Analyze the tradeoffs carefully.", "role": "user"}
     ]
 
+
+
+@pytest.mark.asyncio
+async def test_simple_qwen_file_action_caps_wire_output_and_narrows_tools(
+    monkeypatch, compatible_endpoint
+):
+    base_url, captured = compatible_endpoint
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-compatible-ci")
+    monkeypatch.setenv("BOT_PROVIDER", "openai")
+    monkeypatch.setenv("BOT_MODEL", "qwen/qwen3.6-plus")
+    monkeypatch.setenv("OPENAI_BASE_URL", base_url)
+
+    names = (
+        "computer_navigate",
+        "computer_list_files",
+        "computer_read_file",
+        "computer_write_file",
+    )
+    tools = tuple(
+        Tool(
+            name=name,
+            description=f"Synthetic {name}",
+            parameters={"type": "object", "properties": {}},
+        )
+        for name in names
+    )
+    token = _current.set(RunTools(tools=tools))
+    try:
+        await main.answer(
+            {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "Tạo file notes.txt với nội dung hello.",
+                    }
+                ]
+            }
+        )
+    finally:
+        _current.reset(token)
+
+    body = captured[0]["body"]
+    assert body["max_completion_tokens"] == 2048
+    assert [tool["function"]["name"] for tool in body["tools"]] == [
+        "computer_list_files",
+        "computer_read_file",
+        "computer_write_file",
+    ]
+    assert body["messages"][-1]["content"].endswith("/no_think")
+
+
+@pytest.mark.asyncio
+async def test_complex_qwen_turn_keeps_full_tools_and_unbounded_default_output(
+    monkeypatch, compatible_endpoint
+):
+    base_url, captured = compatible_endpoint
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-compatible-ci")
+    monkeypatch.setenv("BOT_PROVIDER", "openai")
+    monkeypatch.setenv("BOT_MODEL", "qwen/qwen3.6-plus")
+    monkeypatch.setenv("OPENAI_BASE_URL", base_url)
+
+    names = (
+        "computer_navigate",
+        "computer_list_files",
+        "computer_read_file",
+        "computer_write_file",
+    )
+    tools = tuple(
+        Tool(
+            name=name,
+            description=f"Synthetic {name}",
+            parameters={"type": "object", "properties": {}},
+        )
+        for name in names
+    )
+    token = _current.set(RunTools(tools=tools))
+    try:
+        await main.answer(
+            {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "Phân tích kiến trúc file này thật kỹ và đề xuất cách tối ưu.",
+                    }
+                ]
+            }
+        )
+    finally:
+        _current.reset(token)
+
+    body = captured[0]["body"]
+    assert "max_tokens" not in body
+    assert "max_completion_tokens" not in body
+    assert [tool["function"]["name"] for tool in body["tools"]] == list(names)
+    assert "/no_think" not in body["messages"][-1]["content"]
 
 @pytest.mark.asyncio
 async def test_qwen3_cost_controls_are_explicitly_overrideable(
