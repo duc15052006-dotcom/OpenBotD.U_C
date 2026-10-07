@@ -21,6 +21,7 @@ from .parallel_tools import ParallelToolAgent
 from .token_efficiency import (
     prepare_model_messages,
     qwen3_simple_max_output_tokens,
+    qwen3_stateless_fast_path_enabled,
     simple_action_tool_names,
 )
 
@@ -29,11 +30,26 @@ from .token_efficiency import (
 class RunTools:
     tools: tuple[Tool, ...] = ()
     context: tuple[Context, ...] = ()
+    system_messages: tuple[SystemMessage, ...] = ()
     deployment: frozenset[str] = frozenset()
     assertion: str = field(default="", repr=False)
 
 
 _current: ContextVar[RunTools | None] = ContextVar("openbot_run_tools", default=None)
+
+# Only known presentation payloads may be omitted. Arbitrary AG-UI context can contain permission
+# instructions or attached task data; an unfamiliar description is never permission to drop it.
+_A2UI_SCHEMA_DESCRIPTION = (
+    "A2UI Component Schema — available components for generating UI surfaces. "
+    "Use these component names and properties when creating A2UI operations."
+)
+_PRESENTATION_CONTEXT = {
+    _A2UI_SCHEMA_DESCRIPTION,
+    "A2UI render tool usage guide",
+    "A2UI catalog capabilities: available catalog IDs and custom component definitions the client can render.",
+    "A2UI generation guidelines — protocol rules, tool arguments, path rules, data model format, and form/two-way-binding instructions.",
+    "A2UI design guidelines — visual design rules, component hierarchy tips, and action handler patterns.",
+}
 
 
 def current_tools() -> RunTools:
@@ -52,6 +68,13 @@ class ToolAwareAgent(ParallelToolAgent):
         context = RunTools(
             tools=tuple(input.tools or []),
             context=tuple(input.context or []),
+            # ag-ui-langgraph 0.0.45 drops the first SystemMessage in its default merge.
+            # Keep the current request's policy outside checkpoint state, just like context/tools.
+            system_messages=tuple(
+                SystemMessage(content=message.content, id=message.id)
+                for message in input.messages or []
+                if message.role == "system"
+            ),
             deployment=frozenset(name for name in names if isinstance(name, str))
             if isinstance(names, list)
             else frozenset(),
@@ -91,13 +114,22 @@ class ToolAwareAgent(ParallelToolAgent):
 def model_messages(messages):
     """Build a bounded provider view without changing checkpoint/transcript state.
 
-    AG-UI context still stays outside graph state. Duplicate context entries are collapsed because
-    resending the same schema or guidance twice buys no capability and is paid for on every model
-    step. Conversation history is compacted only for the model; the durable thread remains complete.
+    A self-contained Qwen Computer/File command does not need A2UI rendering guidance or old chat
+    turns. Only known presentation context is omitted; security and unknown context remain.
+    Durable state stays complete. All other turns keep the existing context behavior.
     """
+    run = current_tools()
+    offered_tool_names = tuple(tool.name for tool in run.tools)
+    model = os.environ.get("BOT_MODEL")
+    stateless_fast_path = qwen3_stateless_fast_path_enabled(
+        model, messages, offered_tool_names
+    )
+
     context_messages = []
     seen = set()
-    for entry in current_tools().context:
+    for entry in run.context:
+        if stateless_fast_path and entry.description in _PRESENTATION_CONTEXT:
+            continue
         key = (entry.description, entry.value)
         if key in seen:
             continue
@@ -106,12 +138,33 @@ def model_messages(messages):
             SystemMessage(content=f"{entry.description}\n{entry.value}")
         )
 
-    offered_tool_names = tuple(tool.name for tool in current_tools().tools)
+    # Current run policy wins over a checkpoint copy with the same id. Also deduplicate an
+    # unchanged copy by content, so request policy is paid for exactly once on each model call.
+    policy_ids = {message.id for message in run.system_messages if message.id}
+    policy_content = {
+        message.content for message in run.system_messages if isinstance(message.content, str)
+    }
+
+    def current_policy_copy(message):
+        role = message.get("role") if isinstance(message, dict) else message.type
+        if role != "system":
+            return False
+        message_id = message.get("id") if isinstance(message, dict) else message.id
+        content = message.get("content") if isinstance(message, dict) else message.content
+        return message_id in policy_ids or (
+            isinstance(content, str) and content in policy_content
+        )
+
+    history = (
+        [message for message in messages if not current_policy_copy(message)]
+        if run.system_messages else messages
+    )
     return [
         *context_messages,
+        *run.system_messages,
         *prepare_model_messages(
-            messages,
-            os.environ.get("BOT_MODEL"),
+            history,
+            model,
             offered_tool_names,
         ),
     ]
