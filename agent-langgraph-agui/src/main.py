@@ -13,7 +13,6 @@ from ag_ui_langgraph import add_langgraph_fastapi_endpoint
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from langchain.chat_models import init_chat_model
-from langchain_core.messages import AIMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import START, MessagesState, StateGraph
 
@@ -207,6 +206,10 @@ async def answer(state: MessagesState):
             state_messages, model_name, offered_names
         )
         if completed is not None:
+            # Keep this import lazy. Repository compose probes intentionally stub the harness's
+            # provider modules without installing the Python runtime dependency set.
+            from langchain_core.messages import AIMessage
+
             return {
                 "messages": [
                     AIMessage(content=direct_write_acknowledgement(state_messages))
@@ -215,6 +218,8 @@ async def answer(state: MessagesState):
 
         direct = fresh_literal_qwen_write(state_messages, model_name, offered_names)
         if direct is not None:
+            from langchain_core.messages import AIMessage
+
             return {
                 "messages": [
                     AIMessage(
