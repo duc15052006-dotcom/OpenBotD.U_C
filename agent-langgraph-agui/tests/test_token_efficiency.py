@@ -5,12 +5,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.token_efficiency import (
     compact_model_history,
+    compact_stateless_simple_history,
     prepare_model_messages,
     qwen3_max_output_tokens,
     qwen3_model,
     qwen3_simple_max_output_tokens,
+    qwen3_stateless_fast_path_enabled,
     simple_action_tool_names,
     simple_operational_turn,
+    stateless_simple_action_turn,
 )
 
 
@@ -157,17 +160,13 @@ def test_simple_qwen_budget_respects_explicit_thinking_and_overrides(monkeypatch
     )
 
 
-def test_simple_file_action_narrows_to_file_tools_without_losing_recovery_tools():
+def test_self_contained_file_action_narrows_to_exact_write_tool():
     selected = simple_action_tool_names(
         [{"role": "user", "content": "Tạo file /workspace/notes.txt với nội dung hello."}],
         FULL_COMPUTER_TOOLS,
     )
 
-    assert selected == (
-        "computer_list_files",
-        "computer_read_file",
-        "computer_write_file",
-    )
+    assert selected == ("computer_write_file",)
 
 
 def test_simple_screenshot_narrows_to_real_screenshot_tool():
@@ -192,6 +191,62 @@ def test_complex_turn_never_narrows_tools():
         )
         is None
     )
+
+def test_stateless_fast_path_requires_self_contained_target(monkeypatch):
+    monkeypatch.delenv("OPENBOT_QWEN_THINKING", raising=False)
+    explicit = [{"role": "user", "content": "Tạo file /workspace/a.txt với nội dung hello."}]
+    relative = [{"role": "user", "content": "Tạo file đó với nội dung vừa nói."}]
+
+    assert stateless_simple_action_turn(explicit, FULL_COMPUTER_TOOLS)
+    assert qwen3_stateless_fast_path_enabled(
+        "qwen/qwen3.6-plus", explicit, FULL_COMPUTER_TOOLS
+    )
+    assert not stateless_simple_action_turn(relative, FULL_COMPUTER_TOOLS)
+    assert not qwen3_stateless_fast_path_enabled(
+        "qwen/qwen3.6-plus", relative, FULL_COMPUTER_TOOLS
+    )
+
+
+def test_stateless_history_keeps_system_and_current_tool_chain_only():
+    source = [
+        {"role": "system", "content": "standing policy"},
+        {"role": "user", "content": "old question"},
+        {"role": "assistant", "content": "old answer"},
+        {"role": "user", "content": "Tạo file /workspace/a.txt với nội dung hello."},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "call-1"}]},
+        {"role": "tool", "tool_call_id": "call-1", "content": "written"},
+    ]
+
+    compact = compact_stateless_simple_history(source)
+
+    assert compact[0] == {"role": "system", "content": "standing policy"}
+    assert all(message.get("content") != "old question" for message in compact)
+    assert all(message.get("content") != "old answer" for message in compact)
+    assert compact[-1]["content"] == "written"
+
+
+def test_prepare_stateless_qwen_drops_old_turns_but_complex_qwen_keeps_them(monkeypatch):
+    monkeypatch.delenv("OPENBOT_QWEN_THINKING", raising=False)
+    source = [
+        {"role": "system", "content": "standing policy"},
+        {"role": "user", "content": "old question"},
+        {"role": "assistant", "content": "old answer"},
+        {"role": "user", "content": "Tạo file /workspace/a.txt với nội dung hello."},
+    ]
+
+    fast = prepare_model_messages(source, "qwen/qwen3.6-plus", FULL_COMPUTER_TOOLS)
+    assert not any(message.get("content") == "old question" for message in fast)
+    assert fast[-1]["content"].endswith("/no_think")
+
+    complex_source = [
+        {"role": "system", "content": "standing policy"},
+        {"role": "user", "content": "old question"},
+        {"role": "assistant", "content": "old answer"},
+        {"role": "user", "content": "Phân tích kiến trúc hiện tại và đề xuất cách tối ưu."},
+    ]
+    assert prepare_model_messages(
+        complex_source, "qwen/qwen3.6-plus", FULL_COMPUTER_TOOLS
+    ) == complex_source
 
 def test_normal_history_is_not_trimmed_below_large_context_budget(monkeypatch):
     monkeypatch.delenv("OPENBOT_MODEL_CONTEXT_CHARS", raising=False)
