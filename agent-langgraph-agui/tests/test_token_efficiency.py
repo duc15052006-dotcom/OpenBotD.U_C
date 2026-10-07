@@ -134,7 +134,7 @@ def test_simple_qwen_turn_gets_small_hard_output_budget(monkeypatch):
         qwen3_simple_max_output_tokens(
             "qwen/qwen3.6-plus", messages, FULL_COMPUTER_TOOLS
         )
-        == 2048
+        == 1024
     )
     assert (
         qwen3_simple_max_output_tokens(
