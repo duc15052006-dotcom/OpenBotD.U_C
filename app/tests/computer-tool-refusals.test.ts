@@ -28,7 +28,6 @@ function serverAnswering(status: number, body: unknown) {
     })) as unknown as typeof fetch;
 }
 
-
 describe("computer screenshot capture", () => {
   test("returns compact metadata without feeding image bytes into model context", async () => {
     const base64 = "A".repeat(20_000);
