@@ -18,7 +18,11 @@ from langchain_core.messages import SystemMessage, ToolMessage
 from langgraph.graph import END
 
 from .parallel_tools import ParallelToolAgent
-from .token_efficiency import prepare_model_messages
+from .token_efficiency import (
+    prepare_model_messages,
+    qwen3_simple_max_output_tokens,
+    simple_action_tool_names,
+)
 
 
 @dataclass(frozen=True)
@@ -113,23 +117,47 @@ def model_messages(messages):
     ]
 
 
-def bind_tools(model):
+def bind_tools(model, messages):
+    """Bind only the tools a deterministic Qwen action can need, with a hard output backstop.
+
+    Complex turns keep the complete tool surface and the provider's normal output budget. The fast
+    path is entered only by the same conservative classifier that adds /no_think, so asking Qwen to
+    analyze, debug, research or design never loses tools or reasoning room.
+    """
     tools = current_tools().tools
-    if not tools:
-        return model
-    return model.bind_tools(
-        [
-            {
-                "type": "function",
-                "function": {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "parameters": tool.parameters,
-                },
-            }
-            for tool in tools
-        ]
+    offered_names = tuple(tool.name for tool in tools)
+    simple_limit = qwen3_simple_max_output_tokens(
+        os.environ.get("BOT_MODEL"),
+        messages,
+        offered_names,
     )
+    selected_names = (
+        simple_action_tool_names(messages, offered_names)
+        if simple_limit is not None
+        else None
+    )
+    if selected_names is not None:
+        selected = set(selected_names)
+        tools = tuple(tool for tool in tools if tool.name in selected)
+
+    runnable = model
+    if tools:
+        runnable = model.bind_tools(
+            [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": tool.parameters,
+                    },
+                }
+                for tool in tools
+            ]
+        )
+    if simple_limit is not None:
+        runnable = runnable.bind(max_tokens=simple_limit)
+    return runnable
 
 
 def next_step(state):
