@@ -24,7 +24,6 @@ from .direct_actions import (
 from .tool_runtime import (
     ToolAwareAgent,
     bind_tools,
-    current_tools,
     execute_tools,
     model_messages,
     next_step,
@@ -180,6 +179,10 @@ def _model():
 def _direct_write_schema_supported() -> bool:
     """Fail closed unless the offered surface tool accepts the exact compiled fields."""
 
+    # Lazy for repository model probes, which intentionally stub tool_runtime to only the
+    # pre-existing harness surface.
+    from .tool_runtime import current_tools
+
     for tool in current_tools().tools:
         if tool.name != "computer_write_file":
             continue
@@ -192,6 +195,8 @@ def _direct_write_schema_supported() -> bool:
 
 
 async def answer(state: MessagesState):
+    from .tool_runtime import current_tools
+
     state_messages = state["messages"]
     offered_names = tuple(tool.name for tool in current_tools().tools)
     model_name = os.environ.get("BOT_MODEL")
