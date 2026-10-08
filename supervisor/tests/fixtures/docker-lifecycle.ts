@@ -332,6 +332,71 @@ describe("resource profile changes after desktop shutdown", () => {
   }, 120_000);
 });
 
+describe("stopped Computer recovery when engine rejects a quota update", () => {
+  test("recreates only the stopped owned container and keeps all named data volumes", async () => {
+    await withDocker().supervisor.ensure(names, {
+      image: IMAGE,
+      environment: [],
+      memoryBytes: 1_610_612_736,
+      nanoCpus: 1_000_000_000,
+    });
+    const beforeContainer = await withDocker()
+      .docker.getContainer(names.container)
+      .inspect();
+    const beforeVolumes = await Promise.all(
+      [names.profileVolume, names.workspaceVolume, names.quarantineVolume].map(
+        (volume) => withDocker().docker.getVolume(volume).inspect(),
+      ),
+    );
+    await withDocker().supervisor.stop(names);
+
+    // Simulate Podman refusing a Docker-compatible update on a stopped container.
+    // Scope the one-shot fault to this isolated process and always restore the prototype.
+    const originalGetContainer = DockerClient.prototype.getContainer;
+    let injectUpdateFailure = true;
+    DockerClient.prototype.getContainer = function (this: Docker, name: string) {
+      const container = originalGetContainer.call(this, name);
+      if (name !== names.container) return container;
+      return new Proxy(container, {
+        get(target, property, receiver) {
+          if (property === "update" && injectUpdateFailure) {
+            return () => {
+              injectUpdateFailure = false;
+              throw new Error("synthetic stopped-container quota update refusal");
+            };
+          }
+          return Reflect.get(target, property, receiver);
+        },
+      });
+    };
+
+    try {
+      const resumed = await withDocker().supervisor.ensure(names, {
+        image: IMAGE,
+        environment: [],
+        memoryBytes: 2_147_483_648,
+        nanoCpus: 2_000_000_000,
+      });
+      expect(resumed.status).toBe("running");
+    } finally {
+      DockerClient.prototype.getContainer = originalGetContainer;
+    }
+
+    expect(injectUpdateFailure).toBe(false);
+    const afterContainer = await withDocker()
+      .docker.getContainer(names.container)
+      .inspect();
+    const afterVolumes = await Promise.all(
+      [names.profileVolume, names.workspaceVolume, names.quarantineVolume].map(
+        (volume) => withDocker().docker.getVolume(volume).inspect(),
+      ),
+    );
+    expect(afterContainer.Id).not.toBe(beforeContainer.Id);
+    expect(afterContainer.HostConfig?.Memory).toBe(2_147_483_648);
+    expect(afterVolumes.map(createdAt)).toEqual(beforeVolumes.map(createdAt));
+  }, 120_000);
+});
+
 describe("idempotent Stop result", () => {
   test("reports true only when the Computer was running before Stop", async () => {
     await withDocker().supervisor.ensure(names, {
