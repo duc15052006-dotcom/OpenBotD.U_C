@@ -26,7 +26,7 @@ if (
 }
 
 test.skipIf(!dockerReady)(
-  "supervisor Docker lifecycle in an isolated namespace (thirteen cases)",
+  "supervisor Docker lifecycle in an isolated namespace (sixteen cases)",
   async () => {
     const namespace = `supervisor-test-${crypto.randomUUID()}`;
     const child = Bun.spawn(
@@ -59,7 +59,7 @@ test.skipIf(!dockerReady)(
     if (!summaryLine)
       throw new Error(`Missing fixture result: ${stdout} ${stderr}`);
     const summary = JSON.parse(summaryLine.slice(prefix.length));
-    expect(summary.completedCases).toBe(13);
+    expect(summary.completedCases).toBe(16);
     expect(summary.cleanup).toBe("complete");
     // Do not echo nested Bun summaries: scripts/test-ci.ts counts the outer suite's summary.
     console.log(summaryLine);
