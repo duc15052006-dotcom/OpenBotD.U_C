@@ -1034,6 +1034,35 @@ export async function ensure(
     for (let attempt = ATTEMPTS; attempt > 0; attempt--) {
       let existing = await inspectOwned(names);
 
+      // A network change is NOT a resource update. Updating or starting an existing
+      // container does not attach it to COMPUTER_NETWORK or restore loopback port
+      // publishing. Recreate an owned, already-stopped container with the same named
+      // volumes; never silently stop a Computer that is still running.
+      if (
+        existing &&
+        networkModeNeedsRecreation(existing.networkMode, options.network)
+      ) {
+        const current = await inspectOwned(names);
+        if (
+          !current ||
+          current.id !== existing.id ||
+          current.status !== "exited"
+        ) {
+          throw new DockerUnavailableError(
+            `Computer ${names.botId} must be stopped before changing its network; refusing to replace a running or changed container.`,
+          );
+        }
+        try {
+          await docker.getContainer(current.id).remove({ v: false });
+        } catch (error) {
+          throw new DockerUnavailableError(
+            `Cannot reconfigure the stopped network for Computer ${names.botId} without preserving its volumes: ${String(error)}`,
+          );
+        }
+        existing = null;
+      }
+
+
       /*
        * An upgrade reaches a computer that already exists, by replacing it.
        *
@@ -1061,34 +1090,6 @@ export async function ensure(
           if (statusOf(error) !== 404) {
             throw new DockerUnavailableError(String(error));
           }
-        }
-        existing = null;
-      }
-
-      // A network change is NOT a resource update. Updating or starting an existing
-      // container does not attach it to COMPUTER_NETWORK or restore loopback port
-      // publishing. Recreate an owned, already-stopped container with the same named
-      // volumes; never silently stop a Computer that is still running.
-      if (
-        existing &&
-        networkModeNeedsRecreation(existing.networkMode, options.network)
-      ) {
-        const current = await inspectOwned(names);
-        if (
-          !current ||
-          current.id !== existing.id ||
-          current.status !== "exited"
-        ) {
-          throw new DockerUnavailableError(
-            `Computer ${names.botId} must be stopped before changing its network; refusing to replace a running or changed container.`,
-          );
-        }
-        try {
-          await docker.getContainer(current.id).remove({ v: false });
-        } catch (error) {
-          throw new DockerUnavailableError(
-            `Cannot reconfigure the stopped network for Computer ${names.botId} without preserving its volumes: ${String(error)}`,
-          );
         }
         existing = null;
       }
