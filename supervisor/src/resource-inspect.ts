@@ -51,5 +51,7 @@ export function networkModeNeedsRecreation(
   requested: string | undefined,
 ): boolean {
   if (requested) return inspected !== requested;
-  return inspected !== undefined && inspected !== "default" && inspected !== "bridge";
+  return (
+    inspected !== undefined && inspected !== "default" && inspected !== "bridge"
+  );
 }
