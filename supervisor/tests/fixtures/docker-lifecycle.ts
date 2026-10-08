@@ -87,10 +87,17 @@ async function removeVolumes() {
   ]) {
     try {
       const info = await withDocker().docker.getVolume(volume).inspect();
-      if (
-        info.Labels?.["openbot.namespace"] !== namespace ||
-        info.Labels?.["openbot.bot-id"] !== BOT
-      ) {
+      const ownedByBot =
+        info.Labels?.["openbot.namespace"] === namespace &&
+        info.Labels?.["openbot.bot-id"] === BOT;
+      // The foreign-volume refusal case deliberately plants a volume without
+      // any OpenBot ownership labels. It is still ours to clean as a test
+      // fixture, but no other foreign resource may be removed.
+      const plantedByFixture =
+        volume === names.workspaceVolume &&
+        info.Labels?.["openbot.test-fixture"] === namespace &&
+        info.Labels?.["someone.else"] === "true";
+      if (!ownedByBot && !plantedByFixture) {
         throw new Error("Refusing to clean a volume outside this fixture.");
       }
       await withDocker().docker.getVolume(volume).remove();
@@ -221,6 +228,76 @@ describe("a name held by somebody else", () => {
 
     expect(state.status).toBe("running");
   }, 90_000);
+});
+
+describe("Computer network configuration survives desktop Stop and restart", () => {
+  test("refuses a live network migration, then replaces only the stopped container and keeps all volumes", async () => {
+    const networkName = `openbot-fixture-${namespace}`;
+    await withDocker().docker.createNetwork({
+      Name: networkName,
+      Labels: { "openbot.test-fixture": namespace },
+    });
+    try {
+      await withDocker().supervisor.ensure(names, {
+        image: IMAGE,
+        environment: [],
+      });
+      const beforeContainer = await withDocker()
+        .docker.getContainer(names.container)
+        .inspect();
+      const beforeVolumes = await Promise.all(
+        [
+          names.profileVolume,
+          names.workspaceVolume,
+          names.quarantineVolume,
+        ].map((volume) => withDocker().docker.getVolume(volume).inspect()),
+      );
+
+      await expect(
+        withDocker().supervisor.ensure(names, {
+          image: IMAGE,
+          environment: [],
+          network: networkName,
+        }),
+      ).rejects.toThrow("must be stopped");
+      // A simultaneous image upgrade must not preempt the network's Stop requirement.
+      await expect(
+        withDocker().supervisor.ensure(names, {
+          image: OTHER,
+          environment: [],
+          network: networkName,
+        }),
+      ).rejects.toThrow("must be stopped");
+      expect(
+        (await withDocker().docker.getContainer(names.container).inspect()).Id,
+      ).toBe(beforeContainer.Id);
+
+      await withDocker().supervisor.stop(names);
+      const resumed = await withDocker().supervisor.ensure(names, {
+        image: IMAGE,
+        environment: [],
+        network: networkName,
+      });
+      const afterContainer = await withDocker()
+        .docker.getContainer(names.container)
+        .inspect();
+      const afterVolumes = await Promise.all(
+        [
+          names.profileVolume,
+          names.workspaceVolume,
+          names.quarantineVolume,
+        ].map((volume) => withDocker().docker.getVolume(volume).inspect()),
+      );
+      expect(resumed.status).toBe("running");
+      expect(resumed.url).toBe(`http://${names.container}:4100`);
+      expect(afterContainer.Id).not.toBe(beforeContainer.Id);
+      expect(afterContainer.HostConfig?.NetworkMode).toBe(networkName);
+      expect(afterVolumes.map(createdAt)).toEqual(beforeVolumes.map(createdAt));
+    } finally {
+      await remove(names.container);
+      await withDocker().docker.getNetwork(networkName).remove();
+    }
+  }, 120_000);
 });
 
 describe("host restart ownership", () => {

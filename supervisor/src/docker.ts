@@ -4,6 +4,7 @@ import { wasRunningBeforeStop } from "./stop-state";
 import {
   inspectedNanoCpus,
   inspectedRestartPolicyName,
+  networkModeNeedsRecreation,
 } from "./resource-inspect";
 import {
   BOT_LABEL,
@@ -378,7 +379,9 @@ async function reserveActiveSlot(
  * Ownership is checked here rather than at the call sites, so no verb can skip it by accident.
  */
 async function inspectOwned(names: ComputerNames): Promise<{
+  id: string;
   status: string;
+  networkMode?: string;
   port?: number;
   image?: string;
   startedAt?: string;
@@ -398,7 +401,11 @@ async function inspectOwned(names: ComputerNames): Promise<{
       info.HostConfig?.RestartPolicy?.Name,
     );
     return {
+      id: info.Id,
       status: info.State?.Status ?? "unknown",
+      ...(info.HostConfig?.NetworkMode
+        ? { networkMode: info.HostConfig.NetworkMode }
+        : {}),
       ...(port !== undefined ? { port } : {}),
       // The resolved image, not the tag it was started from. A tag moves when the image is
       // rebuilt; this is what the container is actually running.
@@ -452,27 +459,35 @@ async function ensureOwnedVolume(
   volume: string,
 ): Promise<void> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    // Docker's createVolume is not a create-if-absent operation: Docker may
+    // successfully return an unrelated existing volume with the requested name.
+    // A successful API response is NEVER proof that its labels belong to this Bot.
+    if ((await volumeOwnership(names, volume)) === "foreign") {
+      throw new NameHeldError(volume, "volume");
+    }
     try {
       await docker.createVolume({
         Name: volume,
         Labels: labelsFor(names),
       });
-      return;
     } catch (error) {
       if (statusOf(error) !== 409) {
         throw new DockerUnavailableError(String(error));
       }
-      const ownership = await volumeOwnership(names, volume);
-      if (ownership === "ours") return;
-      if (ownership === "foreign") throw new NameHeldError(volume, "volume");
-      if (attempt === 0) {
-        await pause(100);
-        continue;
-      }
-      throw new DockerUnavailableError(
-        `Volume ${volume} disappeared while its ownership was being verified.`,
-      );
     }
+
+    // Check the actual engine resource after creation, including when the API
+    // returned success for an existing name or another creator won the race.
+    const ownership = await volumeOwnership(names, volume);
+    if (ownership === "ours") return;
+    if (ownership === "foreign") throw new NameHeldError(volume, "volume");
+    if (attempt === 0) {
+      await pause(100);
+      continue;
+    }
+    throw new DockerUnavailableError(
+      `Volume ${volume} disappeared while its ownership was being verified.`,
+    );
   }
 }
 
@@ -1026,6 +1041,34 @@ export async function ensure(
   try {
     for (let attempt = ATTEMPTS; attempt > 0; attempt--) {
       let existing = await inspectOwned(names);
+
+      // A network change is NOT a resource update. Updating or starting an existing
+      // container does not attach it to COMPUTER_NETWORK or restore loopback port
+      // publishing. Recreate an owned, already-stopped container with the same named
+      // volumes; never silently stop a Computer that is still running.
+      if (
+        existing &&
+        networkModeNeedsRecreation(existing.networkMode, options.network)
+      ) {
+        const current = await inspectOwned(names);
+        if (
+          !current ||
+          current.id !== existing.id ||
+          current.status !== "exited"
+        ) {
+          throw new DockerUnavailableError(
+            `Computer ${names.botId} must be stopped before changing its network; refusing to replace a running or changed container.`,
+          );
+        }
+        try {
+          await docker.getContainer(current.id).remove({ v: false });
+        } catch (error) {
+          throw new DockerUnavailableError(
+            `Cannot reconfigure the stopped network for Computer ${names.botId} without preserving its volumes: ${String(error)}`,
+          );
+        }
+        existing = null;
+      }
 
       /*
        * An upgrade reaches a computer that already exists, by replacing it.

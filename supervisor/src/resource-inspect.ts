@@ -39,3 +39,22 @@ export function inspectedNanoCpus(
 export function inspectedRestartPolicyName(name: string | undefined): string {
   return name?.trim() || "no";
 }
+
+/**
+ * A stopped Computer's connection mode is fixed when the container is created.
+ * Running with a new COMPUTER_NETWORK cannot be repaired by container.update():
+ * it would return a new DNS URL for a container still on the old network.
+ * Docker calls its unconfigured bridge "default" or "bridge"; both are equivalent.
+ */
+export function networkModeNeedsRecreation(
+  inspected: string | undefined,
+  requested: string | undefined,
+): boolean {
+  if (requested) return inspected !== requested;
+  // Rootless Podman commonly reports its implicit default as "pasta" or
+  // "slirp4netns"; neither is a user-selected shared Docker network.
+  return (
+    inspected !== undefined &&
+    !["default", "bridge", "pasta", "slirp4netns"].includes(inspected)
+  );
+}

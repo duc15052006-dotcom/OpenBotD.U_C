@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   inspectedNanoCpus,
   inspectedRestartPolicyName,
+  networkModeNeedsRecreation,
 } from "./resource-inspect";
 
 describe("Docker-compatible resource inspection", () => {
@@ -48,5 +49,25 @@ describe("Docker-compatible resource inspection", () => {
     expect(inspectedRestartPolicyName("")).toBe("no");
     expect(inspectedRestartPolicyName("no")).toBe("no");
     expect(inspectedRestartPolicyName("unless-stopped")).toBe("unless-stopped");
+  });
+});
+
+describe("Computer network resume", () => {
+  test("recognizes both default bridge spellings without recycling an owned Computer", () => {
+    expect(networkModeNeedsRecreation("bridge", undefined)).toBe(false);
+    expect(networkModeNeedsRecreation("default", undefined)).toBe(false);
+    expect(networkModeNeedsRecreation("pasta", undefined)).toBe(false);
+    expect(networkModeNeedsRecreation("slirp4netns", undefined)).toBe(false);
+    expect(networkModeNeedsRecreation(undefined, undefined)).toBe(false);
+  });
+
+  test("requires a new container when joining, leaving or switching networks", () => {
+    expect(networkModeNeedsRecreation("bridge", "new-network")).toBe(true);
+    expect(networkModeNeedsRecreation("old-network", "new-network")).toBe(true);
+    expect(networkModeNeedsRecreation("old-network", undefined)).toBe(true);
+    expect(networkModeNeedsRecreation(undefined, "new-network")).toBe(true);
+    expect(networkModeNeedsRecreation("new-network", "new-network")).toBe(
+      false,
+    );
   });
 });
