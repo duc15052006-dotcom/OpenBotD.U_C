@@ -15,7 +15,14 @@ async function available() {
   }
 }
 
-test.skipIf(!(await available()))(
+const dockerReady = await available();
+if (!dockerReady && process.env.OPENBOT_REQUIRE_SUPERVISOR_DOCKER_TEST === "1") {
+  throw new Error(
+    "CI requires the real supervisor Docker lifecycle suite, but the engine or dockerode is unavailable.",
+  );
+}
+
+test.skipIf(!dockerReady)(
   "supervisor Docker lifecycle in an isolated namespace (thirteen cases)",
   async () => {
     const namespace = `supervisor-test-${crypto.randomUUID()}`;
