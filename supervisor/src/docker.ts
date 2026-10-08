@@ -2,8 +2,10 @@ import Docker from "dockerode";
 import { isPrimaryComputerContainerName } from "./computer-container-name";
 import { wasRunningBeforeStop } from "./stop-state";
 import {
+  computerResourcesMatch,
   inspectedNanoCpus,
   inspectedRestartPolicyName,
+  reconcileComputerResources,
 } from "./resource-inspect";
 import {
   BOT_LABEL,
@@ -1060,38 +1062,71 @@ export async function ensure(
 
       if (
         existing &&
-        ((options.memoryBytes !== undefined &&
-          existing.memoryBytes !== options.memoryBytes) ||
-          (options.nanoCpus !== undefined &&
-            existing.nanoCpus !== options.nanoCpus) ||
-          existing.restartPolicyName !== "no")
+        !computerResourcesMatch(existing, {
+          memoryBytes: options.memoryBytes,
+          nanoCpus: options.nanoCpus,
+        })
       ) {
+        const beforeRepair = existing;
         try {
-          await docker.getContainer(names.container).update({
-            ...(options.memoryBytes !== undefined
-              ? { Memory: options.memoryBytes }
-              : {}),
-            ...(options.nanoCpus !== undefined
-              ? { NanoCPUs: options.nanoCpus }
-              : {}),
-            RestartPolicy: { Name: "no" },
-          });
-          existing = await inspectOwned(names);
-          if (
-            !existing ||
-            (options.memoryBytes !== undefined &&
-              existing.memoryBytes !== options.memoryBytes) ||
-            (options.nanoCpus !== undefined &&
-              existing.nanoCpus !== options.nanoCpus) ||
-            existing.restartPolicyName !== "no"
-          ) {
-            throw new Error(
-              "Docker did not report the exact requested CPU/RAM limits and OpenBot-owned restart policy after update.",
-            );
-          }
+          existing = await reconcileComputerResources(
+            existing,
+            {
+              memoryBytes: options.memoryBytes,
+              nanoCpus: options.nanoCpus,
+            },
+            async () => {
+              await docker.getContainer(names.container).update({
+                ...(options.memoryBytes !== undefined
+                  ? { Memory: options.memoryBytes }
+                  : {}),
+                ...(options.nanoCpus !== undefined
+                  ? { NanoCPUs: options.nanoCpus }
+                  : {}),
+                RestartPolicy: { Name: "no" },
+              });
+              return inspectOwned(names);
+            },
+            async () => {
+              /*
+               * Podman's Docker-compatible update endpoint can reject a perfectly valid CPU/RAM
+               * transition, or accept it and then report a representation that still does not
+               * compare exactly. Do not strand the Computer in that half-updated state.
+               *
+               * Stop first so Chromium can flush the profile, then remove ONLY the container.
+               * v=false is the important boundary: profile/workspace/quarantine remain the exact
+               * named volumes this Bot already owned, and the create path below mounts them again.
+               * This is a lifecycle repair, never an implicit Reset.
+               */
+              if (beforeRepair.status === "running") {
+                try {
+                  await docker.getContainer(names.container).stop({ t: 30 });
+                } catch (error) {
+                  const status = statusOf(error);
+                  if (status !== 304 && status !== 404) {
+                    throw new DockerUnavailableError(
+                      `The Computer for ${names.botId} could not be stopped safely before applying its resource profile.`,
+                    );
+                  }
+                }
+              }
+              try {
+                await docker
+                  .getContainer(names.container)
+                  .remove({ force: true, v: false });
+              } catch (error) {
+                if (statusOf(error) !== 404) {
+                  throw new DockerUnavailableError(
+                    `The Computer for ${names.botId} could not be rebuilt while preserving its persistent storage.`,
+                  );
+                }
+              }
+            },
+          );
         } catch (error) {
+          if (error instanceof DockerUnavailableError) throw error;
           throw new DockerUnavailableError(
-            `The resource profile or OpenBot-owned restart policy for ${names.botId} could not be applied: ${String(error)}`,
+            `The resource profile or OpenBot-owned restart policy for ${names.botId} could not be applied safely.`,
           );
         }
       }
