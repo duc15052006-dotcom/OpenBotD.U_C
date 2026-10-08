@@ -1062,7 +1062,6 @@ export async function ensure(
         existing = null;
       }
 
-
       /*
        * An upgrade reaches a computer that already exists, by replacing it.
        *
