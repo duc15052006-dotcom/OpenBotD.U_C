@@ -731,7 +731,7 @@ mod tests {
         let (root, secrets, _) = fixture("switch-compatible-model");
         std::fs::write(
             root.join(".env"),
-            "CUSTOM_PRESERVED=yes\\nBOT_MODEL=qwen/qwen3.6-plus:free\\nAGENT_BOT_MODEL=qwen/qwen3.6-plus:free\\n",
+            "CUSTOM_PRESERVED=yes\nBOT_MODEL=qwen/qwen3.6-plus:free\nAGENT_BOT_MODEL=qwen/qwen3.6-plus:free\n",
         ).unwrap();
         let next = ModelCredential::OpenAi {
             api_key: "synthetic-new-key".into(),
@@ -759,7 +759,7 @@ mod tests {
     #[test]
     fn no_model_selection_preserves_an_existing_custom_model() {
         let (root, secrets, _) = fixture("no-model-change");
-        std::fs::write(root.join(".env"), "BOT_MODEL=local-custom\\n").unwrap();
+        std::fs::write(root.join(".env"), "BOT_MODEL=local-custom\n").unwrap();
         persist_configuration_with(
             &root,
             &BTreeMap::new(),
