@@ -486,6 +486,52 @@ test("a compatible endpoint submits the key typed into its endpoint key field", 
   });
 });
 
+test("typing a replacement endpoint key never reuses the saved key when testing or continuing", async () => {
+  const choices: unknown[] = [];
+  invokeHandler = async (command) => {
+    if (command === "providers") return endpointProviders;
+    if (command === "test_model_connection") {
+      return { detail: "Synthetic endpoint accepts the replacement." };
+    }
+    throw new Error(`unexpected command ${command}`);
+  };
+  const view = await renderPickerWithHeld(
+    {
+      OPENAI_BASE_URL: "https://models.example/v1",
+      BOT_MODEL: "qwen-test",
+      saved: {
+        model: "compatible-endpoint",
+        modelApiKeys: { compatible: true },
+      },
+    },
+    (choice) => choices.push(choice),
+  );
+  await view.findByRole("radio", { name: /OpenAI-compatible/ });
+  await userEvent.type(
+    view.getByLabelText("API key, if the endpoint needs one"),
+    "synthetic-new-key",
+  );
+  await userEvent.click(view.getByRole("button", { name: "Test connection" }));
+  await waitFor(() =>
+    expect(
+      invokeCalls.filter((call) => call.command === "test_model_connection"),
+    ).toHaveLength(1),
+  );
+  const expected = {
+    provider: "openai-compatible",
+    login: "endpoint",
+    baseUrl: "https://models.example/v1",
+    model: "qwen-test",
+    apiKey: "synthetic-new-key",
+  };
+  expect(
+    invokeCalls.find((call) => call.command === "test_model_connection")?.args,
+  ).toEqual({ root: "/tmp/openbot-provider-root", model: expected });
+  await userEvent.click(view.getByRole("button", { name: "Continue" }));
+  expect(choices).toEqual([expected]);
+  expect(view.queryByText("synthetic-new-key")).toBeNull();
+});
+
 test("a compatible endpoint carries an optional container-only URL", async () => {
   const choices: unknown[] = [];
   invokeHandler = async (command) => {
