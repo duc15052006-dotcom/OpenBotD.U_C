@@ -217,7 +217,20 @@ fn persist_configuration_with(
         "OpenBot could not record the saved connections. Your previous settings are kept; try Start again.",
         error.to_string(),
     ))?;
-    crate::env::write(&root.join(".env"), settings, purge)
+    // A previous compatible endpoint wrote its custom model IDs into .env. When a new
+    // selection does not supply those fields, "not owned" must not mean "keep the old
+    // compatible model": it would point a newly configured provider at a model it cannot serve.
+    // Remove only those known model-selection fields, never unrelated user settings or minted
+    // installation credentials. This also covers restarting the app after switching providers.
+    let mut purge_model_selection = purge.clone();
+    if !matches!(credential, ModelCredential::None | ModelCredential::Compatible { .. }) {
+        for key in ["BOT_MODEL", "AGENT_BOT_MODEL"] {
+            if !settings.contains_key(key) {
+                purge_model_selection.insert(key.to_string(), String::new());
+            }
+        }
+    }
+    crate::env::write(&root.join(".env"), settings, &purge_model_selection)
         .map_err(|error| Problem::with("OpenBot could not write its settings.", error.to_string()))
 }
 
