@@ -53,7 +53,6 @@ describe("Docker-compatible resource inspection", () => {
   });
 });
 
-
 describe("Computer resource reconciliation", () => {
   const requested = {
     memoryBytes: 4_294_967_296,
