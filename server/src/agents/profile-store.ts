@@ -1,4 +1,4 @@
-import { and, eq, isNotNull, isNull, or } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import type { CredentialStore } from "../credentials";
 import type { Database } from "../db/client";
 import {
@@ -6,6 +6,10 @@ import {
   agentProfiles,
   agents,
   deploymentPackages,
+  routines,
+  workItems,
+  workflowRuns,
+  workflowSteps,
 } from "../db/schema";
 import {
   authFromConfiguration,
@@ -18,6 +22,11 @@ import {
   sameToken,
 } from "./callback-token";
 import { canManageAgent } from "./profile-policy";
+import {
+  computerResourceProfile,
+  DEFAULT_COMPUTER_RESOURCE_PROFILE,
+  type ComputerResourceProfile,
+} from "../computer/resource-profile";
 import type {
   AgentActor,
   AgentProfile,
@@ -89,6 +98,8 @@ export type AgentProfileStore = {
    * presenting a credential, and the credential is the whole of its claim.
    */
   agentForCallbackToken(hash: string): Promise<{ id: string } | null>;
+  /** Resource preset for the deployment-owned Computer. Does not expose the Agent configuration. */
+  computerResourceProfile(id: string): Promise<ComputerResourceProfile>;
 };
 
 export class AgentNotFoundError extends Error {
@@ -179,6 +190,7 @@ function mapProfile(
     hidden: row.hiddenAt !== null,
     deletedAt: row.deletedAt,
     endpoint: endpointOf(row.configuration),
+    computerResourceProfile: computerResourceProfileOf(row.configuration),
     // Whether a key is set, never which. The form needs to show "a key is set" so a person does not
     // wipe one by saving an unrelated edit; showing the value would put a secret in a screenshot.
     hasAuth: authFromConfiguration(row.configuration) !== null,
@@ -197,6 +209,20 @@ function endpointOf(configuration: unknown): string | null {
   if (!configuration || typeof configuration !== "object") return null;
   const endpoint = (configuration as { endpoint?: unknown }).endpoint;
   return typeof endpoint === "string" ? endpoint : null;
+}
+
+function computerResourceProfileOf(
+  configuration: unknown,
+): ComputerResourceProfile {
+  if (!configuration || typeof configuration !== "object") {
+    return DEFAULT_COMPUTER_RESOURCE_PROFILE;
+  }
+  return (
+    computerResourceProfile(
+      (configuration as { computerResourceProfile?: unknown })
+        .computerResourceProfile,
+    ) ?? DEFAULT_COMPUTER_RESOURCE_PROFILE
+  );
 }
 
 /** Which agent on a Mastra server this Bot means, when the row names one. */
@@ -265,8 +291,24 @@ export function runForDuplicate(
   managed: Record<string, unknown> | undefined,
 ): AgentRun | null {
   const systemPrompt = systemPromptOf(source.configuration);
+  const configuredResourceProfile =
+    source.configuration && typeof source.configuration === "object"
+      ? computerResourceProfile(
+          (source.configuration as { computerResourceProfile?: unknown })
+            .computerResourceProfile,
+        )
+      : null;
+  const resourceProfileConfiguration = configuredResourceProfile
+    ? { computerResourceProfile: configuredResourceProfile }
+    : {};
   if (source.type === "built_in" && systemPrompt) {
-    return { type: "built_in", configuration: { systemPrompt } };
+    return {
+      type: "built_in",
+      configuration: {
+        systemPrompt,
+        ...resourceProfileConfiguration,
+      },
+    };
   }
 
   const endpoint = endpointOf(source.configuration);
@@ -286,14 +328,29 @@ export function runForDuplicate(
       return {
         type: "remote_mastra",
         configuration: remoteAgentId
-          ? { endpoint, remoteAgentId }
-          : { endpoint },
+          ? {
+              endpoint,
+              remoteAgentId,
+              ...resourceProfileConfiguration,
+            }
+          : { endpoint, ...resourceProfileConfiguration },
       };
     }
-    return { type: "remote_ag_ui", configuration: { endpoint } };
+    return {
+      type: "remote_ag_ui",
+      configuration: { endpoint, ...resourceProfileConfiguration },
+    };
   }
 
-  return managed ? { type: "remote_ag_ui", configuration: managed } : null;
+  return managed
+    ? {
+        type: "remote_ag_ui",
+        configuration: {
+          ...managed,
+          ...resourceProfileConfiguration,
+        },
+      }
+    : null;
 }
 
 async function findAccessibleProfile(
@@ -409,6 +466,15 @@ export function createAgentProfileStore(
       return findAccessibleProfile(database, actor, id);
     },
 
+    async computerResourceProfile(id) {
+      const [row] = await database
+        .select({ configuration: agents.configuration })
+        .from(agents)
+        .where(eq(agents.id, id))
+        .limit(1);
+      return computerResourceProfileOf(row?.configuration);
+    },
+
     async getWithin(executor, actor, id) {
       await lockProfileReadRow(executor, id);
       return findAccessibleProfile(executor, actor, id);
@@ -434,6 +500,9 @@ export function createAgentProfileStore(
             // auth-header.ts for why a bearer token must not sit next to the endpoint.
             configuration: {
               ...endpoint,
+              computerResourceProfile:
+                input.computerResourceProfile ??
+                DEFAULT_COMPUTER_RESOURCE_PROFILE,
               ...(input.auth && vault
                 ? {
                     auth: await storeAgentAuth({
@@ -462,7 +531,12 @@ export function createAgentProfileStore(
             id,
             name: input.name,
             type: "built_in",
-            configuration: { systemPrompt },
+            configuration: {
+              systemPrompt,
+              computerResourceProfile:
+                input.computerResourceProfile ??
+                DEFAULT_COMPUTER_RESOURCE_PROFILE,
+            },
           });
         } else {
           /*
@@ -534,6 +608,9 @@ export function createAgentProfileStore(
            */
           const configuration = {
             ...previous,
+            computerResourceProfile:
+              input.computerResourceProfile ??
+              computerResourceProfileOf(previous),
             ...(row?.type === "built_in"
               ? { systemPrompt: input.roleDescription }
               : {}),
@@ -676,6 +753,82 @@ export function createAgentProfileStore(
             .update(agentProfiles)
             .set({ deletedAt, updatedAt: deletedAt })
             .where(eq(agentProfiles.agentId, id));
+
+          /*
+           * Deleting a coworker is also revoking its unattended authority.
+           *
+           * The canonical `agents` row intentionally survives this soft delete, so foreign keys
+           * alone do not stop routines, workflows or Bot-to-Bot handoffs. Disable/cancel them in
+           * THIS transaction so the delete cannot commit while schedulers still see durable work as
+           * live. Queued routine items re-read `enabled`; queued workflow items re-read the
+           * run/step state. Handoffs are terminalized here because their queue row itself is their
+           * authority: clearing the lease and setting `finishedAt` means a claimed row cannot renew
+           * and an unclaimed row cannot be picked up after deletion commits. Already-running
+           * workflow turns and handoff deliveries are stopped by their durable continuation guards.
+           */
+          await transaction
+            .update(workItems)
+            .set({
+              finishedAt: deletedAt,
+              claimedBy: null,
+              leaseUntil: null,
+              lastError: "agent deleted before handoff completed",
+              updatedAt: deletedAt,
+            })
+            .where(
+              and(
+                eq(workItems.kind, "bot.message"),
+                isNull(workItems.finishedAt),
+                or(
+                  sql`${workItems.payload}->>'fromBotId' = ${id}`,
+                  sql`${workItems.payload}->>'toBotId' = ${id}`,
+                ),
+              ),
+            );
+
+          await transaction
+            .update(routines)
+            .set({ enabled: false, updatedAt: deletedAt })
+            .where(and(eq(routines.agentId, id), eq(routines.enabled, true)));
+
+          const cancellableWorkflows = await transaction
+            .select({ id: workflowRuns.id })
+            .from(workflowRuns)
+            .where(
+              and(
+                eq(workflowRuns.agentId, id),
+                inArray(workflowRuns.status, ["active", "paused"]),
+              ),
+            );
+          const workflowIds = cancellableWorkflows.map((row) => row.id);
+          if (workflowIds.length > 0) {
+            await transaction
+              .update(workflowSteps)
+              .set({
+                status: "cancelled",
+                finishedAt: deletedAt,
+                updatedAt: deletedAt,
+              })
+              .where(
+                and(
+                  inArray(workflowSteps.workflowId, workflowIds),
+                  inArray(workflowSteps.status, [
+                    "blocked",
+                    "ready",
+                    "running",
+                    "waiting",
+                  ]),
+                ),
+              );
+            await transaction
+              .update(workflowRuns)
+              .set({
+                status: "cancelled",
+                finishedAt: deletedAt,
+                updatedAt: deletedAt,
+              })
+              .where(inArray(workflowRuns.id, workflowIds));
+          }
 
           /*
            * And its key stops working.

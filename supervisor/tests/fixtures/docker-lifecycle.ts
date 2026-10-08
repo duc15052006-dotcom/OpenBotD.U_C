@@ -80,13 +80,24 @@ function createdAt(volume: Docker.VolumeInspectInfo): string {
 }
 
 async function removeVolumes() {
-  for (const volume of [names.profileVolume, names.workspaceVolume]) {
+  for (const volume of [
+    names.profileVolume,
+    names.workspaceVolume,
+    names.quarantineVolume,
+  ]) {
     try {
       const info = await withDocker().docker.getVolume(volume).inspect();
-      if (
-        info.Labels?.["openbot.namespace"] !== namespace ||
-        info.Labels?.["openbot.bot-id"] !== BOT
-      ) {
+      const ownedByBot =
+        info.Labels?.["openbot.namespace"] === namespace &&
+        info.Labels?.["openbot.bot-id"] === BOT;
+      // The foreign-volume refusal case deliberately plants a volume without
+      // any OpenBot ownership labels. It is still ours to clean as a test
+      // fixture, but no other foreign resource may be removed.
+      const plantedByFixture =
+        volume === names.workspaceVolume &&
+        info.Labels?.["openbot.test-fixture"] === namespace &&
+        info.Labels?.["someone.else"] === "true";
+      if (!ownedByBot && !plantedByFixture) {
         throw new Error("Refusing to clean a volume outside this fixture.");
       }
       await withDocker().docker.getVolume(volume).remove();
@@ -102,6 +113,7 @@ beforeAll(async () => {
     withDocker().docker.getContainer(names.container),
     withDocker().docker.getVolume(names.profileVolume),
     withDocker().docker.getVolume(names.workspaceVolume),
+    withDocker().docker.getVolume(names.quarantineVolume),
   ]) {
     try {
       await resource.inspect();
@@ -218,6 +230,272 @@ describe("a name held by somebody else", () => {
   }, 90_000);
 });
 
+describe("Computer network configuration survives desktop Stop and restart", () => {
+  test("refuses a live network migration, then replaces only the stopped container and keeps all volumes", async () => {
+    const networkName = `openbot-fixture-${namespace}`;
+    await withDocker().docker.createNetwork({
+      Name: networkName,
+      Labels: { "openbot.test-fixture": namespace },
+    });
+    try {
+      await withDocker().supervisor.ensure(names, {
+        image: IMAGE,
+        environment: [],
+      });
+      const beforeContainer = await withDocker()
+        .docker.getContainer(names.container)
+        .inspect();
+      const beforeVolumes = await Promise.all(
+        [
+          names.profileVolume,
+          names.workspaceVolume,
+          names.quarantineVolume,
+        ].map((volume) => withDocker().docker.getVolume(volume).inspect()),
+      );
+
+      await expect(
+        withDocker().supervisor.ensure(names, {
+          image: IMAGE,
+          environment: [],
+          network: networkName,
+        }),
+      ).rejects.toThrow("must be stopped");
+      // A simultaneous image upgrade must not preempt the network's Stop requirement.
+      await expect(
+        withDocker().supervisor.ensure(names, {
+          image: OTHER,
+          environment: [],
+          network: networkName,
+        }),
+      ).rejects.toThrow("must be stopped");
+      expect(
+        (await withDocker().docker.getContainer(names.container).inspect()).Id,
+      ).toBe(beforeContainer.Id);
+
+      await withDocker().supervisor.stop(names);
+      const resumed = await withDocker().supervisor.ensure(names, {
+        image: IMAGE,
+        environment: [],
+        network: networkName,
+      });
+      const afterContainer = await withDocker()
+        .docker.getContainer(names.container)
+        .inspect();
+      const afterVolumes = await Promise.all(
+        [
+          names.profileVolume,
+          names.workspaceVolume,
+          names.quarantineVolume,
+        ].map((volume) => withDocker().docker.getVolume(volume).inspect()),
+      );
+      expect(resumed.status).toBe("running");
+      expect(resumed.url).toBe(`http://${names.container}:4100`);
+      expect(afterContainer.Id).not.toBe(beforeContainer.Id);
+      expect(afterContainer.HostConfig?.NetworkMode).toBe(networkName);
+      expect(afterVolumes.map(createdAt)).toEqual(beforeVolumes.map(createdAt));
+    } finally {
+      await remove(names.container);
+      await withDocker().docker.getNetwork(networkName).remove();
+    }
+  }, 120_000);
+});
+
+describe("host restart ownership", () => {
+  test("leaves Computer restart authority with OpenBot instead of Docker", async () => {
+    await withDocker().supervisor.ensure(names, {
+      image: IMAGE,
+      environment: [],
+    });
+
+    const inspected = await withDocker()
+      .docker.getContainer(names.container)
+      .inspect();
+
+    expect(inspected.HostConfig?.RestartPolicy?.Name).toBe("no");
+  }, 90_000);
+});
+
+describe("legacy restart-policy recovery", () => {
+  test("migrates an existing Computer away from Docker autorestart without replacing it", async () => {
+    await withDocker().supervisor.ensure(names, {
+      image: IMAGE,
+      environment: [],
+    });
+    const before = await withDocker()
+      .docker.getContainer(names.container)
+      .inspect();
+
+    await withDocker()
+      .docker.getContainer(names.container)
+      .update({
+        RestartPolicy: { Name: "unless-stopped" },
+      });
+    const legacy = await withDocker()
+      .docker.getContainer(names.container)
+      .inspect();
+    expect(legacy.HostConfig?.RestartPolicy?.Name).toBe("unless-stopped");
+
+    await withDocker().supervisor.ensure(names, {
+      image: IMAGE,
+      environment: [],
+    });
+    const after = await withDocker()
+      .docker.getContainer(names.container)
+      .inspect();
+
+    expect(after.Id).toBe(before.Id);
+    expect(after.HostConfig?.RestartPolicy?.Name).toBe("no");
+  }, 90_000);
+});
+
+describe("fleet lifecycle timestamps", () => {
+  test("reports the current run start after a stopped Computer wakes", async () => {
+    await withDocker().supervisor.ensure(names, {
+      image: IMAGE,
+      environment: [],
+    });
+    await withDocker().supervisor.stop(names);
+    await withDocker().supervisor.ensure(names, {
+      image: IMAGE,
+      environment: [],
+    });
+
+    const inspected = await withDocker()
+      .docker.getContainer(names.container)
+      .inspect();
+    const listed = (await withDocker().supervisor.listOwned()).find(
+      (computer) => computer.botId === BOT,
+    );
+
+    expect(inspected.State?.StartedAt).toBeTruthy();
+    expect(listed?.startedAt).toBe(inspected.State?.StartedAt);
+  }, 90_000);
+});
+
+describe("resource profile changes after desktop shutdown", () => {
+  test("wakes a stopped Computer with new CPU/RAM quotas and the same named volumes", async () => {
+    await withDocker().supervisor.ensure(names, {
+      image: IMAGE,
+      environment: [],
+      memoryBytes: 1_610_612_736,
+      nanoCpus: 1_000_000_000,
+    });
+    const before = await Promise.all(
+      [names.profileVolume, names.workspaceVolume, names.quarantineVolume].map(
+        (volume) => withDocker().docker.getVolume(volume).inspect(),
+      ),
+    );
+    await withDocker().supervisor.stop(names);
+
+    const resumed = await withDocker().supervisor.ensure(names, {
+      image: IMAGE,
+      environment: [],
+      memoryBytes: 2_147_483_648,
+      nanoCpus: 2_000_000_000,
+    });
+    const running = await withDocker()
+      .docker.getContainer(names.container)
+      .inspect();
+    expect(resumed.status).toBe("running");
+    expect(running.HostConfig?.Memory).toBe(2_147_483_648);
+    const { inspectedNanoCpus } = await import("../../src/resource-inspect");
+    expect(inspectedNanoCpus(running.HostConfig)).toBe(2_000_000_000);
+    const after = await Promise.all(
+      [names.profileVolume, names.workspaceVolume, names.quarantineVolume].map(
+        (volume) => withDocker().docker.getVolume(volume).inspect(),
+      ),
+    );
+    expect(after.map(createdAt)).toEqual(before.map(createdAt));
+  }, 120_000);
+});
+
+describe("stopped Computer recovery when engine rejects a quota update", () => {
+  test("recreates only the stopped owned container and keeps all named data volumes", async () => {
+    await withDocker().supervisor.ensure(names, {
+      image: IMAGE,
+      environment: [],
+      memoryBytes: 1_610_612_736,
+      nanoCpus: 1_000_000_000,
+    });
+    const beforeContainer = await withDocker()
+      .docker.getContainer(names.container)
+      .inspect();
+    const beforeVolumes = await Promise.all(
+      [names.profileVolume, names.workspaceVolume, names.quarantineVolume].map(
+        (volume) => withDocker().docker.getVolume(volume).inspect(),
+      ),
+    );
+    await withDocker().supervisor.stop(names);
+
+    // Simulate Podman refusing a Docker-compatible update on a stopped container.
+    // Scope the one-shot fault to this isolated process and always restore the prototype.
+    const originalGetContainer = DockerClient.prototype.getContainer;
+    let injectUpdateFailure = true;
+    DockerClient.prototype.getContainer = function (
+      this: Docker,
+      name: string,
+    ) {
+      const container = originalGetContainer.call(this, name);
+      if (name !== names.container) return container;
+      return new Proxy(container, {
+        get(target, property, receiver) {
+          if (property === "update" && injectUpdateFailure) {
+            return () => {
+              injectUpdateFailure = false;
+              throw new Error(
+                "synthetic stopped-container quota update refusal",
+              );
+            };
+          }
+          return Reflect.get(target, property, receiver);
+        },
+      });
+    };
+
+    try {
+      const resumed = await withDocker().supervisor.ensure(names, {
+        image: IMAGE,
+        environment: [],
+        memoryBytes: 2_147_483_648,
+        nanoCpus: 2_000_000_000,
+      });
+      expect(resumed.status).toBe("running");
+    } finally {
+      DockerClient.prototype.getContainer = originalGetContainer;
+    }
+
+    expect(injectUpdateFailure).toBe(false);
+    const afterContainer = await withDocker()
+      .docker.getContainer(names.container)
+      .inspect();
+    const afterVolumes = await Promise.all(
+      [names.profileVolume, names.workspaceVolume, names.quarantineVolume].map(
+        (volume) => withDocker().docker.getVolume(volume).inspect(),
+      ),
+    );
+    expect(afterContainer.Id).not.toBe(beforeContainer.Id);
+    expect(afterContainer.HostConfig?.Memory).toBe(2_147_483_648);
+    expect(afterVolumes.map(createdAt)).toEqual(beforeVolumes.map(createdAt));
+  }, 120_000);
+});
+
+describe("idempotent Stop result", () => {
+  test("reports true only when the Computer was running before Stop", async () => {
+    await withDocker().supervisor.ensure(names, {
+      image: IMAGE,
+      environment: [],
+    });
+
+    expect(await withDocker().supervisor.stop(names)).toBe(true);
+    expect(await withDocker().supervisor.stop(names)).toBe(false);
+
+    const inspected = await withDocker()
+      .docker.getContainer(names.container)
+      .inspect();
+    expect(inspected.State?.Running).toBe(false);
+  }, 90_000);
+});
+
 describe("a computer that never answers", () => {
   test("fails instead of being handed out as ready", async () => {
     // A wait that cannot fail is a sleep: every computer that never came up was reported ready, and
@@ -232,6 +510,55 @@ describe("a computer that never answers", () => {
         readyTimeoutMs: 3_000,
       }),
     ).rejects.toBeInstanceOf(withDocker().supervisor.ComputerNotAnsweringError);
+  }, 90_000);
+});
+
+describe("destructive Reset", () => {
+  test("removes owned profile, workspace and quarantine even after the container is already gone", async () => {
+    await withDocker().supervisor.ensure(names, {
+      image: IMAGE,
+      environment: [],
+    });
+    await withDocker()
+      .docker.getContainer(names.container)
+      .remove({ force: true, v: false });
+
+    expect(await withDocker().supervisor.reset(names)).toBe(true);
+    for (const volume of [
+      names.profileVolume,
+      names.workspaceVolume,
+      names.quarantineVolume,
+    ]) {
+      await expect(
+        withDocker().docker.getVolume(volume).inspect(),
+      ).rejects.toMatchObject({
+        statusCode: 404,
+      });
+    }
+  }, 90_000);
+
+  test("refuses a foreign volume with the predictable Bot name instead of mounting it", async () => {
+    await withDocker().docker.createVolume({
+      Name: names.workspaceVolume,
+      Labels: {
+        "someone.else": "true",
+        "openbot.test-fixture": namespace,
+      },
+    });
+
+    await expect(
+      withDocker().supervisor.ensure(names, { image: IMAGE, environment: [] }),
+    ).rejects.toBeInstanceOf(withDocker().supervisor.NameHeldError);
+
+    const volume = await withDocker()
+      .docker.getVolume(names.workspaceVolume)
+      .inspect();
+    expect(volume.Labels?.["someone.else"]).toBe("true");
+    await expect(
+      withDocker().docker.getContainer(names.container).inspect(),
+    ).rejects.toMatchObject({
+      statusCode: 404,
+    });
   }, 90_000);
 });
 
@@ -265,8 +592,8 @@ describe("a computer built from an older image", () => {
     // Volumes outlive the container by not being removed with it; that is what makes replacing one
     // safe, and it is the whole reason this fix is allowed to be automatic.
     const volumes = await Promise.all(
-      [names.profileVolume, names.workspaceVolume].map((volume) =>
-        withDocker().docker.getVolume(volume).inspect(),
+      [names.profileVolume, names.workspaceVolume, names.quarantineVolume].map(
+        (volume) => withDocker().docker.getVolume(volume).inspect(),
       ),
     );
 
@@ -290,8 +617,8 @@ describe("a computer built from an older image", () => {
 
     // The same volumes, not replacements: a Bot keeps its logins and its files across an upgrade.
     const kept = await Promise.all(
-      [names.profileVolume, names.workspaceVolume].map((volume) =>
-        withDocker().docker.getVolume(volume).inspect(),
+      [names.profileVolume, names.workspaceVolume, names.quarantineVolume].map(
+        (volume) => withDocker().docker.getVolume(volume).inspect(),
       ),
     );
     expect(kept.map(createdAt)).toEqual(volumes.map(createdAt));

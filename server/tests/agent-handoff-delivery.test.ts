@@ -85,6 +85,7 @@ function delivery(
         },
       },
       runner: {
+        stop: async () => true,
         run: (request) => {
           requests.push({
             threadId: request.threadId,
@@ -171,6 +172,58 @@ describe("turning a hop into a turn", () => {
  * delivery that skips this is claiming to be a run nobody was told about, so every event is refused
  * and the refusal reads like a platform limitation rather than a missing step. It was one.
  */
+describe("durable handoff revocation", () => {
+  test("stops the exact running turn when the channel or Bot is revoked", async () => {
+    let guardChecks = 0;
+    let aborts = 0;
+    const stopped: Array<{ threadId: string; runId?: string }> = [];
+    const released: string[] = [];
+    const agent = {
+      threadId: "",
+      setMessages() {},
+      abortRun() {
+        aborts += 1;
+      },
+    } as unknown as AbstractAgent;
+
+    const deliver = createHandoffDelivery({
+      heartbeatMs: 5,
+      continuationGuard: async () => {
+        guardChecks += 1;
+        return guardChecks === 1;
+      },
+      agentFor: async () => agent,
+      history: async () => PRIOR,
+      newRunId: () => "run-2",
+      mintThreadId: () => "scratch-thread",
+      lock: {
+        acquire: async () => ({ runId: "platform-run" }),
+        renew: async () => {},
+        release: async ({ threadId }) => {
+          released.push(threadId);
+        },
+      },
+      runner: {
+        run: () => new Observable<BaseEvent>(() => {}),
+        stop: async (input) => {
+          stopped.push(input);
+          return true;
+        },
+      },
+    });
+
+    await expect(
+      deliver.deliver({ work: WORK, message: "m", shown: "s", assertion: "s" }),
+    ).rejects.toMatchObject({ name: "HandoffContinuationCancelled" });
+
+    expect(aborts).toBe(1);
+    expect(stopped).toEqual([
+      { threadId: "scratch-thread", runId: "platform-run" },
+    ]);
+    expect(released).toEqual(["scratch-thread"]);
+  });
+});
+
 describe("holding the conversation while a Bot answers", () => {
   test("the lock is taken before anything is streamed, and given back after", async () => {
     const { delivery: deliver, lockCalls } = delivery(FINISHED);
@@ -344,7 +397,10 @@ describe("a delivery that never finishes", () => {
           lockCalls.push("release");
         },
       },
-      runner: { run: () => new Observable<BaseEvent>(() => {}) },
+      runner: {
+        stop: async () => true,
+        run: () => new Observable<BaseEvent>(() => {}),
+      },
     });
 
     await expect(
@@ -462,6 +518,7 @@ describe("the working indicator", () => {
         release: async () => {},
       },
       runner: {
+        stop: async () => true,
         run: () =>
           new Observable<BaseEvent>((subscriber) => {
             for (const event of FINISHED) subscriber.next(event);
@@ -545,6 +602,7 @@ describe("what comes back for the relay", () => {
         release: async () => {},
       },
       runner: {
+        stop: async () => true,
         run: (request) => {
           void (
             request.agent as unknown as {
@@ -623,6 +681,7 @@ describe("what comes back for the relay", () => {
         release: async () => {},
       },
       runner: {
+        stop: async () => true,
         run: (request) => {
           void (
             request.agent as unknown as {
@@ -771,6 +830,7 @@ describe("a history read that fails", () => {
         },
       },
       runner: {
+        stop: async () => true,
         run: () =>
           new Observable<BaseEvent>((subscriber) => {
             subscriber.complete();

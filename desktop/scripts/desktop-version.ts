@@ -128,11 +128,22 @@ function main(command: string | undefined) {
     command === "internal"
       ? `${releaseVersion}-internal.g${sourceSha.slice(0, 12)}`
       : releaseVersion;
+  const deploymentTag = process.env.OPENBOT_DEPLOYMENT_TAG;
+  if (
+    deploymentTag &&
+    (command !== "internal" ||
+      deploymentTag !== `v${releaseVersion}-rc.${sourceSha}`)
+  ) {
+    throw new Error(
+      "Preview deployment tag must name this exact internal source commit",
+    );
+  }
   const metadata = {
     version: buildVersion,
     releaseVersion,
     sourceSha,
     channel: command,
+    ...(deploymentTag ? { deploymentTag } : {}),
   };
   // Tauri copies semver into both Apple keys unchanged. Keep those numeric while
   // retaining the complete internal identity in custom plist keys and app metadata.

@@ -40,7 +40,7 @@ def _model() -> str:
     """
     provider = (os.environ.get("BOT_PROVIDER") or "").strip() or "openai"
     model = (os.environ.get("BOT_MODEL") or "").strip() or "gpt-5.5"
-    return model if "/" in model else f"{provider}/{model}"
+    return f"{provider}/{model}"
 
 
 _PROVIDER_MESSAGE_FIELDS = {

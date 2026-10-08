@@ -292,7 +292,61 @@ describe("deployment configuration", () => {
         "http://localhost:3010",
       ],
       initialAdminEmails: ["admin@openbot.test", "owner@openbot.test"],
+      allowedEmailDomains: [],
     });
+  });
+
+  test("normalizes configured sign-in domains", () => {
+    const config = loadConfig({
+      ...baseEnvironment,
+      SIGNIN_ALLOWED_EMAIL_DOMAINS: " @Example.COM. , ,  foo.TEST ",
+    });
+
+    expect(config.auth?.allowedEmailDomains).toEqual([
+      "example.com",
+      "foo.test",
+    ]);
+  });
+
+  test.each(["@", ".", "@."])(
+    "refuses a sign-in domain list that names no domain: %p",
+    (value) => {
+      expect(() =>
+        loadConfig({
+          ...baseEnvironment,
+          SIGNIN_ALLOWED_EMAIL_DOMAINS: value,
+        }),
+      ).toThrow("names no domain");
+    },
+  );
+
+  test.each(["common", "organizations", "consumers", "Common", "  COMMON  "])(
+    "refuses a domain list with Entra multi-tenant audience %p",
+    (tenantId) => {
+      expect(() =>
+        loadConfig({
+          ...withoutSignIn,
+          ...SESSION,
+          MICROSOFT_OAUTH_CLIENT_ID: "entra-client-id",
+          MICROSOFT_OAUTH_CLIENT_SECRET: "entra-client-secret",
+          MICROSOFT_OAUTH_TENANT_ID: tenantId,
+          SIGNIN_ALLOWED_EMAIL_DOMAINS: "example.com",
+        }),
+      ).toThrow("names no directory");
+    },
+  );
+
+  test("accepts a domain list with a named Entra directory", () => {
+    const config = loadConfig({
+      ...withoutSignIn,
+      ...SESSION,
+      MICROSOFT_OAUTH_CLIENT_ID: "entra-client-id",
+      MICROSOFT_OAUTH_CLIENT_SECRET: "entra-client-secret",
+      MICROSOFT_OAUTH_TENANT_ID: "8f2c1e40-0000-0000-0000-000000000000",
+      SIGNIN_ALLOWED_EMAIL_DOMAINS: "example.com",
+    });
+
+    expect(config.auth?.allowedEmailDomains).toEqual(["example.com"]);
   });
 
   /**
@@ -428,6 +482,55 @@ describe("deployment configuration", () => {
     expect(() => loadConfig(withoutSignIn)).toThrow(
       "No identity provider is configured",
     );
+  });
+
+  test.each([
+    ["a public URL", { OPENBOT_PUBLIC_URL: "https://openbot.example.com" }],
+    ["an app URL", { OPENBOT_APP_URL: "https://openbot.example.com" }],
+    ["a trusted origin", { TRUSTED_ORIGINS: "https://openbot.example.com" }],
+    [
+      "one public origin among loopback ones",
+      { TRUSTED_ORIGINS: "http://localhost:3010,https://openbot.example.com" },
+    ],
+    ["an unparseable address", { OPENBOT_PUBLIC_URL: "not a URL" }],
+  ])("refuses no sign-in combined with %s", (_label, published) => {
+    expect(() =>
+      loadConfig({ ...withoutSignIn, ...OPEN, ...published }),
+    ).toThrow("OPENBOT_SINGLE_USER");
+  });
+
+  test.each([
+    ["a home LAN address", { OPENBOT_PUBLIC_URL: "http://192.168.1.10:3001" }],
+    ["a 10/8 address", { OPENBOT_PUBLIC_URL: "http://10.0.0.5:3001" }],
+    ["a 172.16/12 address", { OPENBOT_PUBLIC_URL: "http://172.20.1.4:3001" }],
+    ["a Tailscale address", { OPENBOT_PUBLIC_URL: "http://100.101.102.103" }],
+    ["a unique-local IPv6 address", { OPENBOT_PUBLIC_URL: "http://[fd00::1]" }],
+    ["an mDNS name", { TRUSTED_ORIGINS: "http://openbot.local:3010" }],
+    ["a single-label LAN name", { TRUSTED_ORIGINS: "http://nas:3010" }],
+  ])("still runs with no sign-in on %s", (_label, reachable) => {
+    expect(() =>
+      loadConfig({ ...withoutSignIn, ...OPEN, ...reachable }),
+    ).not.toThrow();
+  });
+
+  test.each([
+    ["just outside 172.16/12", { OPENBOT_PUBLIC_URL: "http://172.32.0.1" }],
+    ["just outside 100.64/10", { OPENBOT_PUBLIC_URL: "http://100.128.0.1" }],
+  ])("refuses no sign-in on %s", (_label, published) => {
+    expect(() =>
+      loadConfig({ ...withoutSignIn, ...OPEN, ...published }),
+    ).toThrow("OPENBOT_SINGLE_USER");
+  });
+
+  test.each([
+    {},
+    { TRUSTED_ORIGINS: "http://localhost:3010" },
+    { TRUSTED_ORIGINS: "http://127.0.0.1:3010,http://[::1]:3010" },
+    { OPENBOT_PUBLIC_URL: "http://127.0.0.1:3001" },
+  ])("still runs with no sign-in on loopback: %j", (loopback) => {
+    expect(() =>
+      loadConfig({ ...withoutSignIn, ...OPEN, ...loopback }),
+    ).not.toThrow();
   });
 
   test("is off, and lists nothing, when no provider is configured", () => {

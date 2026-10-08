@@ -8,6 +8,13 @@ import {
   parseAgentToolCallInput,
   sameToken,
 } from "./agents/callback-token";
+import { createAgentInstructionsRoutes } from "./agents/instructions-routes";
+import type { AgentInstructionsStore } from "./agents/instructions-store";
+import { createAgentKnowledgeRoutes } from "./agents/knowledge-routes";
+import type { AgentKnowledgeStore } from "./agents/knowledge-store";
+import { createAgentModelConfigRoutes } from "./agents/model-config-routes";
+import type { AgentModelConfigStore } from "./agents/model-config-store";
+import type { AgentModelConnectionService } from "./agents/model-connection-service";
 import type { BotAccessCheck } from "./agents/profile-policy";
 import type { AgentProfileStore } from "./agents/profile-store";
 import { createAgentRoutes } from "./agents/routes";
@@ -56,7 +63,12 @@ import { createHostAccessRoutes } from "./host-access/routes";
 import { createIntelligenceClient } from "./intelligence-client";
 import { parsePageLimit } from "./paging";
 import type { OnboardingStore } from "./people/onboarding";
-import { MAX_PAGE, type PeopleStore } from "./people/store";
+import {
+  MAX_PAGE,
+  PeopleCursorError,
+  decodeCursor as decodePeopleCursor,
+  type PeopleStore,
+} from "./people/store";
 import type { ComposioBroker } from "./plugins/broker";
 import { createPluginRoutes } from "./plugins/routes";
 import {
@@ -67,6 +79,8 @@ import {
 import { REFUSAL_MARKER, vendorAnswer } from "./plugins/tools";
 import { createRoutineRoutes, type RoutineStore } from "./routines/routes";
 import type { RoutineRunner } from "./routines/runner";
+import { createWorkflowRoutes } from "./workflows/routes";
+import type { WorkflowStore } from "./workflows/store";
 import type { IntentRouter } from "./routing/classify";
 import { createRoutingRoutes } from "./routing/routes";
 import type { PackageStatusReader } from "./tenant-package";
@@ -313,6 +327,15 @@ export function createApp(
    * no app directory to offer, rather than one that lists apps nobody can connect.
    */
   composio?: { broker: ComposioBroker },
+  /** Per-Agent model settings and their secret-safe connection test. */
+  agentModels?: AgentModelConfigStore,
+  agentModelConnections?: AgentModelConnectionService,
+  /** Durable instructions that belong to one Agent rather than to the signed-in person. */
+  agentInstructions?: AgentInstructionsStore,
+  /** Bounded uploaded reference material owned by one Agent. */
+  agentKnowledge?: AgentKnowledgeStore,
+  /** A person's durable multi-step workflows, exposed read/control-only to their dashboard. */
+  workflowStore?: WorkflowStore,
 ) {
   const app = new Hono<{ Variables: AppVariables }>();
 
@@ -642,17 +665,34 @@ export function createApp(
       );
     }
 
-    return context.json(
-      await peopleStore.list({
-        ...(url.searchParams.get("search")
-          ? { search: url.searchParams.get("search") as string }
-          : {}),
-        ...(url.searchParams.get("cursor")
-          ? { cursor: url.searchParams.get("cursor") as string }
-          : {}),
-        ...(parsed.limit !== undefined ? { limit: parsed.limit } : {}),
-      }),
-    );
+    const rawCursor = url.searchParams.get("cursor");
+    if (rawCursor !== null) {
+      try {
+        decodePeopleCursor(rawCursor);
+      } catch (error) {
+        if (error instanceof PeopleCursorError) {
+          return context.json({ error: error.message }, 400);
+        }
+        throw error;
+      }
+    }
+
+    try {
+      return context.json(
+        await peopleStore.list({
+          ...(url.searchParams.get("search")
+            ? { search: url.searchParams.get("search") as string }
+            : {}),
+          ...(rawCursor ? { cursor: rawCursor } : {}),
+          ...(parsed.limit !== undefined ? { limit: parsed.limit } : {}),
+        }),
+      );
+    } catch (error) {
+      if (error instanceof PeopleCursorError) {
+        return context.json({ error: error.message }, 400);
+      }
+      throw error;
+    }
   });
 
   app.post("/api/admin/people/:userId/role", requireUser, async (context) => {
@@ -1131,6 +1171,28 @@ export function createApp(
         config.managedAgent?.endpoint?.toString(),
       ),
     );
+    if (agentModels) {
+      app.route(
+        "/api/agents",
+        createAgentModelConfigRoutes(
+          agentModels,
+          requireUser,
+          agentModelConnections,
+        ),
+      );
+    }
+    if (agentInstructions) {
+      app.route(
+        "/api/agents",
+        createAgentInstructionsRoutes(agentInstructions, requireUser),
+      );
+    }
+    if (agentKnowledge) {
+      app.route(
+        "/api/agents",
+        createAgentKnowledgeRoutes(agentKnowledge, requireUser),
+      );
+    }
     // Choosing a coworker for an untagged message needs the same permission-filtered roster the
     // agents routes read, so it is mounted here where that store is in scope. Only when a router was
     // configured; without one the composer keeps sending untagged messages to the default.
@@ -1237,6 +1299,13 @@ export function createApp(
 
   if (routineStore) {
     app.route("/api/routines", createRoutineRoutes(routineStore, requireUser));
+  }
+
+  if (workflowStore) {
+    app.route(
+      "/api/workflows",
+      createWorkflowRoutes(workflowStore, requireUser),
+    );
   }
 
   if (componentStore) {

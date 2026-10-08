@@ -121,3 +121,23 @@ test("an unnamed image going up falls back to the same word the finished one use
 
   expect(getByRole("img", { name: "Attachment, uploading" })).toBeTruthy();
 });
+
+test("a text file that fits shows no truncation warning", () => {
+  const { queryByText } = render(
+    <AttachmentStrip files={[notes]} images={[]} onRemove={() => {}} />,
+  );
+
+  expect(queryByText(/may be cut/)).toBeNull();
+});
+
+test("a text file over the extraction ceiling warns it may be read truncated", () => {
+  const { getByText } = render(
+    <AttachmentStrip
+      files={[{ ...notes, id: "5", mayTruncate: true }]}
+      images={[]}
+      onRemove={() => {}}
+    />,
+  );
+
+  expect(getByText(/· may be cut/)).toBeTruthy();
+});

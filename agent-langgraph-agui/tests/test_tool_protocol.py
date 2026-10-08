@@ -19,6 +19,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src import main
+from src.tool_runtime import _A2UI_SCHEMA_DESCRIPTION
 from test_provider_boundaries import (
     _install_loopback_socket_guard,
     _write_synthetic_chatgpt_store,
@@ -84,7 +85,7 @@ def boundary(monkeypatch):
             captured["model"].append(body)
             messages = body["messages"]
             user = next(m["content"] for m in reversed(messages) if m["role"] == "user")
-            names = user.split(",")
+            names = captured.get("requested_tools", user.split(","))
             requested_names = (
                 [captured["force_call"]] if captured["force_call"] else names
             )
@@ -314,6 +315,165 @@ async def test_surface_tool_calls_end_then_consume_actual_client_result(boundary
         for m in snapshot(second)
     )
     assert boundary["callback"] == []
+
+
+@pytest.mark.asyncio
+async def test_qwen_stateless_surface_resume_keeps_real_chain_and_durable_history(boundary, monkeypatch):
+    monkeypatch.setenv("BOT_MODEL", "qwen/qwen3.6-plus:free")
+    monkeypatch.delenv("OPENBOT_QWEN_THINKING", raising=False)
+    boundary["requested_tools"] = ["computer_write_file"]
+    names = ["computer_write_file", "computer_read_file", "computer_snapshot", "computer_screenshot"]
+    request = "Hãy tạo file `/workspace/token-test-next.txt` với nội dung `hello`."
+    body = run_input(names, messages=[
+        {"id": "policy", "role": "system", "content": "Default-deny; never bypass login/MFA/CAPTCHA."},
+        {"id": "holdings", "role": "system", "content": "Use only granted tools and sandbox workspace paths."},
+        {"id": "old-user", "role": "user", "content": "OLD-TRANSCRIPT-" + "U" * 30_000},
+        {"id": "old-assistant", "role": "assistant", "content": "Old unrelated answer."},
+        {"id": "write-request", "role": "user", "content": request},
+    ])
+    body["context"] = [{"description": _A2UI_SCHEMA_DESCRIPTION, "value": "SCHEMA-ONLY-" + "X" * 20_000}]
+    first = await run_protocol(body)
+    assert len(boundary["model"]) == 1
+    assert any(e["type"] == "TOOL_CALL_START" and e["toolCallName"] == "computer_write_file" for e in first)
+    history = snapshot(first)
+    assert any(m["id"] == "old-user" and "OLD-TRANSCRIPT" in m["content"] for m in history)
+    assert next(m["content"] for m in history if m["id"] == "write-request") == request
+    actual_result = "Actual surface result: wrote hello to /workspace/token-test-next.txt."
+    history.append({"id": "write-result", "role": "tool", "toolCallId": "call-computer_write_file", "content": actual_result})
+    # OpenBot's remote middleware prepends the current standing policy on EVERY run; the
+    # integration's transcript snapshot intentionally excludes that first system message.
+    resume = run_input(names, thread=body["threadId"], messages=[body["messages"][0], *history])
+    resume["context"] = body["context"]
+    second = await run_protocol(resume)
+    assert len(boundary["model"]) == 2
+    for wire in boundary["model"]:
+        assert wire["max_completion_tokens"] == 256
+        assert [t["function"]["name"] for t in wire["tools"]] == ["computer_write_file"]
+        assert "OLD-TRANSCRIPT" not in json.dumps(wire)
+        assert "SCHEMA-ONLY" not in json.dumps(wire)
+        assert wire["messages"][0]["content"] == body["messages"][0]["content"]
+        assert wire["messages"][1]["content"] == body["messages"][1]["content"]
+        assert wire["messages"][2]["content"] == request + "\n\n/no_think"
+        assert len(json.dumps(wire)) < 4_000
+    wire = boundary["model"][-1]["messages"]
+    assert [m["role"] for m in wire] == ["system", "system", "user", "assistant", "tool"]
+    assert wire[-2]["tool_calls"][0]["id"] == wire[-1]["tool_call_id"] == "call-computer_write_file"
+    assert wire[-1]["content"] == actual_result
+    final_history = snapshot(second)
+    assert any(m["id"] == "old-user" for m in final_history)
+    assert any(m.get("content") == actual_result for m in final_history)
+    assert boundary["callback"] == []
+    all_provider_bodies = json.dumps(boundary["model"])
+    for secret in ("synthetic-run-assertion", "synthetic-callback-token", "synthetic-model-key", "synthetic-server-token"):
+        assert secret not in all_provider_bodies
+
+
+@pytest.mark.asyncio
+async def test_qwen_forwarded_minimal_policy_replaces_only_named_generated_policy(
+    boundary, monkeypatch
+):
+    monkeypatch.setenv("BOT_MODEL", "qwen/qwen3.6-plus:free")
+    monkeypatch.delenv("OPENBOT_QWEN_THINKING", raising=False)
+    boundary["requested_tools"] = ["computer_write_file"]
+    names = [
+        "computer_write_file",
+        "computer_read_file",
+        "computer_snapshot",
+        "computer_screenshot",
+    ]
+    request = "Create file /workspace/a.txt with hello."
+    standing_id = "standing-role:bot-ci"
+    holdings_id = "granted-tools:bot-ci"
+    body = run_input(
+        names,
+        messages=[
+            {
+                "id": standing_id,
+                "role": "system",
+                "content": "FULL-STANDING-" + "S" * 30_000,
+            },
+            {
+                "id": holdings_id,
+                "role": "system",
+                "content": "FULL-HOLDINGS-" + "H" * 30_000,
+            },
+            {
+                "id": "security-extra",
+                "role": "system",
+                "content": "KEEP-SECURITY default-deny and never bypass login/MFA/CAPTCHA.",
+            },
+            {
+                "id": "old-user",
+                "role": "user",
+                "content": "OLD-DURABLE-" + "U" * 30_000,
+            },
+            {
+                "id": "old-assistant",
+                "role": "assistant",
+                "content": "Old unrelated answer.",
+            },
+            {"id": "write-request", "role": "user", "content": request},
+        ],
+    )
+    body["forwardedProps"].update(
+        {
+            "openbotSimpleActionPolicy": (
+                "MINIMAL-DIRECT-POLICY: explicit action only; offered tools and workspace "
+                "permissions are authoritative; never expose credentials or bypass login/MFA/CAPTCHA."
+            ),
+            "openbotSimpleActionPolicyIds": [standing_id, holdings_id],
+        }
+    )
+
+    events = await run_protocol(body)
+    wire = boundary["model"][0]
+    encoded = json.dumps(wire, ensure_ascii=False)
+    assert wire["max_completion_tokens"] == 256
+    assert [tool["function"]["name"] for tool in wire["tools"]] == [
+        "computer_write_file"
+    ]
+    assert "MINIMAL-DIRECT-POLICY" in encoded
+    assert "KEEP-SECURITY" in encoded
+    assert "FULL-STANDING" not in encoded
+    assert "FULL-HOLDINGS" not in encoded
+    assert "OLD-DURABLE" not in encoded
+    assert request in encoded
+    assert len(encoded) < 5_000
+
+    durable = snapshot(events)
+    assert any(
+        message.get("id") == "old-user" and "OLD-DURABLE" in message.get("content", "")
+        for message in durable
+    )
+    for secret in (
+        "synthetic-run-assertion",
+        "synthetic-callback-token",
+        "synthetic-model-key",
+        "synthetic-server-token",
+    ):
+        assert secret not in encoded
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["qwen/qwen3.6-plus:free", "gpt-ci"])
+async def test_endpoint_keeps_current_system_policy_once_across_resume(boundary, monkeypatch, model):
+    monkeypatch.setenv("BOT_MODEL", model)
+    body = run_input([], messages=[
+        {"id": "standing", "role": "system", "content": "Default-deny. Never bypass login/MFA/CAPTCHA."},
+        {"id": "holdings", "role": "system", "content": "Only /workspace/old is writable."},
+        {"id": "analyze", "role": "user", "content": "Analyze the task carefully."},
+    ])
+    first = await run_protocol(body)
+    systems = [m["content"] for m in boundary["model"][0]["messages"] if m["role"] == "system"]
+    assert systems == [body["messages"][0]["content"], body["messages"][1]["content"]]
+    history = snapshot(first)
+    history.append({"id": "continue", "role": "user", "content": "Analyze the next task."})
+    updated = {**body["messages"][1], "content": "Only /workspace/new is writable."}
+    await run_protocol(run_input([], thread=body["threadId"], messages=[body["messages"][0], updated, *[
+        m for m in history if m["id"] != "holdings"
+    ]]))
+    systems = [m["content"] for m in boundary["model"][-1]["messages"] if m["role"] == "system"]
+    assert systems == [body["messages"][0]["content"], updated["content"]]
 
 
 @pytest.mark.asyncio

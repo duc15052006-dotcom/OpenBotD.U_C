@@ -39,7 +39,7 @@ if (!MANAGED_AGENT_TOKEN) {
  * `gpt-5.6-*` models require the Responses API for tool use and cannot be used by this
  * chat-completions streaming loop.
  */
-const MODEL = process.env.BOT_MODEL ?? "gpt-5.5";
+const MODEL = process.env.BOT_MODEL?.trim() || "gpt-5.5";
 /*
  * Refuse a model this file cannot use, rather than discover it one tool call at a time.
  *

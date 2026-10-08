@@ -554,9 +554,8 @@ mod tests {
             .filter_map(|row| row.image)
             .map(|image| {
                 format!(
-                    "\"{image}\": {{ \"repository\": \"ghcr.io/copilotkit/openbot-{image}\", \
-                     \"digest\": \"sha256:abc\", \
-                     \"reference\": \"ghcr.io/copilotkit/openbot-{image}@sha256:abc\" }}"
+                    "\"{image}\": {{ \"reference\": \"{}\" }}",
+                    release_image_reference(&image)
                 )
             })
             .collect();
@@ -568,6 +567,7 @@ mod tests {
             ),
         )
         .unwrap();
+        crate::deployment::record(&root, "v1.2.3").unwrap();
         root
     }
 
@@ -577,14 +577,31 @@ mod tests {
         root
     }
 
-    fn write_crewai_manifest(root: &std::path::Path) {
-        std::fs::write(
-            crate::deployment::images_path(root),
-            "{ \"version\": \"v9.9.9\", \"images\": { \
-             \"agent-crewai\": { \
-             \"reference\": \"ghcr.io/copilotkit/openbot-agent-crewai@sha256:abc\" } } }",
+    fn release_image_reference(published: &str) -> String {
+        let repository =
+            crate::update::release_repository().expect("release repository should be valid");
+        let owner = repository
+            .split_once('/')
+            .expect("release repository should contain an owner and name")
+            .0
+            .to_ascii_lowercase();
+        format!(
+            "ghcr.io/{owner}/openbot-{published}@sha256:{}",
+            "a".repeat(64)
         )
-        .expect("manifest is written");
+    }
+
+    fn write_crewai_manifest(root: &std::path::Path) {
+        let manifest = serde_json::json!({
+            "version": "v9.9.9",
+            "images": {
+                "agent-crewai": {
+                    "reference": release_image_reference("agent-crewai"),
+                },
+            },
+        });
+        std::fs::write(crate::deployment::images_path(root), manifest.to_string())
+            .expect("manifest is written");
     }
 
     fn choice(id: &str) -> HarnessChoice {
@@ -617,7 +634,7 @@ mod tests {
         let crate::env::PickedHarness::Installed { image, .. } = picked else {
             panic!("crewai should install a harness image");
         };
-        assert_eq!(image, "ghcr.io/copilotkit/openbot-agent-crewai@sha256:abc");
+        assert_eq!(image, release_image_reference("agent-crewai"));
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -752,7 +769,7 @@ mod tests {
         else {
             panic!("crewai should install a harness image");
         };
-        assert_eq!(image, "ghcr.io/copilotkit/openbot-agent-crewai@sha256:abc");
+        assert_eq!(image, release_image_reference("agent-crewai"));
         assert_eq!(port, 4202);
         assert!(!mastra);
         assert!(remote_agent_id.is_empty());
@@ -822,6 +839,7 @@ mod tests {
             "{ \"version\": \"v1.2.3\", \"images\": {} }",
         )
         .unwrap();
+        crate::deployment::record(&root, "v1.2.3").unwrap();
 
         let refused = picked(Some(&choice("crewai")), &root).expect_err("it should be refused");
         assert!(refused.contains("agent-crewai"), "{refused}");

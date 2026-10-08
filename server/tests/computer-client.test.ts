@@ -35,6 +35,42 @@ const ok = (body: unknown) =>
   });
 
 describe("computer client", () => {
+  test("raw transport preserves approved file bytes and authenticates the computer", async () => {
+    let seenHeaders: Headers | null = null;
+    const transport = createComputerTransport({
+      token: "computer-secret",
+      fetchImpl: (async (_url: string, init?: RequestInit) => {
+        seenHeaders = new Headers(init?.headers);
+        return new Response(new Uint8Array([0, 1, 2, 255]), {
+          headers: {
+            "content-type": "application/octet-stream",
+            "x-openbot-sha256":
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          },
+        });
+      }) as unknown as typeof fetch,
+    });
+
+    const response = await transport.raw(
+      "http://agent-computer:4100",
+      "bot-1",
+      "/quarantine/export-internal",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: "download-id" }),
+      },
+    );
+
+    expect(seenHeaders?.get("x-openbot-bot-id")).toBe("bot-1");
+    expect(seenHeaders?.get("x-openbot-computer-token")).toBe(
+      "computer-secret",
+    );
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(
+      new Uint8Array([0, 1, 2, 255]),
+    );
+  });
+
   test("navigates and returns where it landed", async () => {
     const seen: string[] = [];
     const client = clientWith((url, init) => {

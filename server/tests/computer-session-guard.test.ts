@@ -196,6 +196,75 @@ describe("a ref outliving the computer that produced it", () => {
     expect(await replicaB.sessionOf?.("bot-e")).toBe(SECOND_RUN);
   });
 
+  test("a cited action does not locate again after its run lookup fails", async () => {
+    let ensureCalls = 0;
+    let computerCalls = 0;
+    const supervisorFetch = (async (url: string) => {
+      const path = new URL(url).pathname;
+      if (path.endsWith("/ensure")) {
+        ensureCalls += 1;
+        if (ensureCalls === 1) {
+          throw new Error("supervisor temporarily unavailable");
+        }
+        return Response.json({
+          botId: "bot-race",
+          container: "openbot-computer-bot-race",
+          status: "running",
+          url: "http://openbot-computer:4100",
+          startedAt: SECOND_RUN,
+        });
+      }
+      return Response.json({ computers: [] });
+    }) as unknown as typeof fetch;
+    const provider = createDockerSupervisorProvider({
+      baseUrl: "http://supervisor:4300",
+      fetchImpl: supervisorFetch,
+    });
+    const snapshots = createInMemorySnapshotStore();
+    await snapshots.save("bot-race", {
+      snapshotId: SNAPSHOT.snapshotId,
+      url: SNAPSHOT.url,
+      elements: new Map(
+        SNAPSHOT.elements.map((element) => [element.ref, element]),
+      ),
+      session: FIRST_RUN,
+    });
+    const { store, rows } = fakeAudit();
+    const gateway = createComputerGateway({
+      provider,
+      fetchImpl: (async () => {
+        computerCalls += 1;
+        return Response.json({
+          action: "click",
+          url: SNAPSHOT.url,
+          elapsedMs: 1,
+        });
+      }) as unknown as typeof fetch,
+      auditStore: store,
+      policy: () => PERMISSIVE,
+      snapshots,
+    });
+
+    const failure = await gateway
+      .click("bot-race", ACTOR, {
+        ref: "e9",
+        snapshotId: SNAPSHOT.snapshotId,
+      })
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(String(failure)).toContain("supervisor temporarily unavailable");
+    expect(ensureCalls).toBe(1);
+    expect(computerCalls).toBe(0);
+    expect(rows.map((row) => row.eventType)).toEqual([
+      "computer.action_allowed",
+      "computer.action_failed",
+    ]);
+    expect(JSON.stringify(rows.at(-1)?.payload.element ?? "")).not.toContain(
+      "Submit order",
+    );
+  });
+
   test("CONTROL: a ref from the run that is still current still resolves", async () => {
     // The same path with nothing replaced. A guard that refuses everything is not a guard, and this
     // is what says the refusals above are about the run and not about the ordering itself.

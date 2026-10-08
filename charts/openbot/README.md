@@ -82,7 +82,24 @@ managedNodeGroups:
     maxSize: 4
     volumeSize: 60
     volumeType: gp3
+    # A Bot has a shell, so keep the node's IAM role out of pod reach.
+    disableIMDSv1: true
+    disablePodIMDS: true
 ```
+
+**Why the two IMDS lines.** EC2 instance metadata at `169.254.169.254` can hand out the node's IAM
+role. A Bot's computer runs commands a model chose, so shell traffic to that address bypasses
+OpenBot's browser/tool policy engine entirely.
+
+`disablePodIMDS: true` makes the IMDSv2 response hop limit 1, so ordinary pods cannot complete the
+token flow. `disableIMDSv1: true` is written explicitly beside it so the recipe does not rely on an
+eksctl default. This protects normal pod networking; a pod using `hostNetwork: true` is on the node
+and is not covered.
+
+There is a trade-off: the EBS CSI driver can use IMDS for node metadata, and AWS documents cases that
+need an IMDSv2 hop limit of 2 or greater. If your cluster requires that mode (including features that
+depend on IMDS-backed node metadata), remove these two lines and make sure NetworkPolicy enforcement
+is enabled instead. OpenBot itself does not need pod-level IMDS; the EKS chart path uses IRSA.
 
 ```sh
 eksctl create cluster -f cluster.yaml
@@ -401,9 +418,11 @@ reach. If your release has `networkPolicy.enabled` and `computers.mode: sandbox`
 set the range and run it again, and the policy is narrow for the first time.
 
 A Bot's computer is allowed 80 and 443 to public addresses and nothing else, which is what stops a
-browser reaching the cluster, the database, or the cloud's credential endpoint. A per-Bot egress
-proxy is therefore two settings rather than one: the variable that names it, and the rule that lets
-the computer reach it.
+browser reaching the cluster, the database, or the cloud's credential endpoint. On EKS, close that
+last path at the node as well because NetworkPolicy is off until somebody enables enforcement: the
+cluster recipe above sets `disablePodIMDS` and `disableIMDSv1`. A per-Bot egress proxy is therefore
+two settings rather than one: the variable that names it, and the rule that lets the computer reach
+it.
 
 ```yaml
 computers:

@@ -15,8 +15,18 @@ async function available() {
   }
 }
 
-test.skipIf(!(await available()))(
-  "supervisor Docker lifecycle in an isolated namespace (seven cases)",
+const dockerReady = await available();
+if (
+  !dockerReady &&
+  process.env.OPENBOT_REQUIRE_SUPERVISOR_DOCKER_TEST === "1"
+) {
+  throw new Error(
+    "CI requires the real supervisor Docker lifecycle suite, but the engine or dockerode is unavailable.",
+  );
+}
+
+test.skipIf(!dockerReady)(
+  "supervisor Docker lifecycle in an isolated namespace (sixteen cases)",
   async () => {
     const namespace = `supervisor-test-${crypto.randomUUID()}`;
     const child = Bun.spawn(
@@ -49,7 +59,7 @@ test.skipIf(!(await available()))(
     if (!summaryLine)
       throw new Error(`Missing fixture result: ${stdout} ${stderr}`);
     const summary = JSON.parse(summaryLine.slice(prefix.length));
-    expect(summary.completedCases).toBe(7);
+    expect(summary.completedCases).toBe(16);
     expect(summary.cleanup).toBe("complete");
     // Do not echo nested Bun summaries: scripts/test-ci.ts counts the outer suite's summary.
     console.log(summaryLine);

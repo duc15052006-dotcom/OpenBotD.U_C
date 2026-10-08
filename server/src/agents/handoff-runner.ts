@@ -436,6 +436,40 @@ export function createHandoffRunner(options: {
           } catch (error) {
             const reason =
               error instanceof Error ? error.message : "could not be delivered";
+
+            if (
+              error instanceof Error &&
+              error.name === "HandoffContinuationCancelled"
+            ) {
+              /*
+               * Durable authority was revoked. This is terminal cancellation, not a delivery
+               * failure: retrying would restart Browser/Tools for a channel or Bot the person
+               * deleted, and a failure notice has nowhere legitimate to land.
+               */
+              await queue.finish({
+                kind: HANDOFF_KIND,
+                key: item.key,
+                owner,
+              });
+              ours.delete(item.key);
+              report.skipped.push({ key: item.key, reason });
+              await recordAuditEvent(auditStore, {
+                eventType: "agent.handoff_cancelled",
+                targetType: "agent",
+                targetId: work.toBotId,
+                ...(work.actorId ? { actorUserId: work.actorId } : {}),
+                initiator: { kind: "handoff", id: work.fromBotId },
+                payload: {
+                  bot: work.fromBotId,
+                  from: work.fromBotId,
+                  to: work.toBotId,
+                  run: work.runId,
+                  reason,
+                },
+              });
+              continue;
+            }
+
             /*
              * The last try, so the person is told rather than left waiting.
              *

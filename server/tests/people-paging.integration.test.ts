@@ -165,13 +165,12 @@ describe("reading the people in a deployment", () => {
     expect(asked.people.length).toBeLessThanOrEqual(200);
   });
 
-  test("a nonsense cursor reads as the first page rather than an error", async () => {
-    // A stale link or a hand-edited URL. There is nothing here worth refusing over, and the first
-    // page is the honest answer to "I do not know where you were".
+  test("a nonsense cursor is a caller error, not the first page", async () => {
     await person(0, new Date());
 
-    const result = await store.list({ cursor: "not-a-cursor", limit: 5 });
-    expect(result.people.length).toBeGreaterThan(0);
+    await expect(
+      store.list({ cursor: "not-a-cursor", limit: 5 }),
+    ).rejects.toThrow("cursor must be a valid people page cursor");
   });
 
   test("finding one person does not read the deployment", async () => {

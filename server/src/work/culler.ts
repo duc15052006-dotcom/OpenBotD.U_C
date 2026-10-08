@@ -12,7 +12,8 @@
  * Idleness is read from the audit trail, which is a record of what a Bot did rather than a question
  * put to the thing that did it.
  */
-import { and, inArray, like, sql } from "drizzle-orm";
+import { and, inArray, like, ne, sql } from "drizzle-orm";
+import { recordAuditEvent, type AuditStore } from "../audit";
 import type { ComputerProvider } from "../computer/provider";
 import type { Database } from "../db/client";
 import { auditEvents } from "../db/schema";
@@ -24,6 +25,7 @@ export type CullerOptions = {
   database: Database;
   queue: WorkQueue;
   provider: ComputerProvider;
+  auditStore: AuditStore;
   /** A computer untouched for this long is idle. */
   idleAfterMs: number;
   /** Who this replica is, for the lease. */
@@ -62,7 +64,15 @@ async function lastActedAt(
   const rows = await database
     .select({ bot, last: sql<string>`max(${auditEvents.createdAt})` })
     .from(auditEvents)
-    .where(and(like(auditEvents.eventType, "computer.%"), inArray(bot, botIds)))
+    .where(
+      and(
+        like(auditEvents.eventType, "computer.%"),
+        ne(auditEvents.eventType, "computer.slept"),
+        ne(auditEvents.eventType, "computer.stopped"),
+        ne(auditEvents.eventType, "computer.reset"),
+        inArray(bot, botIds),
+      ),
+    )
     .groupBy(bot);
 
   return new Map(
@@ -182,7 +192,70 @@ export async function suspendClaimedComputers(
         continue;
       }
 
+      const idleSince =
+        typeof item.payload.idleSince === "string"
+          ? new Date(item.payload.idleSince)
+          : since;
       await options.provider.stop(botId);
+      await recordAuditEvent(options.auditStore, {
+        eventType: "computer.slept",
+        targetType: "computer",
+        targetId: botId,
+        initiator: { kind: "deployment" },
+        payload: {
+          bot: botId,
+          reason: "idle_timeout",
+          idleSince:
+            typeof item.payload.idleSince === "string"
+              ? item.payload.idleSince
+              : null,
+          idleAfterMs: options.idleAfterMs,
+        },
+      });
+
+      /*
+       * One last look AFTER the stop closes the only dangerous gap in the ordinary cull flow.
+       *
+       * The pre-stop recheck and provider.stop() are not one database transaction. A Start/Wake or
+       * governed action can arrive between them: it sees a running Computer, records new activity,
+       * and then the culler stops it underneath the caller. If activity advanced past the timestamp
+       * that justified this suspension, restore the Computer immediately. Manual Stop/Reset are
+       * excluded by lastActedAt above, so a person's explicit request to keep it down is never
+       * undone by this repair path.
+       */
+      const activityAfterStop = (
+        await lastActedAt(options.database, [botId])
+      ).get(botId);
+      const baseline = idleSince?.getTime();
+      if (
+        activityAfterStop &&
+        baseline !== undefined &&
+        Number.isFinite(baseline) &&
+        activityAfterStop.getTime() > baseline
+      ) {
+        await options.provider.locate(botId);
+        await recordAuditEvent(options.auditStore, {
+          eventType: "computer.woke",
+          targetType: "computer",
+          targetId: botId,
+          initiator: { kind: "deployment" },
+          payload: {
+            bot: botId,
+            reason: "activity_raced_idle_sleep",
+          },
+        });
+        await options.queue.finish({
+          kind: CULL_KIND,
+          key: item.key,
+          owner: options.owner,
+        });
+        report.skipped.push({
+          botId,
+          reason: "used while it was being suspended; restored",
+        });
+        continue;
+      }
+
       await options.queue.finish({
         kind: CULL_KIND,
         key: item.key,

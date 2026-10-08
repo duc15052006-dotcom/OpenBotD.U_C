@@ -2271,9 +2271,15 @@ export function createPluginRoutes(
     const actor = skillActor(context);
 
     if (kind === "mcp") {
-      return actor.isAdmin
-        ? null
-        : "An administrator decides which Bots may reach a tool.";
+      if (!actor.isAdmin) {
+        return "An administrator decides which Bots may reach a tool.";
+      }
+      if (intent === "revoke") return null;
+      const [serverId] = ref.split("/");
+      if (!(await store.serverExists(serverId ?? ""))) {
+        return `${serverId} is not an app this deployment has added, so there is nothing for a Bot to reach. Add it first, and its tools can be granted then.`;
+      }
+      return null;
     }
 
     if (kind === "bot") {
@@ -2367,16 +2373,18 @@ export function createPluginRoutes(
         400,
       );
     }
+    const grantRef = body.ref.trim();
+    const grantAgentId = body.agentId.trim();
     const refusal = await enablementRefusal(
       context,
       kind,
-      body.ref,
-      body.agentId,
+      grantRef,
+      grantAgentId,
       "grant",
     );
     if (refusal) return context.json({ error: refusal }, 403);
 
-    await store.grant(kind, body.ref, body.agentId, actorEmail(context));
+    await store.grant(kind, grantRef, grantAgentId, actorEmail(context));
     return context.json({ ok: true });
   });
 

@@ -12,10 +12,13 @@ from threading import Thread
 
 import httpx2
 import pytest
+from ag_ui.core import Context, Tool
+from langchain_core.messages import SystemMessage
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src import main
+from src.tool_runtime import RunTools, _current, _A2UI_SCHEMA_DESCRIPTION
 
 _LOOPBACK_SOCKET_GUARD_INSTALLED = False
 
@@ -165,6 +168,12 @@ def provider_environment(monkeypatch):
         "NO_PROXY",
         "OPENAI_API_KEY",
         "OPENAI_BASE_URL",
+        "OPENBOT_MODEL_CONTEXT_CHARS",
+        "OPENBOT_MODEL_HISTORY_TURNS",
+        "OPENBOT_QWEN_MAX_OUTPUT_TOKENS",
+        "OPENBOT_QWEN_SIMPLE_MAX_OUTPUT_TOKENS",
+        "OPENBOT_QWEN_THINKING",
+        "OPENBOT_TOOL_RESULT_CHARS",
         "all_proxy",
         "http_proxy",
         "https_proxy",
@@ -262,6 +271,380 @@ async def test_compatible_model_id_reaches_real_http_boundary(
                 "stream": False,
             },
         }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_qwen3_normal_turn_preserves_provider_reasoning_budget_by_default(
+    monkeypatch, compatible_endpoint
+):
+    base_url, captured = compatible_endpoint
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-compatible-ci")
+    monkeypatch.setenv("BOT_PROVIDER", "openai")
+    monkeypatch.setenv("BOT_MODEL", "qwen/qwen3.6-plus")
+    monkeypatch.setenv("OPENAI_BASE_URL", base_url)
+
+    result = await main.answer(
+        {"messages": [{"role": "user", "content": "Analyze the tradeoffs carefully."}]}
+    )
+
+    assert result["messages"][0].content == "compatible proof"
+    assert captured[0]["body"]["model"] == "qwen/qwen3.6-plus"
+    assert "max_tokens" not in captured[0]["body"]
+    assert "max_completion_tokens" not in captured[0]["body"]
+    assert captured[0]["body"]["messages"] == [
+        {"content": "Analyze the tradeoffs carefully.", "role": "user"}
+    ]
+
+
+
+@pytest.mark.asyncio
+async def test_simple_qwen_file_action_caps_wire_output_and_narrows_tools(
+    monkeypatch, compatible_endpoint
+):
+    base_url, captured = compatible_endpoint
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-compatible-ci")
+    monkeypatch.setenv("BOT_PROVIDER", "openai")
+    monkeypatch.setenv("BOT_MODEL", "qwen/qwen3.6-plus")
+    monkeypatch.setenv("OPENAI_BASE_URL", base_url)
+
+    names = (
+        "computer_navigate",
+        "computer_list_files",
+        "computer_read_file",
+        "computer_write_file",
+    )
+    tools = tuple(
+        Tool(
+            name=name,
+            description=f"Synthetic {name}",
+            parameters={"type": "object", "properties": {}},
+        )
+        for name in names
+    )
+    token = _current.set(
+        RunTools(
+            tools=tools,
+            context=(
+                Context(
+                    description=_A2UI_SCHEMA_DESCRIPTION,
+                    value="CONTEXT-MARKER-" + ("X" * 20_000),
+                ),
+            ),
+        )
+    )
+    try:
+        await main.answer(
+            {
+                "messages": [
+                    {"role": "system", "content": "standing policy"},
+                    {"role": "user", "content": "OLD-USER-MARKER" + "U" * 30_000},
+                    {"role": "assistant", "content": "OLD-ASSISTANT-MARKER" + "A" * 30_000},
+                    {
+                        "role": "user",
+                        "content": "Hãy tạo file `/workspace/token-test-next.txt` với nội dung `hello`.",
+                    },
+                ]
+            }
+        )
+    finally:
+        _current.reset(token)
+
+    body = captured[0]["body"]
+    assert body["max_completion_tokens"] == 256
+    assert [tool["function"]["name"] for tool in body["tools"]] == [
+        "computer_write_file",
+    ]
+    wire = json.dumps(body, ensure_ascii=False)
+    assert "CONTEXT-MARKER" not in wire
+    assert "OLD-USER-MARKER" not in wire
+    assert "OLD-ASSISTANT-MARKER" not in wire
+    assert body["messages"][0] == {"content": "standing policy", "role": "system"}
+    assert body["messages"][-1]["content"] == (
+        "Hãy tạo file `/workspace/token-test-next.txt` với nội dung `hello`.\n\n/no_think"
+    )
+    assert len(wire) < 4_000
+
+
+@pytest.mark.asyncio
+async def test_complex_qwen_turn_keeps_full_tools_and_unbounded_default_output(
+    monkeypatch, compatible_endpoint
+):
+    base_url, captured = compatible_endpoint
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-compatible-ci")
+    monkeypatch.setenv("BOT_PROVIDER", "openai")
+    monkeypatch.setenv("BOT_MODEL", "qwen/qwen3.6-plus")
+    monkeypatch.setenv("OPENAI_BASE_URL", base_url)
+
+    names = (
+        "computer_navigate",
+        "computer_list_files",
+        "computer_read_file",
+        "computer_write_file",
+    )
+    tools = tuple(
+        Tool(
+            name=name,
+            description=f"Synthetic {name}",
+            parameters={"type": "object", "properties": {}},
+        )
+        for name in names
+    )
+    context_value = "COMPLEX-CONTEXT-" + "X" * 20_000
+    token = _current.set(RunTools(tools=tools, context=(
+        Context(description=_A2UI_SCHEMA_DESCRIPTION, value=context_value),
+    )))
+    try:
+        await main.answer(
+            {
+                "messages": [
+                    {"role": "system", "content": "standing policy"},
+                    {"role": "user", "content": "OLD-COMPLEX-USER-" + "U" * 30_000},
+                    {"role": "assistant", "content": "OLD-COMPLEX-ASSISTANT-" + "A" * 30_000},
+                    {
+                        "role": "user",
+                        "content": "Phân tích kiến trúc file này thật kỹ và đề xuất cách tối ưu.",
+                    }
+                ]
+            }
+        )
+    finally:
+        _current.reset(token)
+
+    body = captured[0]["body"]
+    assert "max_tokens" not in body
+    assert "max_completion_tokens" not in body
+    assert [tool["function"]["name"] for tool in body["tools"]] == list(names)
+    assert "/no_think" not in body["messages"][-1]["content"]
+    wire = json.dumps(body, ensure_ascii=False)
+    assert context_value in wire
+    assert "OLD-COMPLEX-USER-" + "U" * 30_000 in wire
+    assert "OLD-COMPLEX-ASSISTANT-" + "A" * 30_000 in wire
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("model", "prompt", "thinking", "attachment"), [
+    ("qwen/qwen3.6-plus:free", "làm lại file đó", "", False),
+    ("qwen/qwen3.6-plus:free", "Tạo file /workspace/a.txt với nội dung vừa nói.", "", False),
+    ("qwen/qwen3.6-plus:free", "Create file /workspace/a.txt with hello.", "on", False),
+    ("qwen/qwen3.6-plus:free", "Create file /workspace/a.txt with hello.", "", True),
+    ("gpt-ci", "Create file /workspace/a.txt with hello.", "", False),
+])
+async def test_non_fast_path_keeps_history_context_and_full_tools_on_wire(
+    monkeypatch, compatible_endpoint, model, prompt, thinking, attachment
+):
+    base_url, captured = compatible_endpoint
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-compatible-ci")
+    monkeypatch.setenv("BOT_PROVIDER", "openai")
+    monkeypatch.setenv("BOT_MODEL", model)
+    monkeypatch.setenv("OPENAI_BASE_URL", base_url)
+    if thinking:
+        monkeypatch.setenv("OPENBOT_QWEN_THINKING", thinking)
+    names = ("computer_write_file", "computer_read_file", "computer_snapshot", "computer_screenshot")
+    content = prompt if not attachment else [
+        {"type": "text", "text": prompt},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}},
+    ]
+    source = [
+        {"role": "system", "content": "standing policy"},
+        {"role": "user", "content": "OLD-REQUIRED-HISTORY-" + "U" * 30_000},
+        {"role": "assistant", "content": "Old task result."},
+        {"role": "user", "content": content},
+    ]
+    token = _current.set(RunTools(
+        tools=tuple(Tool(name=name, description=name, parameters={"type": "object", "properties": {}}) for name in names),
+        context=(Context(description=_A2UI_SCHEMA_DESCRIPTION, value="REQUIRED-UI-CONTEXT"),),
+    ))
+    try:
+        await main.answer({"messages": source})
+    finally:
+        _current.reset(token)
+    body = captured[0]["body"]
+    assert "max_tokens" not in body and "max_completion_tokens" not in body
+    assert [t["function"]["name"] for t in body["tools"]] == list(names)
+    assert body["messages"][1:] == source
+    assert "REQUIRED-UI-CONTEXT" in body["messages"][0]["content"]
+    assert "/no_think" not in json.dumps(body)
+
+
+@pytest.mark.asyncio
+async def test_fast_path_preserves_security_and_unknown_context_without_credentials(
+    monkeypatch, compatible_endpoint
+):
+    base_url, captured = compatible_endpoint
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-secret-wire-proof")
+    monkeypatch.setenv("AGENT_TOOL_TOKEN", "secret-callback-wire-proof")
+    monkeypatch.setenv("BOT_PROVIDER", "openai")
+    monkeypatch.setenv("BOT_MODEL", "qwen/qwen3.6-plus:free")
+    monkeypatch.setenv("OPENAI_BASE_URL", base_url)
+    token = _current.set(RunTools(
+        tools=(Tool(name="computer_write_file", description="Write only inside the workspace.", parameters={"type": "object", "properties": {}}),),
+        context=(
+            Context(description=_A2UI_SCHEMA_DESCRIPTION, value="EXPENSIVE-UI-SCHEMA-" + "X" * 20_000),
+            Context(description="Permission policy", value="Default-deny. No host filesystem access."),
+            Context(description="Unrecognized context", value="KEEP-UNKNOWN-CONTEXT"),
+        ),
+        assertion="secret-run-assertion-wire-proof",
+    ))
+    try:
+        await main.answer({"messages": [
+            {"role": "system", "content": "Never bypass CAPTCHA/MFA/login; never expose credentials."},
+            {"role": "user", "content": "Create file /workspace/a.txt with hello."},
+        ]})
+    finally:
+        _current.reset(token)
+    wire = json.dumps(captured[0]["body"], ensure_ascii=False)
+    assert "Default-deny. No host filesystem access." in wire
+    assert "Never bypass CAPTCHA/MFA/login; never expose credentials." in wire
+    assert "KEEP-UNKNOWN-CONTEXT" in wire
+    assert "EXPENSIVE-UI-SCHEMA" not in wire
+    for secret in ("sk-secret-wire-proof", "secret-callback-wire-proof", "secret-run-assertion-wire-proof"):
+        assert secret not in wire
+
+
+@pytest.mark.asyncio
+async def test_trusted_minimal_policy_replaces_only_generated_bulk_on_fast_path(
+    monkeypatch, compatible_endpoint
+):
+    base_url, captured = compatible_endpoint
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-compatible-ci")
+    monkeypatch.setenv("BOT_PROVIDER", "openai")
+    monkeypatch.setenv("BOT_MODEL", "qwen/qwen3.6-plus:free")
+    monkeypatch.setenv("OPENAI_BASE_URL", base_url)
+
+    # Keep this regression on a provider-backed simple action. Literal writes now have a
+    # deliberately narrower zero-provider path and are covered by test_direct_actions*.py.
+    request = "Đọc file `/workspace/token-test-next.txt`."
+    standing = SystemMessage(
+        id="standing-role:bot-ci",
+        content="FULL-STANDING-" + "S" * 30_000,
+    )
+    holdings = SystemMessage(
+        id="granted-tools:bot-ci",
+        content="FULL-HOLDINGS-" + "H" * 30_000,
+    )
+    security = SystemMessage(
+        id="security-policy-ci",
+        content="KEEP-SECURITY: default-deny; never bypass login/MFA/CAPTCHA.",
+    )
+    minimal = (
+        "MINIMAL-DIRECT-POLICY: obey the explicit action, offered tool boundaries, "
+        "workspace permissions, credential secrecy, and human handoff."
+    )
+    tool = Tool(
+        name="computer_read_file",
+        description="Read a file only inside the governed workspace.",
+        parameters={
+            "type": "object",
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"],
+        },
+    )
+    source = [
+        {"id": standing.id, "role": "system", "content": standing.content},
+        {"id": holdings.id, "role": "system", "content": holdings.content},
+        {"id": security.id, "role": "system", "content": security.content},
+        {"role": "user", "content": "OLD-UNRELATED-" + "U" * 30_000},
+        {"role": "assistant", "content": "Old unrelated answer."},
+        {"role": "user", "content": request},
+    ]
+    token = _current.set(
+        RunTools(
+            tools=(tool,),
+            system_messages=(standing, holdings, security),
+            simple_policy=minimal,
+            simple_policy_ids=frozenset({standing.id, holdings.id}),
+        )
+    )
+    try:
+        await main.answer({"messages": source})
+    finally:
+        _current.reset(token)
+
+    body = captured[0]["body"]
+    wire = json.dumps(body, ensure_ascii=False)
+    assert body["max_completion_tokens"] == 256
+    assert [item["function"]["name"] for item in body["tools"]] == [
+        "computer_read_file"
+    ]
+    assert "MINIMAL-DIRECT-POLICY" in wire
+    assert "KEEP-SECURITY" in wire
+    assert "FULL-STANDING" not in wire
+    assert "FULL-HOLDINGS" not in wire
+    assert "OLD-UNRELATED" not in wire
+    assert request in wire
+    assert len(wire) < 5_000
+
+
+@pytest.mark.asyncio
+async def test_minimal_policy_id_mismatch_fails_closed_to_full_policy(
+    monkeypatch, compatible_endpoint
+):
+    base_url, captured = compatible_endpoint
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-compatible-ci")
+    monkeypatch.setenv("BOT_PROVIDER", "openai")
+    monkeypatch.setenv("BOT_MODEL", "qwen/qwen3.6-plus:free")
+    monkeypatch.setenv("OPENAI_BASE_URL", base_url)
+
+    standing = SystemMessage(
+        id="standing-role:bot-ci",
+        content="FULL-STANDING-MUST-REMAIN",
+    )
+    tool = Tool(
+        name="computer_write_file",
+        description="Write only inside the governed workspace.",
+        parameters={"type": "object", "properties": {}},
+    )
+    token = _current.set(
+        RunTools(
+            tools=(tool,),
+            system_messages=(standing,),
+            simple_policy="MINIMAL-POLICY-MUST-NOT-REPLACE",
+            simple_policy_ids=frozenset({"standing-role:wrong-bot"}),
+        )
+    )
+    try:
+        await main.answer(
+            {
+                "messages": [
+                    {
+                        "id": standing.id,
+                        "role": "system",
+                        "content": standing.content,
+                    },
+                    {
+                        "role": "user",
+                        "content": "Create file /workspace/a.txt with hello.",
+                    },
+                ]
+            }
+        )
+    finally:
+        _current.reset(token)
+
+    wire = json.dumps(captured[0]["body"], ensure_ascii=False)
+    assert "FULL-STANDING-MUST-REMAIN" in wire
+    assert "MINIMAL-POLICY-MUST-NOT-REPLACE" not in wire
+
+
+@pytest.mark.asyncio
+async def test_qwen3_cost_controls_are_explicitly_overrideable(
+    monkeypatch, compatible_endpoint
+):
+    base_url, captured = compatible_endpoint
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-compatible-ci")
+    monkeypatch.setenv("BOT_PROVIDER", "openai")
+    monkeypatch.setenv("BOT_MODEL", "qwen/qwen3.6-plus")
+    monkeypatch.setenv("OPENAI_BASE_URL", base_url)
+    monkeypatch.setenv("OPENBOT_QWEN_THINKING", "on")
+    monkeypatch.setenv("OPENBOT_QWEN_MAX_OUTPUT_TOKENS", "8192")
+
+    await main.answer({"messages": [{"role": "user", "content": "Think deeply."}]})
+
+    # langchain-openai maps the configured ceiling to OpenAI's current wire field for this model.
+    assert captured[0]["body"]["max_completion_tokens"] == 8192
+    assert captured[0]["body"]["messages"] == [
+        {"content": "Think deeply.", "role": "user"}
     ]
 
 

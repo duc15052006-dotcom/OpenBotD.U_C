@@ -92,6 +92,10 @@ spec:
       runtimeClassName: {{ . }}
       {{- end }}
       terminationGracePeriodSeconds: 30
+      {{- with .Values.computers.podSecurityContext }}
+      securityContext:
+{{ toYaml . | indent 8 }}
+      {{- end }}
       {{- with .Values.computers.nodeSelector }}
       nodeSelector:
 {{ toYaml . | indent 8 }}
@@ -122,6 +126,12 @@ spec:
               value: /workspace
             - name: PROFILES_DIR
               value: /profiles
+            - name: QUARANTINE_DIR
+              value: /quarantine
+            - name: HOME
+              value: /home/pwuser
+            - name: BUN_INSTALL
+              value: /home/pwuser/.bun
             - name: COMPUTER_TOKEN
               valueFrom:
                 secretKeyRef:

@@ -6,6 +6,7 @@ import type { AppVariables } from "../auth/guards";
 import { testAgentConnection } from "./connection-test";
 import { checkAgentEndpoint } from "./endpoint";
 import { canManageAgent } from "./profile-policy";
+import { computerResourceProfile } from "../computer/resource-profile";
 import {
   AgentNotFoundError,
   AgentNotManageableError,
@@ -30,6 +31,7 @@ type AgentInputObject = {
   visibility?: unknown;
   endpoint?: unknown;
   auth?: unknown;
+  computerResourceProfile?: unknown;
 };
 
 /**
@@ -93,6 +95,17 @@ export function parseAgentInput(
 
   // The key is optional and write-only. An absent field leaves an existing key alone; sending one
   // replaces it. There is no way to read one back, here or anywhere.
+  const resourceProfile =
+    input.computerResourceProfile === undefined
+      ? undefined
+      : computerResourceProfile(input.computerResourceProfile);
+  if (input.computerResourceProfile !== undefined && !resourceProfile) {
+    return {
+      ok: false,
+      error: "Computer resource profile must be light, normal, or heavy.",
+    };
+  }
+
   let auth: { header: string; value: string } | undefined;
   if (input.auth !== undefined && input.auth !== null) {
     const supplied = input.auth as { header?: unknown; value?: unknown };
@@ -122,7 +135,15 @@ export function parseAgentInput(
 
   return {
     ok: true,
-    value: { name, title, roleDescription, visibility, endpoint, auth },
+    value: {
+      name,
+      title,
+      roleDescription,
+      visibility,
+      endpoint,
+      ...(resourceProfile ? { computerResourceProfile: resourceProfile } : {}),
+      auth,
+    },
   };
 }
 
@@ -730,6 +751,9 @@ function agentDto(actor: AgentActor, agent: AgentProfile) {
     // and any credential for it lives in the vault, never in this row.
     endpoint: agent.endpoint,
     hasAuth: agent.hasAuth,
+    // The UI edits this preset in place; omitting it makes every refetch fall back to Normal even
+    // when the store has successfully persisted Light or Heavy.
+    computerResourceProfile: agent.computerResourceProfile,
     // Whether one exists, never what it is.
     hasCallbackToken: agent.hasCallbackToken,
     canManage: canManageAgent(actor, agent),

@@ -1,11 +1,49 @@
 import { describe, expect, test } from "bun:test";
 import type { RunAgentInput } from "@ag-ui/core";
+import { AUTONOMOUS_WORKFLOW_GUIDANCE } from "../../shared/bot-prompt";
 import {
   AIMessage,
   SystemMessage,
   ToolMessage,
 } from "@langchain/core/messages";
 import { NO_ANSWER_CAME, toLangChainMessages } from "../src/history";
+
+test("includes durable Routine behavior in the framework Bot system guidance", () => {
+  const messages = toLangChainMessages(input([]));
+  const system = messages.find((message) => message instanceof SystemMessage);
+  expect(String(system?.content)).toContain("Use create_routine to create it");
+  expect(String(system?.content)).toContain(
+    "Never invent a clock time, cadence or timezone",
+  );
+});
+
+test("includes NOTE 21-2 autonomous workflow boundaries in the LangGraph adapter", () => {
+  const messages = toLangChainMessages(input([]));
+  const system = messages.find((message) => message instanceof SystemMessage);
+  expect(String(system?.content)).toContain("projectId + sceneId");
+  expect(String(system?.content)).toContain(
+    "An approved prompt is an execution input, not something to grade",
+  );
+  expect(String(system?.content)).toContain(
+    "Never claim you will automatically wake",
+  );
+});
+
+test("does not duplicate NOTE 21-2 when OpenBot already supplied it in the standing role", () => {
+  const messages = toLangChainMessages(
+    input([
+      {
+        id: "standing-workflow",
+        role: "system",
+        content: `Creative role.\n\n${AUTONOMOUS_WORKFLOW_GUIDANCE}`,
+      } as never,
+    ]),
+  );
+  const occurrences = messages.filter((message) =>
+    String(message.content ?? "").includes(AUTONOMOUS_WORKFLOW_GUIDANCE),
+  );
+  expect(occurrences).toHaveLength(1);
+});
 
 /**
  * A tool call nobody answered does not end the conversation.

@@ -36,13 +36,19 @@ pub struct Installed {
 ///
 /// A release asset rather than a branch, and https rather than git, so nothing needs a git client
 /// or credentials to get a deployment.
-pub fn tarball_url(version: &str) -> String {
-    format!("https://github.com/CopilotKit/OpenBot/archive/refs/tags/{version}.tar.gz")
+pub fn tarball_url(version: &str) -> Result<String, String> {
+    let repository = crate::update::release_repository()?;
+    Ok(format!(
+        "https://github.com/{repository}/archive/refs/tags/{version}.tar.gz"
+    ))
 }
 
 /// Where the release publishes its image manifest.
-pub fn images_url(version: &str) -> String {
-    format!("https://github.com/CopilotKit/OpenBot/releases/download/{version}/{IMAGES}")
+pub fn images_url(version: &str) -> Result<String, String> {
+    let repository = crate::update::release_repository()?;
+    Ok(format!(
+        "https://github.com/{repository}/releases/download/{version}/{IMAGES}"
+    ))
 }
 
 pub fn images_path(root: &Path) -> PathBuf {
@@ -72,6 +78,64 @@ pub const IMAGE_VARIABLES: [(&str, &str); 5] = [
     ("agent-langgraph", "LANGGRAPH_IMAGE"),
 ];
 
+/// A stored manifest must describe the exact deployment version stamped beside it.
+fn expected_manifest_version(root: &Path, manifest: &Images) -> Result<(), String> {
+    let installed = installed(root)
+        .ok_or_else(|| format!("{IMAGES} exists but this deployment has no recorded version."))?;
+    ensure_manifest_version(manifest, &installed.version)
+}
+
+fn ensure_manifest_version(manifest: &Images, expected: &str) -> Result<(), String> {
+    if manifest.version != expected {
+        return Err(format!(
+            "{IMAGES} says it belongs to {}, but this deployment is {expected}.",
+            manifest.version
+        ));
+    }
+    Ok(())
+}
+
+fn expected_image_repository(published: &str) -> Result<String, String> {
+    let repository = crate::update::release_repository()?;
+    let owner = repository
+        .split_once('/')
+        .map(|(owner, _)| owner)
+        .ok_or_else(|| "This build has an invalid release repository.".to_string())?
+        .to_ascii_lowercase();
+    let image = if published == "openbot" {
+        "openbot".to_string()
+    } else {
+        format!("openbot-{published}")
+    };
+    Ok(format!("ghcr.io/{owner}/{image}"))
+}
+
+fn validated_reference(manifest: &Images, published: &str) -> Result<String, String> {
+    let image = manifest
+        .images
+        .get(published)
+        .ok_or_else(|| format!("OpenBot {} does not include {published}.", manifest.version))?;
+    let expected = expected_image_repository(published)?;
+    let prefix = format!("{expected}@sha256:");
+    let digest = image.reference.strip_prefix(&prefix).ok_or_else(|| {
+        format!(
+            "{IMAGES} for {} points {published} outside the expected repository or without a sha256 digest.",
+            manifest.version
+        )
+    })?;
+    let canonical = digest.len() == 64
+        && digest
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase());
+    if !canonical {
+        return Err(format!(
+            "{IMAGES} for {} gives {published} a non-canonical sha256 digest.",
+            manifest.version
+        ));
+    }
+    Ok(image.reference.clone())
+}
+
 /// Read the manifest laid down beside the deployment and turn it into Compose variables.
 ///
 /// Digests, not tags. A tag can be moved to point at a different image after the version that was
@@ -81,6 +145,7 @@ pub fn image_variables(root: &Path) -> Result<Vec<(String, String)>, String> {
         .map_err(|error| format!("could not read {}: {error}", images_path(root).display()))?;
     let manifest: Images = serde_json::from_str(&text)
         .map_err(|error| format!("{IMAGES} is not readable: {error}"))?;
+    expected_manifest_version(root, &manifest)?;
     pin(&manifest)
 }
 
@@ -100,11 +165,8 @@ pub fn reference(root: &Path, published: &str) -> Result<String, String> {
         .map_err(|error| format!("could not read {}: {error}", images_path(root).display()))?;
     let manifest: Images = serde_json::from_str(&text)
         .map_err(|error| format!("{IMAGES} is not readable: {error}"))?;
-    manifest
-        .images
-        .get(published)
-        .map(|image| image.reference.clone())
-        .ok_or_else(|| format!("OpenBot {} does not include {published}.", manifest.version))
+    expected_manifest_version(root, &manifest)?;
+    validated_reference(&manifest, published)
 }
 
 /// Every image the stack runs, or a failure that names the one that is missing.
@@ -115,13 +177,10 @@ pub fn reference(root: &Path, published: &str) -> Result<String, String> {
 pub fn pin(manifest: &Images) -> Result<Vec<(String, String)>, String> {
     let mut pinned = Vec::new();
     for (published, variable) in IMAGE_VARIABLES {
-        let image = manifest.images.get(published).ok_or_else(|| {
-            format!(
-                "{IMAGES} for {} names no {published} image.",
-                manifest.version
-            )
-        })?;
-        pinned.push((variable.to_string(), image.reference.clone()));
+        pinned.push((
+            variable.to_string(),
+            validated_reference(manifest, published)?,
+        ));
     }
     Ok(pinned)
 }
@@ -192,7 +251,8 @@ pub const ALSO_COPIED: [&str; 7] = [
 /// The stamp is written last. Anything that fails before that leaves a directory without one, which
 /// `needs_fetch` treats as absent, so an interrupted download is retried rather than half-run.
 pub fn fetch(root: &Path, version: &str) -> Result<(), String> {
-    let body = get(&tarball_url(version)).map_err(|error| {
+    let tarball = tarball_url(version)?;
+    let body = get(&tarball).map_err(|error| {
         format!("could not fetch {version}: {error}. Is that a released version?")
     })?;
 
@@ -291,10 +351,12 @@ pub fn unpack(root: &Path, body: &[u8]) -> Result<(), String> {
 /// Parsed here rather than at start-up so a release missing an image fails while the person is
 /// still looking at a screen that says what is being fetched, not later inside Compose's output.
 fn fetch_images(root: &Path, version: &str) -> Result<(), String> {
-    let body = get(&images_url(version))
+    let images = images_url(version)?;
+    let body = get(&images)
         .map_err(|error| format!("could not fetch the image list for {version}: {error}"))?;
     let manifest: Images = serde_json::from_slice(&body)
         .map_err(|error| format!("the image list for {version} is not readable: {error}"))?;
+    ensure_manifest_version(&manifest, version)?;
     pin(&manifest)?;
     std::fs::write(images_path(root), &body)
         .map_err(|error| format!("could not write {IMAGES}: {error}"))
@@ -326,6 +388,8 @@ mod tests {
     use super::*;
 
     fn manifest(names: &[&str]) -> Images {
+        let repository = crate::update::release_repository().unwrap();
+        let owner = repository.split_once('/').unwrap().0.to_ascii_lowercase();
         Images {
             version: "v0.0.7".into(),
             images: names
@@ -334,7 +398,10 @@ mod tests {
                     (
                         (*name).to_string(),
                         Image {
-                            reference: format!("ghcr.io/copilotkit/openbot-{name}@sha256:abc"),
+                            reference: format!(
+                                "ghcr.io/{owner}/openbot-{name}@sha256:{}",
+                                "a".repeat(64)
+                            ),
                         },
                     )
                 })
@@ -373,6 +440,38 @@ mod tests {
     }
 
     #[test]
+    fn a_manifest_from_another_release_is_refused() {
+        let mut wrong = manifest(
+            &IMAGE_VARIABLES
+                .iter()
+                .map(|(name, _)| *name)
+                .collect::<Vec<_>>(),
+        );
+        wrong.version = "v0.0.6".into();
+        assert!(ensure_manifest_version(&wrong, "v0.0.7").is_err());
+    }
+
+    #[test]
+    fn mutable_or_cross_repository_image_references_are_refused() {
+        let names: Vec<&str> = IMAGE_VARIABLES.iter().map(|(name, _)| *name).collect();
+
+        let mut mutable = manifest(&names);
+        mutable.images.get_mut("server").unwrap().reference =
+            expected_image_repository("server").unwrap() + ":latest";
+        assert!(pin(&mutable).is_err());
+
+        let mut cross_repository = manifest(&names);
+        cross_repository.images.get_mut("server").unwrap().reference =
+            format!("ghcr.io/other/openbot-server@sha256:{}", "b".repeat(64));
+        assert!(pin(&cross_repository).is_err());
+
+        let mut short_digest = manifest(&names);
+        short_digest.images.get_mut("server").unwrap().reference =
+            expected_image_repository("server").unwrap() + "@sha256:abc";
+        assert!(pin(&short_digest).is_err());
+    }
+
+    #[test]
     fn a_manifest_missing_an_image_is_refused_rather_than_filled_in_from_compose() {
         // Compose's defaults are local build names. Falling back to them would run four published
         // images beside one that does not exist, and say nothing about the difference.
@@ -387,15 +486,22 @@ mod tests {
     }
 
     #[test]
+    fn deployment_downloads_use_the_repository_baked_into_this_desktop_build() {
+        let repository = crate::update::release_repository().unwrap();
+        assert!(tarball_url("v0.0.7").unwrap().contains(repository));
+        assert!(images_url("v0.0.7").unwrap().contains(repository));
+    }
+
+    #[test]
     fn the_image_manifest_is_fetched_from_the_same_version_as_the_tree() {
-        let url = images_url("v0.0.7");
+        let url = images_url("v0.0.7").unwrap();
         assert!(url.contains("/download/v0.0.7/"), "{url}");
         assert!(url.ends_with("container-images.json"), "{url}");
     }
 
     #[test]
     fn the_tarball_is_a_tag_rather_than_a_branch() {
-        let url = tarball_url("v0.0.7");
+        let url = tarball_url("v0.0.7").unwrap();
         assert!(url.contains("/refs/tags/v0.0.7"), "{url}");
         assert!(!url.contains("/heads/"), "a branch is not a version: {url}");
         assert!(

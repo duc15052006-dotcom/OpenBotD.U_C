@@ -1,0 +1,1 @@
+ALTER TABLE "workflow_steps" ADD COLUMN "resumed_from_wait_until" timestamp with time zone;

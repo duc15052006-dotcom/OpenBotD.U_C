@@ -13,7 +13,7 @@
  */
 import type { AbstractAgent, BaseEvent } from "@ag-ui/client";
 import type { Observable } from "rxjs";
-import type { HandoffDelivery } from "./handoff-runner";
+import type { HandoffDelivery, HandoffWork } from "./handoff-runner";
 import { textOf } from "./message-text";
 
 /** Whatever runs an agent against a thread and records what it did. */
@@ -25,6 +25,11 @@ export type ThreadRunner = {
     /** What the conversation keeps, when that is not the whole of what the model was sent. */
     persistedInputMessages?: readonly unknown[];
   }) => Observable<BaseEvent>;
+  /** Stop the exact run when durable handoff authority is revoked while it is executing. */
+  stop: (request: {
+    threadId: string;
+    runId?: string;
+  }) => Promise<boolean | undefined>;
 };
 
 /**
@@ -145,6 +150,10 @@ export function createHandoffDelivery(options: {
    * conversation it was asked in locked against them for as long as the process lives.
    */
   deadlineMs?: number;
+  /** Durable authority for this hop; false means unattended work must stop. */
+  continuationGuard?: (work: HandoffWork) => Promise<boolean>;
+  /** Injectable only so cancellation can be driven quickly in regression tests. */
+  heartbeatMs?: number;
 }): HandoffDelivery {
   const {
     agentFor,
@@ -156,10 +165,20 @@ export function createHandoffDelivery(options: {
     setBusy,
     newRunId,
     deadlineMs = DEFAULT_DELIVERY_DEADLINE_MS,
+    continuationGuard,
+    heartbeatMs = LOCK_RENEW_EVERY_MS,
   } = options;
 
   return {
     async deliver({ work, message, shown, assertion }) {
+      if (continuationGuard && !(await continuationGuard(work))) {
+        const error = new Error(
+          "The handoff was cancelled before the addressed Bot started.",
+        );
+        error.name = "HandoffContinuationCancelled";
+        throw error;
+      }
+
       const agent = await agentFor({
         actorId: work.actorId,
         botId: work.toBotId,
@@ -325,67 +344,118 @@ export function createHandoffDelivery(options: {
          * and the platform's window is short; a lock that lapses mid-answer lets a second run into the
          * conversation, which is the thing it exists to prevent.
          */
-        const heartbeat = setInterval(() => {
-          void lock.renew({ threadId: where.threadId, runId }).catch(() => {});
-        }, LOCK_RENEW_EVERY_MS);
+        let heartbeat: ReturnType<typeof setInterval> | undefined;
+        let stopPromise: Promise<boolean | undefined> | undefined;
+        let rejectCancellation: ((error: Error) => void) | undefined;
+
+        const stopTurn = () => {
+          try {
+            agent.abortRun();
+          } catch {
+            // runner.stop below is the authoritative platform-side stop path.
+          }
+          stopPromise ??= runner
+            .stop({ threadId: where.threadId, runId })
+            .catch(() => undefined);
+        };
+
+        const cancelled = new Promise<never>((_resolve, reject) => {
+          rejectCancellation = reject;
+        });
+
+        heartbeat = setInterval(() => {
+          void (async () => {
+            try {
+              await lock.renew({ threadId: where.threadId, runId });
+              if (heartbeat === undefined) return;
+              if (continuationGuard) {
+                const mayContinue = await continuationGuard(work);
+                if (heartbeat === undefined) return;
+                if (mayContinue) return;
+                const error = new Error(
+                  "The handoff was cancelled while the addressed Bot was running.",
+                );
+                error.name = "HandoffContinuationCancelled";
+                if (heartbeat !== undefined) {
+                  clearInterval(heartbeat);
+                  heartbeat = undefined;
+                }
+                stopTurn();
+                rejectCancellation?.(error);
+              }
+            } catch (error) {
+              if (heartbeat === undefined) return;
+              clearInterval(heartbeat);
+              heartbeat = undefined;
+              stopTurn();
+              rejectCancellation?.(
+                error instanceof Error ? error : new Error(String(error)),
+              );
+            }
+          })();
+        }, heartbeatMs);
+        heartbeat.unref?.();
 
         try {
-          await settled(
-            runner.run({
-              threadId: where.threadId,
-              agent,
-              /*
-               * What the conversation KEEPS, which is not what the model was sent.
-               *
-               * The runner persists whatever it is given here, and given nothing it persists the whole
-               * prompt: the asking conversation's history repeated into a second conversation, and a
-               * paragraph of instructions to a model sitting in a bubble that looks like something the
-               * person typed. What belongs in a transcript is the one line saying why this Bot spoke.
-               */
-              persistedInputMessages: shown
-                ? [{ id: `handoff-${runId}`, role: "user", content: shown }]
-                : [],
-              /*
-               * NOTHING IS PASSED FOR THE CONNECTION, and that is load-bearing.
-               *
-               * The lock hands back a join token as well as a run id, and it reads like the thing to
-               * present here. It is not: it is what a BROWSER presents to join a conversation and
-               * watch it, and the runner's socket is a different connection with its own credential.
-               * Handing it in overrides that credential, the socket is refused, and because the runner
-               * treats a socket that will not connect as something to keep retrying rather than as a
-               * failed run, nothing is ever emitted and nothing ever completes. The hop hangs, in
-               * total silence, until the deadline below ends it.
-               *
-               * What makes this run legitimate is the lock itself: the gateway compares the run id on
-               * every event to the one the lock holds. Taking the lock is the whole of the ceremony.
-               */
-              input: {
+          await Promise.race([
+            settled(
+              runner.run({
                 threadId: where.threadId,
-                runId,
+                agent,
                 /*
-                 * The same conversation the agent was given, so the run's own record of what it was
-                 * asked agrees with what it read.
+                 * What the conversation KEEPS, which is not what the model was sent.
+                 *
+                 * The runner persists whatever it is given here, and given nothing it persists the whole
+                 * prompt: the asking conversation's history repeated into a second conversation, and a
+                 * paragraph of instructions to a model sitting in a bubble that looks like something the
+                 * person typed. What belongs in a transcript is the one line saying why this Bot spoke.
                  */
-                messages: asked,
-                tools: [],
-                context: [],
-                state: {},
+                persistedInputMessages: shown
+                  ? [{ id: `handoff-${runId}`, role: "user", content: shown }]
+                  : [],
                 /*
-                 * The deployment's own statement of what this run is, carrying how deep the chain has
-                 * gone. It is what stops the addressed Bot handing the work on for ever, and it is
-                 * signed, so the Bot cannot edit its own depth on the way past.
+                 * NOTHING IS PASSED FOR THE CONNECTION, and that is load-bearing.
+                 *
+                 * The lock hands back a join token as well as a run id, and it reads like the thing to
+                 * present here. It is not: it is what a BROWSER presents to join a conversation and
+                 * watch it, and the runner's socket is a different connection with its own credential.
+                 * Handing it in overrides that credential, the socket is refused, and because the runner
+                 * treats a socket that will not connect as something to keep retrying rather than as a
+                 * failed run, nothing is ever emitted and nothing ever completes. The hop hangs, in
+                 * total silence, until the deadline below ends it.
+                 *
+                 * What makes this run legitimate is the lock itself: the gateway compares the run id on
+                 * every event to the one the lock holds. Taking the lock is the whole of the ceremony.
                  */
-                forwardedProps: { openbotRun: assertion },
-              },
-            }),
-            deadlineMs,
-            () =>
-              `${work.toBotId} did not finish within ${Math.round(deadlineMs / 1000)}s ${
-                seen.count === 0
-                  ? "and never reached its model"
-                  : `after ${seen.count} events, the last ${seen.last}`
-              }`,
-          );
+                input: {
+                  threadId: where.threadId,
+                  runId,
+                  /*
+                   * The same conversation the agent was given, so the run's own record of what it was
+                   * asked agrees with what it read.
+                   */
+                  messages: asked,
+                  tools: [],
+                  context: [],
+                  state: {},
+                  /*
+                   * The deployment's own statement of what this run is, carrying how deep the chain has
+                   * gone. It is what stops the addressed Bot handing the work on for ever, and it is
+                   * signed, so the Bot cannot edit its own depth on the way past.
+                   */
+                  forwardedProps: { openbotRun: assertion },
+                },
+              }),
+              deadlineMs,
+              () =>
+                `${work.toBotId} did not finish within ${Math.round(deadlineMs / 1000)}s ${
+                  seen.count === 0
+                    ? "and never reached its model"
+                    : `after ${seen.count} events, the last ${seen.last}`
+                }`,
+            ),
+            cancelled,
+          ]);
           /*
            * Only once the run is on record, and only when it said something: a conversation lifted to
            * the top of somebody's list for a turn that failed, or said nothing, is a conversation
@@ -403,7 +473,8 @@ export function createHandoffDelivery(options: {
             });
           }
         } finally {
-          clearInterval(heartbeat);
+          if (heartbeat !== undefined) clearInterval(heartbeat);
+          if (stopPromise) await stopPromise;
           /*
            * Given back whatever happened. Left held, the conversation is unusable by anybody until the
            * lock expires: the person cannot ask a follow-up and the next hop is refused, which turns

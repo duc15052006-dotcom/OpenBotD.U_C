@@ -8,6 +8,116 @@ Newest first. `Unreleased` is what is on `main` and not yet tagged.
 
 ## Unreleased
 
+### Shared computers fence stale snapshots across browser resets
+
+In shared-computer mode, each Bot now exposes a browser-run identity in addition to its snapshot
+generation. Resetting that Bot rotates the run, and the server reads it before resolving element
+refs. A snapshot that was still in flight when a reset happened can no longer reinsert the wiped
+page as current, and a fresh browser whose generation restarts from one no longer loses to a higher
+generation left by the previous run. Older shared-computer processes without the run endpoint keep
+the previous behavior until upgraded.
+
+### The built-in Bot validates a trimmed model name at startup
+
+Direct container or service configuration may include surrounding whitespace in `BOT_MODEL`.
+OpenBot now trims that value before applying its chat-completions compatibility guard, so a padded
+unsupported model cannot start healthy and then fail on its first tool call. A blank value uses the
+normal default model.
+
+
+### Skill selection keeps capabilities named across multiple JSON replies
+
+When a model wraps its skill choice in prose or sends a revised JSON object, OpenBot reads each
+complete `skills` list and offers the union of the named skills' granted tools. Previously a reply
+containing multiple objects fell back to offering every tool; replies with no valid `skills` list
+still do.
+
+
+### Malformed paging cursors are rejected instead of restarting at page one
+
+Channel and administrator people-list endpoints now return a clear 400 for malformed, stale or
+invalid-date cursors. Previously those cursors silently restarted paging from page one, which could
+make clients loop over the same results; valid and absent cursors keep their existing behavior.
+
+### MCP resource links keep their destination
+
+MCP tools that return a `resource_link` now preserve its name, URI and description in the text
+handed to the model. Previously the result was reduced to `[resource_link]`, so a search could
+return a page or file without giving the model the destination needed to open it.
+
+### Google Drive shortcuts open the file they point at
+
+The Drive connector now follows a Google Drive shortcut once when reading file content, then reads
+the shortcut's target using its real type. Shortcuts to Docs, Sheets, Slides and text files can now
+be read normally, broken shortcuts fail clearly, and shortcuts to unsupported binary files remain
+blocked instead of being decoded as text.
+
+
+### Desktop startup repairs stale Bun and finds Docker credential helpers
+
+If a Bun executable is already on PATH but is not the pinned runtime OpenBot supports, Desktop now
+leaves that user installation untouched and uses OpenBot's verified runtime instead. When Docker is
+resolved from its installed location but the GUI process PATH cannot see the credential helper beside
+it, child Docker commands now include Docker's own directory without changing the person's Docker
+credential configuration or OpenBot's managed Compose-provider precedence.
+
+### Desktop refuses to replace the key of a retained database
+
+A reinstall can remove the deployment folder's local markers while Docker or Podman keeps the
+Postgres volume. Desktop startup now resolves the selected Compose project's actual Postgres volume
+before minting a new `KEY_ENCRYPTION_KEY`. If that volume still exists and the original key is
+missing, startup stops and asks for the original key instead of creating a replacement that would
+make previously encrypted credentials unreadable. The resolved Compose configuration is never
+included in diagnostics because it may contain interpolated secrets.
+
+### Desktop can explicitly reset a verified leftover database
+
+When a previous installation's Postgres volume survives but its encryption key is unavailable,
+Desktop still refuses to replace that key automatically. A person who does not need the saved data
+can now choose a separate destructive recovery path, confirm that the local database will be
+permanently deleted, and retry setup fresh. Before removal, OpenBot re-verifies the exact Compose
+project, local driver, volume labels, current installation root and original container-engine
+connection. External, custom-named, shared, foreign, changed or attached volumes are refused, and
+the reset never uses force, prune or stack teardown.
+
+### The EKS cluster recipe blocks Bot pods from the node's IAM role
+
+The EKS example now sets `disableIMDSv1` and `disablePodIMDS` on its managed node group so a Bot's
+shell cannot reach EC2 instance metadata and obtain the node IAM role by default. The README also
+calls out the EBS CSI/IMDS trade-off and points deployments that need pod-level IMDS back to enforced
+NetworkPolicy rather than hiding the cost of the setting.
+
+### Kubernetes Bot computers run as the image's unprivileged user
+
+Computer pods in both shared and sandbox modes now run as the pinned `pwuser` UID/GID instead of
+root. The chart applies an `fsGroup` to persistent volumes and sets the runtime home/Bun paths the
+direct computer command needs. At startup, the computer refuses to become healthy if its workspace,
+browser profile or quarantine directory is not writable, so an unsupported storage class cannot
+silently replace a persistent Chromium profile with a throwaway one.
+
+### Large text attachments warn when the model may read only a prefix
+
+The composer now marks an accepted text/CSV/JSON/Markdown attachment with `may be cut` when its
+byte size exceeds the model-side 120,000-character extraction budget. The file is still uploaded
+whole and remains usable; the warning makes the bounded read visible before send instead of leaving
+the person to assume the model saw the entire file.
+
+### A deployment can restrict sign-in to named email domains
+
+`SIGNIN_ALLOWED_EMAIL_DOMAINS` adds an exact-match sign-in filter on top of the configured identity
+provider. The same rule is exposed as `config.allowedEmailDomains` in the Helm chart. Empty keeps the
+existing behaviour. Invalid lists fail at startup, and Entra multi-tenant audiences are refused when
+the filter is enabled because those audiences do not identify one directory the deployment controls.
+Refused sign-ins are recorded in the existing audit trail.
+
+### No sign-in cannot be combined with a public address
+
+`OPENBOT_SINGLE_USER=true` still explicitly enables the local one-administrator/no-sign-in mode,
+but it no longer permits that mode on an address the public internet can reach. Public values in
+`OPENBOT_PUBLIC_URL`, `OPENBOT_APP_URL` or `TRUSTED_ORIGINS` now fail closed at startup. Loopback
+is unchanged, while private LAN, Tailnet, VPN and local hostnames remain allowed with a warning.
+
+
 ### The Google Drive connector reaches files in shared drives
 
 Drive leaves shared drive items out of any `files.get` or `files.list` request that does not say it

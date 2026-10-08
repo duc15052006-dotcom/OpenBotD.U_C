@@ -2,6 +2,7 @@ import { queryOptions } from "@tanstack/react-query";
 import { client, tryClient } from "@/lib/client";
 
 export type AgentVisibility = "public" | "private";
+export type ComputerResourceProfile = "light" | "normal" | "heavy";
 
 /**
  * A coworker as the browser sees it.
@@ -29,6 +30,13 @@ export type AgentProfile = {
   builtIn: boolean;
   /** Whether a key is set for it. Never the key itself. */
   hasAuth: boolean;
+  /**
+   * CPU/RAM preset applied to this Agent's isolated Computer.
+   *
+   * Optional at the browser boundary for rolling upgrades; missing means the compatibility
+   * default, Normal. Current servers always return an explicit value.
+   */
+  computerResourceProfile?: ComputerResourceProfile;
   /**
    * Whether this coworker holds a credential for calling tools back.
    *
@@ -66,7 +74,69 @@ export const agentKeys = {
     ["agents", "bot-route-detail", agentId] as const,
   handoff: (agentId: string) => ["agents", "handoff", agentId] as const,
   capabilities: () => ["agents", "capabilities"] as const,
+  model: (agentId: string) => ["agents", "model", agentId] as const,
+  instructions: (agentId: string) =>
+    ["agents", "instructions", agentId] as const,
+  knowledge: (agentId: string) => ["agents", "knowledge", agentId] as const,
 };
+
+/** Keep the browser counter aligned with the server-enforced prompt limit. */
+export const AGENT_INSTRUCTIONS_LIMIT = 8_000;
+
+export type AgentInstructionsSettings = {
+  instructions: string;
+  canManage: boolean;
+};
+
+export type AgentKnowledgeDocument = {
+  id: string;
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+  createdAt: string;
+  characters: number;
+};
+
+export type AgentKnowledgeSettings = {
+  documents: AgentKnowledgeDocument[];
+  canManage: boolean;
+  limits: {
+    documents: number;
+    fileBytes: number;
+    documentCharacters: number;
+    totalCharacters: number;
+  };
+};
+
+export type AgentModelProvider = "openai" | "anthropic" | "google";
+export type AgentModelTarget = {
+  provider: AgentModelProvider;
+  model: string;
+};
+export type AgentModelSettings =
+  | { mode: "global" }
+  | {
+      mode: "custom";
+      provider: AgentModelProvider;
+      model: string;
+      credentialSource: "global" | "custom";
+      hasApiKey: boolean;
+      baseUrl?: string;
+      temperature?: number;
+      maxTokens?: number;
+      fallback?: AgentModelTarget;
+    };
+
+export type AgentModelConnection =
+  | { ok: true; provider: AgentModelProvider; model: string }
+  | {
+      ok: false;
+      provider: AgentModelProvider;
+      model: string;
+      code: string;
+      error: string;
+      status?: number;
+    };
 
 /** What kinds of coworker this deployment can create. */
 export type AgentCapabilities = {
@@ -130,6 +200,36 @@ export function agentQueryOptions(agentId: string) {
     queryFn: (): Promise<AgentProfile> =>
       client(agentApiPath(agentId), "agent", {
         fallback: "Could not load this coworker",
+      }),
+  });
+}
+
+export function agentModelQueryOptions(agentId: string) {
+  return queryOptions({
+    queryKey: agentKeys.model(agentId),
+    queryFn: (): Promise<AgentModelSettings> =>
+      client(`${agentApiPath(agentId)}/model`, "model", {
+        fallback: "Could not load model settings",
+      }),
+  });
+}
+
+export function agentInstructionsQueryOptions(agentId: string) {
+  return queryOptions({
+    queryKey: agentKeys.instructions(agentId),
+    queryFn: (): Promise<AgentInstructionsSettings> =>
+      client(`${agentApiPath(agentId)}/instructions`, "instructions", {
+        fallback: "Could not load Agent instructions",
+      }),
+  });
+}
+
+export function agentKnowledgeQueryOptions(agentId: string) {
+  return queryOptions({
+    queryKey: agentKeys.knowledge(agentId),
+    queryFn: (): Promise<AgentKnowledgeSettings> =>
+      client(`${agentApiPath(agentId)}/knowledge`, "knowledge", {
+        fallback: "Could not load Agent knowledge",
       }),
   });
 }

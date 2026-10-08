@@ -1,6 +1,45 @@
 import { describe, expect, test } from "bun:test";
 import type { RunAgentInput } from "@ag-ui/core";
+import { AUTONOMOUS_WORKFLOW_GUIDANCE } from "../../shared/bot-prompt";
 import { NO_ANSWER_CAME, toProviderMessages } from "../src/history";
+
+test("includes durable Routine behavior in the built-in system guidance", () => {
+  const messages = toProviderMessages(input([]));
+  const system = messages[0];
+  expect(system?.role).toBe("system");
+  expect(String(system?.content)).toContain("Use create_routine to create it");
+  expect(String(system?.content)).toContain(
+    "Never invent a clock time, cadence or timezone",
+  );
+});
+
+test("includes NOTE 21-2 autonomous workflow boundaries in the built-in adapter", () => {
+  const messages = toProviderMessages(input([]));
+  const system = messages[0];
+  expect(String(system?.content)).toContain("projectId + sceneId");
+  expect(String(system?.content)).toContain(
+    "An approved prompt is an execution input, not something to grade",
+  );
+  expect(String(system?.content)).toContain(
+    "Never claim you will automatically wake",
+  );
+});
+
+test("does not duplicate NOTE 21-2 when OpenBot already supplied it in the standing role", () => {
+  const messages = toProviderMessages(
+    input([
+      {
+        id: "standing-workflow",
+        role: "system",
+        content: `Creative role.\n\n${AUTONOMOUS_WORKFLOW_GUIDANCE}`,
+      } as never,
+    ]),
+  );
+  const occurrences = messages.filter((message) =>
+    String(message.content ?? "").includes(AUTONOMOUS_WORKFLOW_GUIDANCE),
+  );
+  expect(occurrences).toHaveLength(1);
+});
 
 /**
  * The Bot that ships in the box, and the conversation a declined handover used to end.

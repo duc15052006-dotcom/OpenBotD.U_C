@@ -2,12 +2,64 @@ import { queryOptions } from "@tanstack/react-query";
 import { client } from "@/lib/client";
 
 /** One Bot's computer, as Admin sees it. */
+export type ComputerResourceMetrics = {
+  capturedAt: string;
+  cpuPercent: number;
+  memoryUsedBytes: number;
+  memoryLimitBytes: number | null;
+  diskUsedBytes: number;
+  diskTotalBytes: number;
+  /** False means the Computer container is awake but its browser has gone idle/sleep. */
+  browserRunning?: boolean;
+};
+
+export type QuarantineStatus =
+  | "pending"
+  | "clean"
+  | "blocked"
+  | "scan_failed"
+  | "approved"
+  | "released";
+
+export type QuarantineEntry = {
+  version: 2;
+  status: QuarantineStatus;
+  id: string;
+  botId: string;
+  originalName: string;
+  sourceUrl: string;
+  savedAt: string;
+  sizeBytes: number;
+  sha256: string;
+  scannedSha256?: string;
+  scan?: {
+    status: "clean" | "blocked" | "scan_failed";
+    scanner: "clamav";
+    detail: string;
+    scannedAt: string;
+  };
+  approvedAt?: string;
+  releasedAt?: string;
+};
+
+export type QuarantineList = {
+  downloads: QuarantineEntry[];
+};
+
+export type ComputerLifecycle = "running" | "idle" | "sleeping" | "stopped";
+
 export type ComputerProfile = {
   botId: string;
   running: boolean;
+  /** Optional during rolling upgrades; derive from running/metrics when an older server omits it. */
+  lifecycle?: ComputerLifecycle;
   startedAt: string | null;
   /** Absent when the provider does not report egress at all, which is not the same as none. */
   egress?: string | null;
+  /** True when the supervisor reports a complete owned clean snapshot for this Bot. */
+  snapshotAvailable?: boolean;
+  /** Present only when a running computer answered the lightweight metrics probe. */
+  metrics?: ComputerResourceMetrics;
 };
 
 /** Whether each Bot has a browser profile of its own, or they share one. */
@@ -17,6 +69,15 @@ export type ComputerIsolation = "per-bot" | "shared";
 export type ComputerFleet = {
   computers: ComputerProfile[];
   isolation?: ComputerIsolation;
+  capacity?: {
+    memoryBytes: number | null;
+    logicalCpus: number | null;
+    maxActiveComputers: number | null;
+    resourceProfiles: Record<
+      "light" | "normal" | "heavy",
+      { memoryBytes: number; nanoCpus: number }
+    >;
+  };
 };
 
 /**
@@ -38,6 +99,7 @@ export const computerKeys = {
   all: ["computers"] as const,
   fleet: () => ["computers", "fleet"] as const,
   policy: () => ["computers", "policy"] as const,
+  quarantine: (botId: string) => ["computers", "quarantine", botId] as const,
 };
 
 /**
@@ -57,6 +119,24 @@ export function computerFleetQueryOptions() {
       const response = await client(FLEET_PATH, {
         fallback: "The computers could not be listed.",
       });
+      return response.json();
+    },
+    // Resource samples are useful only while fresh. TanStack Query pauses this in the background,
+    // so an open Admin page updates without turning hidden tabs into a monitoring daemon.
+    refetchInterval: 5_000,
+  });
+}
+
+export function quarantineQueryOptions(botId: string) {
+  return queryOptions({
+    queryKey: computerKeys.quarantine(botId),
+    queryFn: async (): Promise<QuarantineList> => {
+      const response = await client(
+        `/api/computers/${encodeURIComponent(botId)}/quarantine`,
+        {
+          fallback: "The quarantine could not be listed.",
+        },
+      );
       return response.json();
     },
   });

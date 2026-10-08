@@ -30,6 +30,7 @@ import {
   attachmentUrl,
   classifyAttachment,
   MAX_ATTACHMENTS_PER_MESSAGE,
+  mayBeTruncatedForModel,
   mediaTypeOf,
   shouldClaimPaste,
 } from "@/lib/channels/attachments";
@@ -1004,6 +1005,10 @@ export function Composer({
           name: attachment.filename ?? "Attachment",
           size: attachment.size,
           loading: attachment.status === "uploading",
+          mayTruncate:
+            attachment.status !== "uploading" &&
+            attachment.size !== undefined &&
+            mayBeTruncatedForModel(attachment.size),
         })),
     [staged],
   );

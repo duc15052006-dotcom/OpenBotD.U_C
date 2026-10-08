@@ -5,12 +5,20 @@ import type { BotAccessCheck } from "../src/plugins/routes";
 import { createPluginRoutes } from "../src/plugins/routes";
 import type { PluginStore } from "../src/plugins/store";
 
-function appWith(calls: {
-  grants: unknown[];
-  toolCalls: unknown[];
-  revokes?: unknown[];
-}) {
+function appWith(
+  calls: {
+    grants: unknown[];
+    toolCalls: unknown[];
+    revokes?: unknown[];
+    serverLookups?: unknown[];
+  },
+  servers: string[] = ["tool"],
+) {
   const store = {
+    serverExists: async (serverId: string) => {
+      calls.serverLookups?.push(serverId);
+      return servers.includes(serverId);
+    },
     grant: async (kind: unknown, ref: unknown, agentId: unknown) => {
       calls.grants.push({ kind, ref, agentId });
       return { ok: true };
@@ -69,6 +77,58 @@ describe("POST /api/plugins/grants", () => {
       error: "A kind, a ref and a Bot are required.",
     });
     expect(calls.grants).toEqual([]);
+  });
+});
+
+describe("POST /api/plugins/grants for missing apps", () => {
+  test("refuses a grant whose server has not been added", async () => {
+    const calls = {
+      grants: [] as unknown[],
+      toolCalls: [] as unknown[],
+      serverLookups: [] as unknown[],
+    };
+    const response = await appWith(calls, ["added-app"]).request(
+      "http://openbot.test/grants",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          kind: "mcp",
+          ref: "missing-app/SEND_MESSAGE",
+          agentId: "bot-1",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(403);
+    expect(calls.grants).toEqual([]);
+    expect(calls.serverLookups).toEqual(["missing-app"]);
+  });
+
+  test("trims a valid grant before checking and storing it", async () => {
+    const calls = {
+      grants: [] as unknown[],
+      toolCalls: [] as unknown[],
+      serverLookups: [] as unknown[],
+    };
+    const response = await appWith(calls, ["added-app"]).request(
+      "http://openbot.test/grants",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          kind: "mcp",
+          ref: "  added-app/SEND_MESSAGE  ",
+          agentId: "  bot-1  ",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(calls.grants).toEqual([
+      { kind: "mcp", ref: "added-app/SEND_MESSAGE", agentId: "bot-1" },
+    ]);
+    expect(calls.serverLookups).toEqual(["added-app"]);
   });
 });
 

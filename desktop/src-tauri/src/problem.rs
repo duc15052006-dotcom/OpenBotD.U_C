@@ -22,6 +22,9 @@ pub struct Problem {
     /// `None` where the plain sentence IS the whole truth — a refusal this deployment decided, with
     /// no underlying output behind it.
     pub detail: Option<String>,
+    /// The full, verified Compose volume name offered for an explicit fresh-install reset.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub database_reset: Option<String>,
 }
 
 impl Problem {
@@ -30,6 +33,7 @@ impl Problem {
         Self {
             said: said.into(),
             detail: None,
+            database_reset: None,
         }
     }
 
@@ -39,6 +43,7 @@ impl Problem {
         Self {
             said: said.into(),
             detail: (!detail.trim().is_empty()).then_some(detail),
+            database_reset: None,
         }
     }
 }
