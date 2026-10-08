@@ -271,6 +271,44 @@ describe("legacy restart-policy recovery", () => {
   }, 90_000);
 });
 
+describe("resource profile changes", () => {
+  test("keeps persistent volumes while applying a new CPU/RAM profile", async () => {
+    await withDocker().supervisor.ensure(names, {
+      image: IMAGE,
+      environment: [],
+      memoryBytes: 536_870_912,
+      nanoCpus: 1_000_000_000,
+    });
+
+    const volumesBefore = await Promise.all(
+      [names.profileVolume, names.workspaceVolume, names.quarantineVolume].map(
+        (volume) => withDocker().docker.getVolume(volume).inspect(),
+      ),
+    );
+
+    const state = await withDocker().supervisor.ensure(names, {
+      image: IMAGE,
+      environment: [],
+      memoryBytes: 805_306_368,
+      nanoCpus: 2_000_000_000,
+    });
+    const after = await withDocker()
+      .docker.getContainer(names.container)
+      .inspect();
+
+    expect(state.status).toBe("running");
+    expect(after.HostConfig?.Memory).toBe(805_306_368);
+    expect(after.HostConfig?.NanoCpus).toBe(2_000_000_000);
+
+    const volumesAfter = await Promise.all(
+      [names.profileVolume, names.workspaceVolume, names.quarantineVolume].map(
+        (volume) => withDocker().docker.getVolume(volume).inspect(),
+      ),
+    );
+    expect(volumesAfter.map(createdAt)).toEqual(volumesBefore.map(createdAt));
+  }, 180_000);
+});
+
 describe("fleet lifecycle timestamps", () => {
   test("reports the current run start after a stopped Computer wakes", async () => {
     await withDocker().supervisor.ensure(names, {
