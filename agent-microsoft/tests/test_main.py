@@ -79,6 +79,44 @@ def _provider_app(seen):
             ]
         )
 
+    @app.post("/v1/chat/completions")
+    async def openai_chat_completions(request: Request):
+        body = await request.json()
+        seen.append(("chat-completions", body["model"]))
+        message = {
+            "id": "chatcmpl-local",
+            "object": "chat.completion",
+            "created": 0,
+            "model": body["model"],
+            "choices": [
+                {"index": 0, "message": {"role": "assistant", "content": "hello"}, "finish_reason": "stop"}
+            ],
+        }
+        if not body.get("stream"):
+            from fastapi.responses import JSONResponse
+            return JSONResponse(message)
+
+        chunk = {
+            "id": "chatcmpl-local",
+            "object": "chat.completion.chunk",
+            "created": 0,
+            "model": body["model"],
+            "choices": [
+                {"index": 0, "delta": {"role": "assistant", "content": "hello"}, "finish_reason": None}
+            ],
+        }
+        final_chunk = {
+            **chunk,
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+        }
+
+        async def events():
+            yield f"data: {json.dumps(chunk)}\n\n"
+            yield f"data: {json.dumps(final_chunk)}\n\n"
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(events(), media_type="text/event-stream")
+
     @app.post("/v1/messages")
     async def anthropic_messages(request: Request):
         body = await request.json()
@@ -143,7 +181,7 @@ CHOICES = {
             "OPENAI_BASE_URL": f"{base}/v1",
             "ANTHROPIC_API_KEY": "",
         },
-        ("openai", "local-model"),
+        ("chat-completions", "local-model"),
     ),
     "an OpenAI key": (
         lambda base: {
@@ -153,7 +191,7 @@ CHOICES = {
             "OPENAI_BASE_URL": f"{base}/v1",
             "ANTHROPIC_API_KEY": "",
         },
-        ("openai", "gpt-5.5"),
+        ("chat-completions", "gpt-5.5"),
     ),
 }
 
@@ -218,3 +256,20 @@ def test_an_anthropic_key_uses_the_official_endpoint_when_compose_sets_a_blank_u
     assert '"RUN_FINISHED"' in response.text
     assert '"RUN_ERROR"' not in response.text
     assert "hello" in response.text
+
+
+def test_official_openai_without_custom_endpoint_keeps_responses_client(monkeypatch):
+    from agent_framework.openai import OpenAIChatClient, OpenAIChatCompletionClient
+
+    monkeypatch.setenv("BOT_PROVIDER", "openai")
+    monkeypatch.setenv("BOT_MODEL", "gpt-5.5")
+    monkeypatch.setenv("OPENAI_API_KEY", "synthetic-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+
+    from src import main
+
+    main = importlib.reload(main)
+    selected = main._client()
+    assert isinstance(selected, OpenAIChatClient)
+    assert not isinstance(selected, OpenAIChatCompletionClient)
