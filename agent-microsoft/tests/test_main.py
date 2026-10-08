@@ -111,9 +111,9 @@ def _provider_app(seen):
         }
 
         async def events():
-            yield f"data: {json.dumps(chunk)}\\n\\n"
-            yield f"data: {json.dumps(final_chunk)}\\n\\n"
-            yield "data: [DONE]\\n\\n"
+            yield f"data: {json.dumps(chunk)}\n\n"
+            yield f"data: {json.dumps(final_chunk)}\n\n"
+            yield "data: [DONE]\n\n"
 
         return StreamingResponse(events(), media_type="text/event-stream")
 
