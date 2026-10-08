@@ -252,6 +252,17 @@ jobs:
       # pinned by the desktop lockfile rather than the root one.
       - run: bun install --frozen-lockfile
         working-directory: desktop
+      # Supervisor owns the Docker integration suite but is not a root workspace.
+      # Without its own locked dependencies, dockerode cannot load and the complete
+      # per-Agent Computer lifecycle suite reports SKIP while root tests still PASS.
+      - run: bun install --frozen-lockfile
+        working-directory: supervisor
+      # CI must prove Docker is reachable before running tests: a skipped Docker
+      # suite is not evidence that resume, quota changes or volume preservation work.
+      - name: Require Docker engine for Computer lifecycle regressions
+        run: |
+          test -S /var/run/docker.sock
+          docker info --format '{{.ServerVersion}}' >/dev/null
       # Not the db:migrate script: that one loads ../.env, which does not exist in CI. DATABASE_URL
       # comes from the job env instead, which drizzle.config.ts already reads.
       - run: bunx drizzle-kit migrate --config=drizzle.config.ts
