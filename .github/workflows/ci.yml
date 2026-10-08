@@ -270,6 +270,8 @@ jobs:
       # A passing job must include the expected test floor. Import-time failures can otherwise skip
       # files before their tests are registered.
       - run: bun run test:ci
+        env:
+          OPENBOT_REQUIRE_SUPERVISOR_DOCKER_TEST: "1"
 
   startup:
     name: startup (${{ matrix.os }})
