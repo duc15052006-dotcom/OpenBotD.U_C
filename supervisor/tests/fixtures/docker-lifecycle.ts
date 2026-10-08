@@ -253,6 +253,14 @@ describe("Computer network configuration survives desktop Stop and restart", () 
           network: networkName,
         }),
       ).rejects.toThrow("must be stopped");
+      // A simultaneous image upgrade must not preempt the network's Stop requirement.
+      await expect(
+        withDocker().supervisor.ensure(names, {
+          image: OTHER,
+          environment: [],
+          network: networkName,
+        }),
+      ).rejects.toThrow("must be stopped");
       expect(
         (await withDocker().docker.getContainer(names.container).inspect()).Id,
       ).toBe(beforeContainer.Id);
