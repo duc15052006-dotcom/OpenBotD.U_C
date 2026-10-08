@@ -459,27 +459,35 @@ async function ensureOwnedVolume(
   volume: string,
 ): Promise<void> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    // Docker's createVolume is not a create-if-absent operation: Docker may
+    // successfully return an unrelated existing volume with the requested name.
+    // A successful API response is NEVER proof that its labels belong to this Bot.
+    if ((await volumeOwnership(names, volume)) === "foreign") {
+      throw new NameHeldError(volume, "volume");
+    }
     try {
       await docker.createVolume({
         Name: volume,
         Labels: labelsFor(names),
       });
-      return;
     } catch (error) {
       if (statusOf(error) !== 409) {
         throw new DockerUnavailableError(String(error));
       }
-      const ownership = await volumeOwnership(names, volume);
-      if (ownership === "ours") return;
-      if (ownership === "foreign") throw new NameHeldError(volume, "volume");
-      if (attempt === 0) {
-        await pause(100);
-        continue;
-      }
-      throw new DockerUnavailableError(
-        `Volume ${volume} disappeared while its ownership was being verified.`,
-      );
     }
+
+    // Check the actual engine resource after creation, including when the API
+    // returned success for an existing name or another creator won the race.
+    const ownership = await volumeOwnership(names, volume);
+    if (ownership === "ours") return;
+    if (ownership === "foreign") throw new NameHeldError(volume, "volume");
+    if (attempt === 0) {
+      await pause(100);
+      continue;
+    }
+    throw new DockerUnavailableError(
+      `Volume ${volume} disappeared while its ownership was being verified.`,
+    );
   }
 }
 
