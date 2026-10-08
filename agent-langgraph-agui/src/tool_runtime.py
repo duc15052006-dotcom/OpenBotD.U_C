@@ -37,6 +37,16 @@ from .token_efficiency import (
 
 
 @dataclass(frozen=True)
+class ManagedModel:
+    provider: str
+    model: str
+    api_key: str | None = field(default=None, repr=False)
+    base_url: str | None = None
+    temperature: float | None = None
+    max_tokens: int | None = None
+
+
+@dataclass(frozen=True)
 class RunTools:
     tools: tuple[Tool, ...] = ()
     context: tuple[Context, ...] = ()
@@ -45,9 +55,81 @@ class RunTools:
     simple_policy_ids: frozenset[str] = frozenset()
     deployment: frozenset[str] = frozenset()
     assertion: str = field(default="", repr=False)
+    managed_model: ManagedModel | None = field(default=None, repr=False)
 
 
 _current: ContextVar[RunTools | None] = ContextVar("openbot_run_tools", default=None)
+
+
+class ManagedModelError(ValueError):
+    pass
+
+
+def _managed_model(value) -> ManagedModel | None:
+    """Validate the server-only per-run model envelope without ever echoing credential material."""
+
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ManagedModelError()
+    provider = value.get("provider")
+    model = value.get("model")
+    api_key = value.get("apiKey")
+    base_url = value.get("baseUrl")
+    temperature = value.get("temperature")
+    max_tokens = value.get("maxTokens")
+
+    if provider not in {"openai", "anthropic", "google"}:
+        raise ManagedModelError()
+    if (
+        not isinstance(model, str)
+        or not model.strip()
+        or len(model.strip()) > 160
+        or any(ch in model for ch in ("\x00", "\r", "\n"))
+    ):
+        raise ManagedModelError()
+    if api_key is not None and (
+        not isinstance(api_key, str)
+        or not api_key.strip()
+        or len(api_key.strip()) > 16_384
+        or any(ch in api_key for ch in ("\x00", "\r", "\n"))
+    ):
+        raise ManagedModelError()
+    if base_url is not None:
+        if not isinstance(base_url, str) or len(base_url) > 2_048:
+            raise ManagedModelError()
+        from urllib.parse import urlsplit
+
+        parsed = urlsplit(base_url.strip())
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ManagedModelError()
+        if parsed.username is not None or parsed.password is not None:
+            raise ManagedModelError()
+        if provider != "openai":
+            raise ManagedModelError()
+        base_url = base_url.strip()
+    if temperature is not None and (
+        not isinstance(temperature, (int, float))
+        or isinstance(temperature, bool)
+        or not 0 <= float(temperature) <= 2
+    ):
+        raise ManagedModelError()
+    if max_tokens is not None and (
+        not isinstance(max_tokens, int)
+        or isinstance(max_tokens, bool)
+        or not 1 <= max_tokens <= 1_000_000
+    ):
+        raise ManagedModelError()
+
+    return ManagedModel(
+        provider=provider,
+        model=model.strip(),
+        api_key=api_key.strip() if isinstance(api_key, str) else None,
+        base_url=base_url,
+        temperature=float(temperature) if temperature is not None else None,
+        max_tokens=max_tokens,
+    )
+
 
 # Only known presentation payloads may be omitted. Arbitrary AG-UI context can contain permission
 # instructions or attached task data; an unfamiliar description is never permission to drop it.
@@ -159,6 +241,14 @@ class ToolAwareAgent(ParallelToolAgent):
         assertion = props.get("openbotRun", "")
         simple_policy = props.get("openbotSimpleActionPolicy", "")
         simple_policy_ids = props.get("openbotSimpleActionPolicyIds", [])
+        try:
+            managed_model = _managed_model(props.get("openbotManagedModel"))
+        except ManagedModelError:
+            yield RunErrorEvent(
+                type=EventType.RUN_ERROR,
+                message="The managed model configuration for this run is invalid.",
+            )
+            return
         context = RunTools(
             tools=tuple(input.tools or []),
             context=tuple(input.context or []),
@@ -179,6 +269,7 @@ class ToolAwareAgent(ParallelToolAgent):
             if isinstance(names, list)
             else frozenset(),
             assertion=assertion if isinstance(assertion, str) else "",
+            managed_model=managed_model,
         )
         # The maintained endpoint clones this subclass per request. ContextVar
         # also isolates graph tasks across concurrent requests and resets on
@@ -195,10 +286,12 @@ class ToolAwareAgent(ParallelToolAgent):
                     "openbotDeploymentTools",
                     "openbotSimpleActionPolicy",
                     "openbotSimpleActionPolicyIds",
+                    "openbotManagedModel",
                     "openbot_run",
                     "openbot_deployment_tools",
                     "openbot_simple_action_policy",
                     "openbot_simple_action_policy_ids",
+                    "openbot_managed_model",
                 }
             }
             preexisting_direct_calls = _existing_direct_call_ids(input.messages)
@@ -230,7 +323,7 @@ def model_messages(messages):
     """
     run = current_tools()
     offered_tool_names = tuple(tool.name for tool in run.tools)
-    model = os.environ.get("BOT_MODEL")
+    model = run.managed_model.model if run.managed_model else os.environ.get("BOT_MODEL")
     stateless_fast_path = qwen3_stateless_fast_path_enabled(
         model, messages, offered_tool_names
     )
@@ -311,7 +404,9 @@ def bind_tools(model, messages):
     tools = current_tools().tools
     offered_names = tuple(tool.name for tool in tools)
     simple_limit = qwen3_simple_max_output_tokens(
-        os.environ.get("BOT_MODEL"),
+        current_tools().managed_model.model
+        if current_tools().managed_model
+        else os.environ.get("BOT_MODEL"),
         messages,
         offered_names,
     )
