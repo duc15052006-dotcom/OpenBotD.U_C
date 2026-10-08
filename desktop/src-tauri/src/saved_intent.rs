@@ -223,7 +223,10 @@ fn persist_configuration_with(
     // Remove only those known model-selection fields, never unrelated user settings or minted
     // installation credentials. This also covers restarting the app after switching providers.
     let mut purge_model_selection = purge.clone();
-    if !matches!(credential, ModelCredential::None | ModelCredential::Compatible { .. }) {
+    if !matches!(
+        credential,
+        ModelCredential::None | ModelCredential::Compatible { .. }
+    ) {
         for key in ["BOT_MODEL", "AGENT_BOT_MODEL"] {
             if !settings.contains_key(key) {
                 purge_model_selection.insert(key.to_string(), String::new());
@@ -730,7 +733,9 @@ mod tests {
             root.join(".env"),
             "CUSTOM_PRESERVED=yes\\nBOT_MODEL=qwen/qwen3.6-plus:free\\nAGENT_BOT_MODEL=qwen/qwen3.6-plus:free\\n",
         ).unwrap();
-        let next = ModelCredential::OpenAi { api_key: "synthetic-new-key".into() };
+        let next = ModelCredential::OpenAi {
+            api_key: "synthetic-new-key".into(),
+        };
         persist_configuration_with(
             &root,
             &BTreeMap::new(),
@@ -738,13 +743,16 @@ mod tests {
             &BTreeMap::new(),
             &next,
             |_, _| Ok(()),
-        ).unwrap();
+        )
+        .unwrap();
         let saved = std::fs::read_to_string(root.join(".env")).unwrap();
         assert!(saved.contains("CUSTOM_PRESERVED=yes"));
         assert!(!saved.contains("BOT_MODEL=qwen/"));
         assert!(!saved.contains("AGENT_BOT_MODEL=qwen/"));
         assert!(!saved.lines().any(|line| line.starts_with("BOT_MODEL=")));
-        assert!(!saved.lines().any(|line| line.starts_with("AGENT_BOT_MODEL=")));
+        assert!(!saved
+            .lines()
+            .any(|line| line.starts_with("AGENT_BOT_MODEL=")));
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -753,11 +761,17 @@ mod tests {
         let (root, secrets, _) = fixture("no-model-change");
         std::fs::write(root.join(".env"), "BOT_MODEL=local-custom\\n").unwrap();
         persist_configuration_with(
-            &root, &BTreeMap::new(), &secrets, &BTreeMap::new(),
-            &ModelCredential::None, |_, _| Ok(()),
-        ).unwrap();
-        assert!(std::fs::read_to_string(root.join(".env")).unwrap().contains("BOT_MODEL=local-custom"));
+            &root,
+            &BTreeMap::new(),
+            &secrets,
+            &BTreeMap::new(),
+            &ModelCredential::None,
+            |_, _| Ok(()),
+        )
+        .unwrap();
+        assert!(std::fs::read_to_string(root.join(".env"))
+            .unwrap()
+            .contains("BOT_MODEL=local-custom"));
         std::fs::remove_dir_all(root).unwrap();
     }
-
 }
