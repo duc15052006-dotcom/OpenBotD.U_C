@@ -1,4 +1,4 @@
-/** 
+/**
  * The effective CPU limit represented by Docker-compatible inspect output.
  *
  * Docker reports NanoCpus directly. Podman's compatibility API can instead report the equivalent
@@ -74,7 +74,9 @@ export function computerResourcesMatch(
  * and supplies a replacement callback that removes only the container with v=false. Keeping that
  * separation makes it impossible for a profile change to accidentally acquire Reset semantics.
  */
-export async function reconcileComputerResources<T extends InspectedComputerResources>(
+export async function reconcileComputerResources<
+  T extends InspectedComputerResources,
+>(
   existing: T,
   requested: RequestedComputerResources,
   updateAndInspect: () => Promise<T | null>,
