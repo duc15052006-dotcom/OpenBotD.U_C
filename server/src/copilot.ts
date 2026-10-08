@@ -99,6 +99,13 @@ type RegisteredRemoteAgentFacts = {
   standingMessage: StandingRoleMessage;
   /** The key this agent sits behind, resolved from the vault at load time. Never logged. */
   headers?: Record<string, string>;
+  /**
+   * True only when this endpoint is one of this deployment's own managed harnesses.
+   *
+   * Set by the runtime loader after canonical endpoint comparison. Never inferred from a browser
+   * field or from "remote_ag_ui" alone: customer endpoints must never receive model credentials.
+   */
+  managed?: true;
 };
 
 /**
@@ -221,7 +228,7 @@ export type RuntimeModel = {
   defaultModel: string;
 };
 
-/** Resolve the model and credential for one built-in Bot immediately before it is constructed. */
+/** Resolve the model and credential for a built-in Bot or this deployment's managed harness. */
 export type ResolveAgentModel = (agentId: string) => Promise<RuntimeAgentModel>;
 
 /** Build an AI SDK model for an OpenAI-compatible endpoint after outbound policy is attached. */
@@ -571,7 +578,7 @@ export async function buildAgents(
    * `loadAttachment` for the positional reason it gives. Absent means nothing is recorded.
    */
   markAttachmentsSent?: MarkAttachmentsSent,
-  /** Per-Agent runtime model resolver. Absent preserves the deployment-wide model and key. */
+  /** Per-Agent model resolver. Used by built-ins and deployment-managed AG-UI harnesses only. */
   resolveAgentModel?: ResolveAgentModel,
   compatibleModel?: CompatibleModelFactory,
 ): Promise<Record<string, AbstractAgent>> {
@@ -630,7 +637,8 @@ export async function buildAgents(
           initiator,
           loadAttachment,
           markAttachmentsSent,
-          agent.type === "built_in"
+          agent.type === "built_in" ||
+          (agent.type === "remote_ag_ui" && agent.managed)
             ? await resolveAgentModel?.(agent.id)
             : undefined,
           compatibleModel,
@@ -1001,6 +1009,7 @@ async function buildAgent(
       narrowing ? offeredFor : undefined,
       loadAttachment,
       markAttachmentsSent,
+      agent.type === "remote_ag_ui" && agent.managed ? agentModel : undefined,
     );
   }
 
@@ -1300,6 +1309,8 @@ function remoteAgentWithStandingRole(
   loadAttachment?: LoadAttachment,
   /** How this run records that those files were sent. See {@link buildAgents}. */
   markAttachmentsSent?: MarkAttachmentsSent,
+  /** Per-run model/key override, permitted only for this deployment's managed AG-UI harness. */
+  agentModel?: RuntimeAgentModel,
 ) {
   /*
    * What this Bot holds, as a second standing message.
@@ -1340,8 +1351,17 @@ function remoteAgentWithStandingRole(
     const simpleActionPolicy = simpleDirectActionPolicies.get(
       agent.standingMessage,
     );
+    const callerForwardedProps = isPlainObject(input.forwardedProps)
+      ? { ...input.forwardedProps }
+      : {};
+    // Reserved deployment fields are never accepted from the browser. The managed-model field may
+    // contain a secret, so stripping it before rebuilding the trusted object is also what prevents a
+    // caller from choosing a credential or smuggling one into an external endpoint.
+    delete callerForwardedProps.openbotManagedModel;
+    delete callerForwardedProps.openbot_managed_model;
+
     const forwardedProps = {
-      ...(isPlainObject(input.forwardedProps) ? input.forwardedProps : {}),
+      ...callerForwardedProps,
       openbotBotId: agent.id,
       /*
        * Which of those tools this deployment runs, as opposed to the surface.
@@ -1385,6 +1405,40 @@ function remoteAgentWithStandingRole(
            * cannot prove whose run it is should not be spending anybody's grants.
            */
           {}),
+      /*
+       * A managed framework harness is part of this deployment even though it speaks AG-UI over an
+       * HTTP boundary. Its container environment is only a boot default; a model/API-key change in
+       * the UI must affect the next run without rebuilding the whole desktop stack.
+       *
+       * NEVER SEND THIS TO AN ARBITRARY REMOTE AGENT. "managed" is set only by the server-side
+       * endpoint-identity check, and the harness requires MANAGED_AGENT_TOKEN as a second boundary.
+       * The harness removes this object before LangGraph/checkpoint/model processing.
+       */
+      ...(agent.type === "remote_ag_ui" && agent.managed && agentModel
+        ? {
+            openbotManagedModel: {
+              provider: agentModel.provider,
+              model: agentModel.defaultModel,
+              apiKey: agentModel.apiKey,
+              ...(agentModel.baseUrl ? { baseUrl: agentModel.baseUrl } : {}),
+              ...(agentModel.temperature !== undefined
+                ? { temperature: agentModel.temperature }
+                : {}),
+              ...(agentModel.maxTokens !== undefined
+                ? { maxTokens: agentModel.maxTokens }
+                : {}),
+              ...(agentModel.fallback
+                ? {
+                    fallback: {
+                      provider: agentModel.fallback.provider,
+                      model: agentModel.fallback.defaultModel,
+                      apiKey: agentModel.fallback.apiKey,
+                    },
+                  }
+                : {}),
+            },
+          }
+        : {}),
     };
     /*
      * The same guard a built-in Bot gets in `BuiltInAgentWithSaneHistory`, applied here because a
