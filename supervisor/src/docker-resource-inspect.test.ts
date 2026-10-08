@@ -56,6 +56,8 @@ describe("Computer network resume", () => {
   test("recognizes both default bridge spellings without recycling an owned Computer", () => {
     expect(networkModeNeedsRecreation("bridge", undefined)).toBe(false);
     expect(networkModeNeedsRecreation("default", undefined)).toBe(false);
+    expect(networkModeNeedsRecreation("pasta", undefined)).toBe(false);
+    expect(networkModeNeedsRecreation("slirp4netns", undefined)).toBe(false);
     expect(networkModeNeedsRecreation(undefined, undefined)).toBe(false);
   });
 
