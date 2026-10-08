@@ -64,6 +64,8 @@ describe("Computer network resume", () => {
     expect(networkModeNeedsRecreation("old-network", "new-network")).toBe(true);
     expect(networkModeNeedsRecreation("old-network", undefined)).toBe(true);
     expect(networkModeNeedsRecreation(undefined, "new-network")).toBe(true);
-    expect(networkModeNeedsRecreation("new-network", "new-network")).toBe(false);
+    expect(networkModeNeedsRecreation("new-network", "new-network")).toBe(
+      false,
+    );
   });
 });
