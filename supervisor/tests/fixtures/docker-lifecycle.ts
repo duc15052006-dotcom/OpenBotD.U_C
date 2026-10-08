@@ -87,10 +87,17 @@ async function removeVolumes() {
   ]) {
     try {
       const info = await withDocker().docker.getVolume(volume).inspect();
-      if (
-        info.Labels?.["openbot.namespace"] !== namespace ||
-        info.Labels?.["openbot.bot-id"] !== BOT
-      ) {
+      const ownedByBot =
+        info.Labels?.["openbot.namespace"] === namespace &&
+        info.Labels?.["openbot.bot-id"] === BOT;
+      // The foreign-volume refusal case deliberately plants a volume without
+      // any OpenBot ownership labels. It is still ours to clean as a test
+      // fixture, but no other foreign resource may be removed.
+      const plantedByFixture =
+        volume === names.workspaceVolume &&
+        info.Labels?.["openbot.test-fixture"] === namespace &&
+        info.Labels?.["someone.else"] === "true";
+      if (!ownedByBot && !plantedByFixture) {
         throw new Error("Refusing to clean a volume outside this fixture.");
       }
       await withDocker().docker.getVolume(volume).remove();
