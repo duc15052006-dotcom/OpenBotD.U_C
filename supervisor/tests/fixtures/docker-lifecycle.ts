@@ -295,6 +295,43 @@ describe("fleet lifecycle timestamps", () => {
   }, 90_000);
 });
 
+describe("resource profile changes after desktop shutdown", () => {
+  test("wakes a stopped Computer with new CPU/RAM quotas and the same named volumes", async () => {
+    await withDocker().supervisor.ensure(names, {
+      image: IMAGE,
+      environment: [],
+      memoryBytes: 1_610_612_736,
+      nanoCpus: 1_000_000_000,
+    });
+    const before = await Promise.all(
+      [names.profileVolume, names.workspaceVolume, names.quarantineVolume].map(
+        (volume) => withDocker().docker.getVolume(volume).inspect(),
+      ),
+    );
+    await withDocker().supervisor.stop(names);
+
+    const resumed = await withDocker().supervisor.ensure(names, {
+      image: IMAGE,
+      environment: [],
+      memoryBytes: 2_147_483_648,
+      nanoCpus: 2_000_000_000,
+    });
+    const running = await withDocker()
+      .docker.getContainer(names.container)
+      .inspect();
+    expect(resumed.status).toBe("running");
+    expect(running.HostConfig?.Memory).toBe(2_147_483_648);
+    const { inspectedNanoCpus } = await import("../../src/resource-inspect");
+    expect(inspectedNanoCpus(running.HostConfig)).toBe(2_000_000_000);
+    const after = await Promise.all(
+      [names.profileVolume, names.workspaceVolume, names.quarantineVolume].map(
+        (volume) => withDocker().docker.getVolume(volume).inspect(),
+      ),
+    );
+    expect(after.map(createdAt)).toEqual(before.map(createdAt));
+  }, 120_000);
+});
+
 describe("idempotent Stop result", () => {
   test("reports true only when the Computer was running before Stop", async () => {
     await withDocker().supervisor.ensure(names, {
