@@ -94,8 +94,8 @@ def _resolve_provider(provider: str):
     return OPENBOT_PROVIDER_ALIASES.get(provider, provider)
 
 
-def _model_kwargs(provider: str, model: str):
-    kwargs = _google_genai_kwargs(provider)
+def _model_kwargs(provider: str, model: str, managed=None):
+    kwargs = {} if managed is not None else _google_genai_kwargs(provider)
     # Never lower Qwen's output/reasoning budget by default. A deployment owner may opt into a hard
     # ceiling explicitly, but OpenBot's automatic savings come from removing redundant context and
     # using /no_think only for narrow deterministic tool turns.
@@ -103,6 +103,26 @@ def _model_kwargs(provider: str, model: str):
         max_tokens = qwen3_max_output_tokens()
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
+
+    if managed is not None:
+        # A managed override is authoritative for this run. In particular, a missing key must not
+        # silently fall back to the stale key the container started with.
+        if managed.api_key is None:
+            raise ValueError(
+                "Model credential is not configured for this managed Agent. Save an API key or select a configured global credential."
+            )
+        kwargs["api_key"] = managed.api_key
+        if managed.base_url:
+            kwargs["base_url"] = managed.base_url
+        if managed.temperature is not None:
+            kwargs["temperature"] = managed.temperature
+        if managed.max_tokens is not None:
+            configured_cap = kwargs.get("max_tokens")
+            kwargs["max_tokens"] = (
+                min(configured_cap, managed.max_tokens)
+                if isinstance(configured_cap, int)
+                else managed.max_tokens
+            )
     return kwargs
 
 
@@ -123,8 +143,8 @@ def _chatgpt_auth_file(store: str) -> Path:
     return path
 
 
-def _model():
-    """The model this Bot thinks with, chosen by which credential the deployment gave it.
+def _model(managed=None):
+    """The model this Bot thinks with, chosen by the current run before boot-time defaults.
 
     A SIGNED-IN CHATGPT PLAN IS NOT AN API KEY, and this is the only place that difference shows up.
     A plan token is a bearer for `chatgpt.com/backend-api/codex`, and `langchain-openai` pins that
@@ -136,6 +156,21 @@ def _model():
     A recognized `provider:model` choice keeps its provider. Otherwise the model is an opaque ID
     and the selected provider is passed separately, including when that ID contains a colon.
     """
+    if managed is not None:
+        provider = _resolve_provider(managed.provider)
+        model = managed.model
+        prefix, separator, _ = model.partition(":")
+        if separator and prefix in MODEL_PROVIDERS:
+            return init_chat_model(
+                model,
+                **_model_kwargs(prefix, model, managed),
+            )
+        return init_chat_model(
+            model,
+            model_provider=provider,
+            **_model_kwargs(provider, model, managed),
+        )
+
     configured_model = os.environ.get("BOT_MODEL")
     model = (configured_model or "gpt-4o-mini").strip()
     store = (os.environ.get("CHATGPT_AUTH_FILE") or "").strip()
@@ -198,8 +233,9 @@ async def answer(state: MessagesState):
     from .tool_runtime import current_tools
 
     state_messages = state["messages"]
-    offered_names = tuple(tool.name for tool in current_tools().tools)
-    model_name = os.environ.get("BOT_MODEL")
+    run = current_tools()
+    offered_names = tuple(tool.name for tool in run.tools)
+    model_name = run.managed_model.model if run.managed_model else os.environ.get("BOT_MODEL")
 
     # A literal, self-contained workspace write has no model decision left to make. Compile it
     # straight into the already-governed surface tool call. This removes provider tokens entirely
@@ -242,7 +278,11 @@ async def answer(state: MessagesState):
             }
 
     messages = model_messages(state_messages)
-    return {"messages": [await bind_tools(_model(), messages).ainvoke(messages)]}
+    return {
+        "messages": [
+            await bind_tools(_model(run.managed_model), messages).ainvoke(messages)
+        ]
+    }
 
 
 builder = StateGraph(MessagesState)
