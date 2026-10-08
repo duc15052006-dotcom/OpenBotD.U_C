@@ -16,7 +16,10 @@ async function available() {
 }
 
 const dockerReady = await available();
-if (!dockerReady && process.env.OPENBOT_REQUIRE_SUPERVISOR_DOCKER_TEST === "1") {
+if (
+  !dockerReady &&
+  process.env.OPENBOT_REQUIRE_SUPERVISOR_DOCKER_TEST === "1"
+) {
   throw new Error(
     "CI requires the real supervisor Docker lifecycle suite, but the engine or dockerode is unavailable.",
   );
