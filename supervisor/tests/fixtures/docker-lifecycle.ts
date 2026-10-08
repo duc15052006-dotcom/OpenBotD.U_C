@@ -354,7 +354,10 @@ describe("stopped Computer recovery when engine rejects a quota update", () => {
     // Scope the one-shot fault to this isolated process and always restore the prototype.
     const originalGetContainer = DockerClient.prototype.getContainer;
     let injectUpdateFailure = true;
-    DockerClient.prototype.getContainer = function (this: Docker, name: string) {
+    DockerClient.prototype.getContainer = function (
+      this: Docker,
+      name: string,
+    ) {
       const container = originalGetContainer.call(this, name);
       if (name !== names.container) return container;
       return new Proxy(container, {
@@ -362,7 +365,9 @@ describe("stopped Computer recovery when engine rejects a quota update", () => {
           if (property === "update" && injectUpdateFailure) {
             return () => {
               injectUpdateFailure = false;
-              throw new Error("synthetic stopped-container quota update refusal");
+              throw new Error(
+                "synthetic stopped-container quota update refusal",
+              );
             };
           }
           return Reflect.get(target, property, receiver);
