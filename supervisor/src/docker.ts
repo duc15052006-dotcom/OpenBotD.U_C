@@ -1104,7 +1104,7 @@ export async function ensure(
           // replaced the container. A non-forced remove cannot stop a live Computer,
           // and v:false must not delete its named browser/workspace volumes.
           const stopped = await inspectOwned(names);
-          if (!stopped || stopped.status !== "exited") {
+          if (stopped?.status !== "exited") {
             throw new DockerUnavailableError(
               `Cannot safely recreate the stopped Computer for ${names.botId}: its ownership or stopped state changed while applying the resource profile.`,
             );
