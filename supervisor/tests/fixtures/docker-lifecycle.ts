@@ -239,9 +239,11 @@ describe("Computer network configuration survives desktop Stop and restart", () 
         .docker.getContainer(names.container)
         .inspect();
       const beforeVolumes = await Promise.all(
-        [names.profileVolume, names.workspaceVolume, names.quarantineVolume].map(
-          (volume) => withDocker().docker.getVolume(volume).inspect(),
-        ),
+        [
+          names.profileVolume,
+          names.workspaceVolume,
+          names.quarantineVolume,
+        ].map((volume) => withDocker().docker.getVolume(volume).inspect()),
       );
 
       await expect(
@@ -265,9 +267,11 @@ describe("Computer network configuration survives desktop Stop and restart", () 
         .docker.getContainer(names.container)
         .inspect();
       const afterVolumes = await Promise.all(
-        [names.profileVolume, names.workspaceVolume, names.quarantineVolume].map(
-          (volume) => withDocker().docker.getVolume(volume).inspect(),
-        ),
+        [
+          names.profileVolume,
+          names.workspaceVolume,
+          names.quarantineVolume,
+        ].map((volume) => withDocker().docker.getVolume(volume).inspect()),
       );
       expect(resumed.status).toBe("running");
       expect(resumed.url).toBe(`http://${names.container}:4100`);
