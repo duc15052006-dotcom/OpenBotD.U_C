@@ -584,6 +584,76 @@ describe("registered Copilot agents", () => {
     expect(deploymentKeyReads).toBe(0);
   });
 
+  test("resolves the fresh model credential for a managed AG-UI harness", async () => {
+    await using endpoint = fakeAgUiEndpoint();
+    const resolved: string[] = [];
+    let deploymentKeyReads = 0;
+    const managedProfile = {
+      id: "managed-qwen",
+      name: "Managed Qwen",
+      type: "remote_ag_ui" as const,
+      endpoint: endpoint.url,
+      managed: true as const,
+      standingMessage: standingRoleMessage({
+        id: "managed-qwen",
+        name: "Managed Qwen",
+        title: "Managed Framework",
+        roleDescription: "Run through OpenBot's managed harness.",
+      }),
+    };
+    const agents = await resolveRuntimeAgents(
+      async () => [managedProfile],
+      { provider: "openai", defaultModel: "stale-deployment-model" },
+      async () => {
+        deploymentKeyReads += 1;
+        return "stale-deployment-key";
+      },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      async (agentId) => {
+        resolved.push(agentId);
+        return {
+          provider: "openai",
+          defaultModel: "qwen/qwen3.6-plus:free",
+          apiKey: "fresh-agent-key",
+          baseUrl: "https://api.xkiro.com/v1",
+          temperature: 0.4,
+          maxTokens: 4096,
+        };
+      },
+    );
+
+    const agent = agents["managed-qwen"];
+    if (!agent) throw new Error("Expected managed-qwen");
+    agent.setMessages([userMessage("Say hello.")]);
+    await agent.runAgent();
+
+    expect(resolved).toEqual(["managed-qwen"]);
+    expect(deploymentKeyReads).toBe(0);
+    expect(endpoint.requests).toHaveLength(1);
+    expect(endpoint.requests[0]?.forwardedProps).toMatchObject({
+      openbotManagedModel: {
+        provider: "openai",
+        model: "qwen/qwen3.6-plus:free",
+        apiKey: "fresh-agent-key",
+        baseUrl: "https://api.xkiro.com/v1",
+        temperature: 0.4,
+        maxTokens: 4096,
+      },
+    });
+  });
+
   test("does not resolve model credentials for remote-only agents", async () => {
     let resolverInvoked = false;
     const agents = await resolveRuntimeAgents(
