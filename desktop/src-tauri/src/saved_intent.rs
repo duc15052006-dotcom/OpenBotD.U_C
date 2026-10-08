@@ -217,7 +217,23 @@ fn persist_configuration_with(
         "OpenBot could not record the saved connections. Your previous settings are kept; try Start again.",
         error.to_string(),
     ))?;
-    crate::env::write(&root.join(".env"), settings, purge)
+    // A previous compatible endpoint wrote its custom model IDs into .env. When a new
+    // selection does not supply those fields, "not owned" must not mean "keep the old
+    // compatible model": it would point a newly configured provider at a model it cannot serve.
+    // Remove only those known model-selection fields, never unrelated user settings or minted
+    // installation credentials. This also covers restarting the app after switching providers.
+    let mut purge_model_selection = purge.clone();
+    if !matches!(
+        credential,
+        ModelCredential::None | ModelCredential::Compatible { .. }
+    ) {
+        for key in ["BOT_MODEL", "AGENT_BOT_MODEL"] {
+            if !settings.contains_key(key) {
+                purge_model_selection.insert(key.to_string(), String::new());
+            }
+        }
+    }
+    crate::env::write(&root.join(".env"), settings, &purge_model_selection)
         .map_err(|error| Problem::with("OpenBot could not write its settings.", error.to_string()))
 }
 
@@ -708,6 +724,54 @@ mod tests {
         assert!(SavedIntent::read(&root)
             .categories
             .contains(&Category::ClaudePlan));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn switching_away_from_compatible_provider_clears_stale_model_ids_on_disk() {
+        let (root, secrets, _) = fixture("switch-compatible-model");
+        std::fs::write(
+            root.join(".env"),
+            "CUSTOM_PRESERVED=yes\nBOT_MODEL=qwen/qwen3.6-plus:free\nAGENT_BOT_MODEL=qwen/qwen3.6-plus:free\n",
+        ).unwrap();
+        let next = ModelCredential::OpenAi {
+            api_key: "synthetic-new-key".into(),
+        };
+        persist_configuration_with(
+            &root,
+            &BTreeMap::new(),
+            &secrets,
+            &BTreeMap::new(),
+            &next,
+            |_, _| Ok(()),
+        )
+        .unwrap();
+        let saved = std::fs::read_to_string(root.join(".env")).unwrap();
+        assert!(saved.contains("CUSTOM_PRESERVED=yes"));
+        assert!(!saved.contains("BOT_MODEL=qwen/"));
+        assert!(!saved.contains("AGENT_BOT_MODEL=qwen/"));
+        assert!(!saved.lines().any(|line| line.starts_with("BOT_MODEL=")));
+        assert!(!saved
+            .lines()
+            .any(|line| line.starts_with("AGENT_BOT_MODEL=")));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn no_model_selection_preserves_an_existing_custom_model() {
+        let (root, secrets, _) = fixture("no-model-change");
+        std::fs::write(root.join(".env"), "BOT_MODEL=local-custom\n").unwrap();
+        persist_configuration_with(
+            &root,
+            &BTreeMap::new(),
+            &secrets,
+            &BTreeMap::new(),
+            &ModelCredential::None,
+            |_, _| Ok(()),
+        )
+        .unwrap();
+        assert!(std::fs::read_to_string(root.join(".env"))
+            .unwrap()
+            .contains("BOT_MODEL=local-custom"));
         std::fs::remove_dir_all(root).unwrap();
     }
 }
