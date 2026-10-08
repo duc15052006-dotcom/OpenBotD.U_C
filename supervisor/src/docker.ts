@@ -1066,6 +1066,11 @@ export async function ensure(
             existing.nanoCpus !== options.nanoCpus) ||
           existing.restartPolicyName !== "no")
       ) {
+        // Podman/Docker compatibility layers do not always allow resource updates on a
+        // stopped container. Its profile, workspace and quarantine live in independently
+        // owned volumes: replacing ONLY that stopped container is a safe recovery.
+        // Never use this fallback for a running Computer or an unowned name.
+        const wasStopped = existing.status === "exited";
         try {
           await docker.getContainer(names.container).update({
             ...(options.memoryBytes !== undefined
@@ -1090,9 +1095,28 @@ export async function ensure(
             );
           }
         } catch (error) {
-          throw new DockerUnavailableError(
-            `The resource profile or OpenBot-owned restart policy for ${names.botId} could not be applied: ${String(error)}`,
-          );
+          if (!wasStopped) {
+            throw new DockerUnavailableError(
+              `The resource profile or OpenBot-owned restart policy for ${names.botId} could not be applied: ${String(error)}`,
+            );
+          }
+          // Re-check after the update failed: an external process may have started or
+          // replaced the container. A non-forced remove cannot stop a live Computer,
+          // and v:false must not delete its named browser/workspace volumes.
+          const stopped = await inspectOwned(names);
+          if (stopped?.status !== "exited") {
+            throw new DockerUnavailableError(
+              `Cannot safely recreate the stopped Computer for ${names.botId}: its ownership or stopped state changed while applying the resource profile.`,
+            );
+          }
+          try {
+            await docker.getContainer(names.container).remove({ v: false });
+          } catch (removeError) {
+            throw new DockerUnavailableError(
+              `Could not recreate the stopped Computer for ${names.botId} without deleting its volumes: ${String(removeError)}`,
+            );
+          }
+          existing = null;
         }
       }
 

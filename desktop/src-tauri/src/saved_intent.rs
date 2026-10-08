@@ -774,4 +774,50 @@ mod tests {
             .contains("BOT_MODEL=local-custom"));
         std::fs::remove_dir_all(root).unwrap();
     }
+    #[test]
+    fn replacing_a_compatible_api_key_updates_the_secure_store_and_survives_reopen() {
+        let root = temp_root("rotate-compatible-key");
+        std::fs::create_dir_all(&root).unwrap();
+        let url = "https://models.example/v1";
+        let settings = BTreeMap::from([
+            ("OPENAI_BASE_URL".to_string(), url.to_string()),
+            ("BOT_MODEL".to_string(), "qwen-test".to_string()),
+        ]);
+
+        for key in ["synthetic-original-key", "synthetic-replacement-key"] {
+            let credential = ModelCredential::Compatible {
+                base_url: url.to_string(),
+                container_base_url: None,
+                api_key: key.to_string(),
+                model: "qwen-test".to_string(),
+            };
+            let secrets = BTreeMap::from([("OPENAI_API_KEY".to_string(), key.to_string())]);
+            persist_configuration(&root, &settings, &secrets, &secrets, &credential).unwrap();
+
+            let record = crate::vault::recall(&root, COMPATIBLE_CREDENTIAL)
+                .unwrap()
+                .expect("the selected endpoint must have a protected key record");
+            assert_eq!(compatible_key_from_record(url, &record).unwrap(), key);
+            assert_eq!(
+                crate::vault::recall(&root, "OPENAI_API_KEY")
+                    .unwrap()
+                    .as_deref(),
+                Some(key)
+            );
+            let public = std::fs::read_to_string(root.join(".env")).unwrap();
+            assert!(public.contains("BOT_MODEL=qwen-test"));
+            assert!(!public.contains(key));
+            assert!(!public.contains("synthetic-original-key"));
+            assert!(!public.contains("synthetic-replacement-key"));
+        }
+        assert!(SavedIntent::read(&root).has_compatible_key_for(url));
+        assert!(compatible_key_from_record(
+            "https://unrelated.example/v1",
+            &crate::vault::recall(&root, COMPATIBLE_CREDENTIAL)
+                .unwrap()
+                .unwrap(),
+        )
+        .is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
