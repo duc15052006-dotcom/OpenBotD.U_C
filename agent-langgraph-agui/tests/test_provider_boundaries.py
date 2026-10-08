@@ -512,7 +512,9 @@ async def test_trusted_minimal_policy_replaces_only_generated_bulk_on_fast_path(
     monkeypatch.setenv("BOT_MODEL", "qwen/qwen3.6-plus:free")
     monkeypatch.setenv("OPENAI_BASE_URL", base_url)
 
-    request = "Hãy tạo file `/workspace/token-test-next.txt` với nội dung `hello`."
+    # Keep this regression on a provider-backed simple action. Literal writes now have a
+    # deliberately narrower zero-provider path and are covered by test_direct_actions*.py.
+    request = "Đọc file `/workspace/token-test-next.txt`."
     standing = SystemMessage(
         id="standing-role:bot-ci",
         content="FULL-STANDING-" + "S" * 30_000,
@@ -530,15 +532,12 @@ async def test_trusted_minimal_policy_replaces_only_generated_bulk_on_fast_path(
         "workspace permissions, credential secrecy, and human handoff."
     )
     tool = Tool(
-        name="computer_write_file",
-        description="Write a literal file only inside the governed workspace.",
+        name="computer_read_file",
+        description="Read a file only inside the governed workspace.",
         parameters={
             "type": "object",
-            "properties": {
-                "path": {"type": "string"},
-                "content": {"type": "string"},
-            },
-            "required": ["path", "content"],
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"],
         },
     )
     source = [
@@ -566,7 +565,7 @@ async def test_trusted_minimal_policy_replaces_only_generated_bulk_on_fast_path(
     wire = json.dumps(body, ensure_ascii=False)
     assert body["max_completion_tokens"] == 256
     assert [item["function"]["name"] for item in body["tools"]] == [
-        "computer_write_file"
+        "computer_read_file"
     ]
     assert "MINIMAL-DIRECT-POLICY" in wire
     assert "KEEP-SECURITY" in wire

@@ -7,13 +7,23 @@ checkpoint, model message, or AG-UI state snapshot.
 """
 
 import asyncio
+import json
 import os
 from contextlib import aclosing
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 
 import httpx
-from ag_ui.core import Context, EventType, RunAgentInput, RunErrorEvent, Tool
+from ag_ui.core import (
+    Context,
+    EventType,
+    RunAgentInput,
+    RunErrorEvent,
+    Tool,
+    ToolCallArgsEvent,
+    ToolCallEndEvent,
+    ToolCallStartEvent,
+)
 from langchain_core.messages import SystemMessage, ToolMessage
 from langgraph.graph import END
 
@@ -60,6 +70,86 @@ def current_tools() -> RunTools:
 
 class UnofferedToolError(ValueError):
     pass
+
+
+def _value(item, name, default=None):
+    return item.get(name, default) if isinstance(item, dict) else getattr(item, name, default)
+
+
+def _tool_calls(message):
+    return _value(message, "tool_calls", None) or _value(message, "toolCalls", None) or ()
+
+
+def _call_function(call):
+    function = _value(call, "function", None)
+    if function is not None:
+        return (
+            _value(function, "name", ""),
+            _value(function, "arguments", ""),
+        )
+    args = _value(call, "args", None)
+    return _value(call, "name", ""), json.dumps(args, ensure_ascii=False) if isinstance(args, dict) else ""
+
+
+def _existing_direct_call_ids(messages):
+    return {
+        call_id
+        for message in messages or ()
+        for call in _tool_calls(message)
+        if isinstance((call_id := _value(call, "id", None)), str)
+        and call_id.startswith("openbot-direct-")
+    }
+
+
+def _direct_call_events(snapshot, preexisting, emitted):
+    """Fill the AG-UI stream gap for deterministic calls already persisted by LangGraph.
+
+    ag-ui-langgraph 0.0.45 builds the final snapshot from an AIMessage returned directly by a graph
+    node, but emits TOOL_CALL_* only for chat-model stream chunks. OpenBot's zero-provider compiler
+    intentionally has no chat-model stream. Reuse the integration's authoritative snapshot and add
+    only the three missing lifecycle events for a newly-created OpenBot call. Calls already present
+    in the request (a resume) are never replayed.
+    """
+    if _value(snapshot, "type") != EventType.MESSAGES_SNAPSHOT:
+        return ()
+    events = []
+    for message in _value(snapshot, "messages", ()) or ():
+        if _value(message, "role") != "assistant":
+            continue
+        parent_id = _value(message, "id", None)
+        for call in _tool_calls(message):
+            call_id = _value(call, "id", None)
+            if (
+                not isinstance(call_id, str)
+                or not call_id.startswith("openbot-direct-")
+                or call_id in preexisting
+                or call_id in emitted
+            ):
+                continue
+            name, arguments = _call_function(call)
+            if not isinstance(name, str) or not name or not isinstance(arguments, str):
+                continue
+            emitted.add(call_id)
+            events.extend(
+                (
+                    ToolCallStartEvent(
+                        type=EventType.TOOL_CALL_START,
+                        tool_call_id=call_id,
+                        tool_call_name=name,
+                        parent_message_id=parent_id,
+                    ),
+                    ToolCallArgsEvent(
+                        type=EventType.TOOL_CALL_ARGS,
+                        tool_call_id=call_id,
+                        delta=arguments,
+                    ),
+                    ToolCallEndEvent(
+                        type=EventType.TOOL_CALL_END,
+                        tool_call_id=call_id,
+                    ),
+                )
+            )
+    return tuple(events)
 
 
 class ToolAwareAgent(ParallelToolAgent):
@@ -111,10 +201,16 @@ class ToolAwareAgent(ParallelToolAgent):
                     "openbot_simple_action_policy_ids",
                 }
             }
+            preexisting_direct_calls = _existing_direct_call_ids(input.messages)
+            emitted_direct_calls = set()
             async with aclosing(
                 super().run(input.model_copy(update={"forwarded_props": clean_props}))
             ) as stream:
                 async for event in stream:
+                    for synthetic in _direct_call_events(
+                        event, preexisting_direct_calls, emitted_direct_calls
+                    ):
+                        yield synthetic
                     yield event
         except UnofferedToolError:
             yield RunErrorEvent(
