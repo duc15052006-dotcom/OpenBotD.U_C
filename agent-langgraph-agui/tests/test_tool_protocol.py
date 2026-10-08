@@ -6,6 +6,7 @@ server is deterministic; these checks are protocol regressions, not live bot pro
 
 import asyncio
 import json
+import os
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -60,7 +61,13 @@ def boundary(monkeypatch):
         "MANAGED_AGENT_TOKEN": "synthetic-server-token",
     }.items():
         monkeypatch.setenv(name, value)
-    captured = {"model": [], "callback": [], "callback_status": 200, "force_call": None}
+    captured = {
+        "model": [],
+        "model_auth": [],
+        "callback": [],
+        "callback_status": 200,
+        "force_call": None,
+    }
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
@@ -83,6 +90,7 @@ def boundary(monkeypatch):
                 )
                 return
             captured["model"].append(body)
+            captured["model_auth"].append(self.headers.get("Authorization"))
             messages = body["messages"]
             user = next(m["content"] for m in reversed(messages) if m["role"] == "user")
             names = captured.get("requested_tools", user.split(","))
@@ -234,6 +242,73 @@ def snapshot(events):
     return next(
         e["messages"] for e in reversed(events) if e["type"] == "MESSAGES_SNAPSHOT"
     )
+
+
+@pytest.mark.asyncio
+async def test_managed_model_override_uses_fresh_key_and_never_enters_history(
+    boundary, monkeypatch
+):
+    monkeypatch.setenv("BOT_MODEL", "stale-container-model")
+    monkeypatch.setenv("OPENAI_API_KEY", "stale-container-key")
+
+    first_key = "fresh-run-key-one"
+    body = run_input(
+        [],
+        messages=[{"id": "fresh-key-request", "role": "user", "content": "Say hello."}],
+    )
+    body["forwardedProps"]["openbotManagedModel"] = {
+        "provider": "openai",
+        "model": "fresh-model-one",
+        "apiKey": first_key,
+        "baseUrl": os.environ["OPENAI_BASE_URL"],
+    }
+
+    first = await run_protocol(body)
+    assert boundary["model"][-1]["model"] == "fresh-model-one"
+    assert boundary["model_auth"][-1] == f"Bearer {first_key}"
+    assert first_key not in json.dumps(first)
+    assert first_key not in json.dumps(snapshot(first))
+    assert "openbotManagedModel" not in json.dumps(snapshot(first))
+
+    # A newly saved key/model must affect the very next run without restarting this harness.
+    second_key = "fresh-run-key-two"
+    next_body = run_input(
+        [],
+        messages=[{"id": "fresh-key-request-two", "role": "user", "content": "Say hello again."}],
+    )
+    next_body["forwardedProps"]["openbotManagedModel"] = {
+        "provider": "openai",
+        "model": "fresh-model-two",
+        "apiKey": second_key,
+        "baseUrl": os.environ["OPENAI_BASE_URL"],
+    }
+    second = await run_protocol(next_body)
+
+    assert boundary["model"][-1]["model"] == "fresh-model-two"
+    assert boundary["model_auth"][-1] == f"Bearer {second_key}"
+    assert second_key not in json.dumps(second)
+    assert "stale-container-key" not in json.dumps(boundary["model"])
+
+
+@pytest.mark.asyncio
+async def test_invalid_managed_model_fails_closed_without_provider_call(boundary):
+    body = run_input(
+        [],
+        messages=[{"id": "bad-model-request", "role": "user", "content": "Say hello."}],
+    )
+    body["forwardedProps"]["openbotManagedModel"] = {
+        "provider": "openai",
+        "model": "fresh-model",
+        "apiKey": "secret-that-must-not-echo",
+        "baseUrl": "file:///not-allowed",
+    }
+
+    before = len(boundary["model"])
+    events = await run_protocol(body, allow_error=True)
+
+    assert len(boundary["model"]) == before
+    assert any(event["type"] == "RUN_ERROR" for event in events)
+    assert "secret-that-must-not-echo" not in json.dumps(events)
 
 
 @pytest.mark.asyncio
