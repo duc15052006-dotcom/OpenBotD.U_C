@@ -723,4 +723,41 @@ mod tests {
             .contains(&Category::ClaudePlan));
         std::fs::remove_dir_all(root).unwrap();
     }
+    #[test]
+    fn switching_away_from_compatible_provider_clears_stale_model_ids_on_disk() {
+        let (root, secrets, _) = fixture("switch-compatible-model");
+        std::fs::write(
+            root.join(".env"),
+            "CUSTOM_PRESERVED=yes\\nBOT_MODEL=qwen/qwen3.6-plus:free\\nAGENT_BOT_MODEL=qwen/qwen3.6-plus:free\\n",
+        ).unwrap();
+        let next = ModelCredential::OpenAi { api_key: "synthetic-new-key".into() };
+        persist_configuration_with(
+            &root,
+            &BTreeMap::new(),
+            &secrets,
+            &BTreeMap::new(),
+            &next,
+            |_, _| Ok(()),
+        ).unwrap();
+        let saved = std::fs::read_to_string(root.join(".env")).unwrap();
+        assert!(saved.contains("CUSTOM_PRESERVED=yes"));
+        assert!(!saved.contains("BOT_MODEL=qwen/"));
+        assert!(!saved.contains("AGENT_BOT_MODEL=qwen/"));
+        assert!(!saved.lines().any(|line| line.starts_with("BOT_MODEL=")));
+        assert!(!saved.lines().any(|line| line.starts_with("AGENT_BOT_MODEL=")));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn no_model_selection_preserves_an_existing_custom_model() {
+        let (root, secrets, _) = fixture("no-model-change");
+        std::fs::write(root.join(".env"), "BOT_MODEL=local-custom\\n").unwrap();
+        persist_configuration_with(
+            &root, &BTreeMap::new(), &secrets, &BTreeMap::new(),
+            &ModelCredential::None, |_, _| Ok(()),
+        ).unwrap();
+        assert!(std::fs::read_to_string(root.join(".env")).unwrap().contains("BOT_MODEL=local-custom"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
 }
