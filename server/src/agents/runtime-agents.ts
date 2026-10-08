@@ -69,6 +69,10 @@ export function createRuntimeAgentLoader(
             .filter((url): url is URL => url !== undefined)
             .some((url) => endpoint === managedEndpointIdentity(url));
         if (ours) {
+          // This bit is stronger than "remote": it means the endpoint identity matched one this
+          // deployment starts and protects with MANAGED_AGENT_TOKEN. Only that class may receive a
+          // per-run model credential; customer AG-UI/Mastra endpoints remain ordinary remote agents.
+          agent.managed = true;
           agent.headers = {
             ...agent.headers,
             "x-openbot-agent-token": managedAgent.token,
